@@ -7,27 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package spdk
 
 import (
-	"bytes"
 	"context"
 	"testing"
-
-	"github.com/mafredri/cdp/rpcc"
 )
-
-func TestEncode(t *testing.T) {
-	buffer := bytes.NewBufferString("")
-	c := newJSON2Codec(buffer)
-	r := rpcc.Request{ID: 1, Method: "foo"}
-	err := c.WriteRequest(&r)
-	if err != nil {
-		t.Fatalf("Encoding %v failed: %v", r, err)
-	}
-	encoded := string(buffer.Bytes())
-	expected := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"foo\"}\n"
-	if encoded != expected {
-		t.Errorf("Unexpected encoding: expected %q, got %q", expected, encoded)
-	}
-}
 
 func TestGetBDevs(t *testing.T) {
 	client, err := New("/var/tmp/spdk.sock")

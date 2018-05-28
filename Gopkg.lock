@@ -48,14 +48,6 @@
   version = "v1.1.0"
 
 [[projects]]
-  digest = "1:43dd08a10854b2056e615d1b1d22ac94559d822e1f8b6fcc92c1a1057e85188e"
-  name = "github.com/gorilla/websocket"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "ea4d1f681babbce9545c9c5f3d5194a789c89f5b"
-  version = "v1.2.0"
-
-[[projects]]
   digest = "1:91eb9611558c592269aac6f3a8c8e017be26fe4300dfb6824728eadf8103a75a"
   name = "github.com/grpc-ecosystem/go-grpc-middleware"
   packages = ["."]
@@ -70,14 +62,6 @@
   packages = ["go/otgrpc"]
   pruneopts = "UT"
   revision = "8e809c8a86450a29b90dcc9efbf062d0fe6d9746"
-
-[[projects]]
-  digest = "1:3aa419647d82c18bbf4854b1b8c145616a2ee0e91e404a3e9909fe172251bfd8"
-  name = "github.com/mafredri/cdp"
-  packages = ["rpcc"]
-  pruneopts = "UT"
-  revision = "13d613e9ad2a3673b0425ff6191201c304abc5b3"
-  version = "v1.18.1"
 
 [[projects]]
   digest = "1:27af6024faa3c28426a698b8c653be0fd908bc96e25b7d76f2192eb342427db6"
@@ -280,7 +264,6 @@
     "github.com/golang/glog",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
-    "github.com/mafredri/cdp/rpcc",
     "github.com/opentracing/opentracing-go",
     "github.com/opentracing/opentracing-go/log",
     "github.com/pborman/uuid",
