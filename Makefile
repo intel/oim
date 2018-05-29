@@ -22,8 +22,13 @@ IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 all: oim-csi-driver-container
 
 test:
-	go test $(IMPORT_PATH)/pkg/... -cover
+	go test $(IMPORT_PATH)/pkg/...
 	go vet $(IMPORT_PATH)/pkg/...
+
+coverage:
+	mkdir -p _output
+	go test -coverprofile _output/cover.out $(IMPORT_PATH)/pkg/...
+	go tool cover -html=_output/cover.out -o _output/cover.html
 
 oim-csi-driver:
 	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o _output/$@ ./cmd/$@
@@ -38,4 +43,4 @@ clean:
 	go clean -r -x
 	-rm -rf _output
 
-.PHONY: all test clean oim-csi-driver
+.PHONY: all test coverage clean oim-csi-driver
