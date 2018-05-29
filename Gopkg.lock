@@ -100,9 +100,12 @@
   version = "v1.0.0"
 
 [[projects]]
-  digest = "1:f85e109eda8f6080877185d1c39e98dd8795e1780c08beca28304b87fd855a1c"
+  digest = "1:73697231b93fb74a73ebd8384b68b9a60c57ea6b13c56d2425414566a72c8e6d"
   name = "github.com/stretchr/testify"
-  packages = ["assert"]
+  packages = [
+    "assert",
+    "require",
+  ]
   pruneopts = "UT"
   revision = "12b6f73e6084dad08a7c6e575284b177ecafbc71"
   version = "v1.2.1"
@@ -268,6 +271,7 @@
     "github.com/opentracing/opentracing-go/log",
     "github.com/pborman/uuid",
     "github.com/stretchr/testify/assert",
+    "github.com/stretchr/testify/require",
     "github.com/uber/jaeger-client-go/config",
     "golang.org/x/net/context",
     "google.golang.org/grpc",

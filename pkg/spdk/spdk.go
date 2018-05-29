@@ -54,3 +54,30 @@ func GetBDevs(ctx context.Context, client *Client, args *GetBDevsArgs) (GetBDevs
 	}
 	return response, nil
 }
+
+type DeleteBDevArgs struct {
+	Name string `json:"name"`
+}
+
+func DeleteBDev(ctx context.Context, client *Client, args *DeleteBDevArgs) error {
+	return client.Invoke(ctx, "delete_bdev", args, nil)
+}
+
+type ConstructBDevArgs struct {
+	NumBlocks int64  `json:"num_blocks"`
+	BlockSize int64  `json:"block_size"`
+	Name      string `json:"name,omitempty"`
+	UUID      string `json:"uuid,omitempty"`
+}
+
+type ConstructBDevResponse []string
+
+type ConstructMallocBDevArgs struct {
+	ConstructBDevArgs
+}
+
+func ConstructMallocBDev(ctx context.Context, client *Client, args *ConstructMallocBDevArgs) (ConstructBDevResponse, error) {
+	var response ConstructBDevResponse
+	err := client.Invoke(ctx, "construct_malloc_bdev", args, &response)
+	return response, err
+}
