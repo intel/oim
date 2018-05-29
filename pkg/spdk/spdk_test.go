@@ -25,6 +25,7 @@ func connect(t *testing.T) *Client {
 
 func TestGetBDevs(t *testing.T) {
 	client := connect(t)
+	defer client.Close()
 	args := []*GetBDevsArgs{
 		nil,
 		&GetBDevsArgs{},
@@ -39,6 +40,7 @@ func TestGetBDevs(t *testing.T) {
 func TestMallocBDev(t *testing.T) {
 	ctx := context.Background()
 	client := connect(t)
+	defer client.Close()
 
 	var created ConstructBDevResponse
 	cleanup := func(when string) {
