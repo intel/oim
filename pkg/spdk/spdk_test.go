@@ -9,10 +9,13 @@ package spdk
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/intel/oim/pkg/oim-common"
 )
 
 func connect(t *testing.T) *Client {
@@ -124,7 +127,25 @@ func TestNBDDev(t *testing.T) {
 	nbd, err := GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
 
-	nbdDevice := "/dev/nbd0"
+	// Find the first unused nbd device node. Unfortunately
+	// this is racy.
+	var nbdDevice string
+	var nbdFile *os.File
+	for i := 0; ; i++ {
+		nbdDevice = fmt.Sprintf("/dev/nbd%d", i)
+		nbdFile, err = os.Open(nbdDevice)
+		require.NoError(t, err)
+		defer nbdFile.Close()
+		size, err := oimcommon.GetBlkSize64(nbdFile)
+		require.NoError(t, err)
+		if size == 0 {
+			break
+		} else {
+			nbdFile.Close()
+		}
+	}
+	t.Logf("Using NBD %s, %+v", nbdDevice, nbdFile)
+
 	startArg := StartNBDDiskArgs{BDevName: name, NBDDevice: nbdDevice}
 	err = StartNBDDisk(ctx, client, startArg)
 	require.NoError(t, err, "Start NBD Disk with %+v", startArg)
@@ -132,6 +153,10 @@ func TestNBDDev(t *testing.T) {
 	nbd, err = GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
 	assert.Equal(t, nbd, GetNBDDisksResponse{startArg}, "should have one NBD device running")
+
+	size, err := oimcommon.GetBlkSize64(nbdFile)
+	require.NoError(t, err)
+	assert.Equal(t, numBlocks*blockSize, size, "NBD device size")
 
 	stopArg := StopNBDDiskArgs{NBDDevice: nbdDevice}
 	err = StopNBDDisk(ctx, client, stopArg)
