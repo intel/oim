@@ -81,3 +81,28 @@ func ConstructMallocBDev(ctx context.Context, client *Client, args *ConstructMal
 	err := client.Invoke(ctx, "construct_malloc_bdev", args, &response)
 	return response, err
 }
+
+type StartNBDDiskArgs struct {
+	BDevName  string `json:"bdev_name"`
+	NBDDevice string `json:"nbd_device"`
+}
+
+func StartNBDDisk(ctx context.Context, client *Client, args StartNBDDiskArgs) error {
+	return client.Invoke(ctx, "start_nbd_disk", args, nil)
+}
+
+type GetNBDDisksResponse []StartNBDDiskArgs
+
+func GetNBDDisks(ctx context.Context, client *Client) (GetNBDDisksResponse, error) {
+	var response GetNBDDisksResponse
+	err := client.Invoke(ctx, "get_nbd_disks", nil, &response)
+	return response, err
+}
+
+type StopNBDDiskArgs struct {
+	NBDDevice string `json:"nbd_device"`
+}
+
+func StopNBDDisk(ctx context.Context, client *Client, args StopNBDDiskArgs) error {
+	return client.Invoke(ctx, "stop_nbd_disk", args, nil)
+}

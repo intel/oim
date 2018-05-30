@@ -104,3 +104,36 @@ func TestMallocBDev(t *testing.T) {
 		assert.Equal(t, expected, bdev)
 	}
 }
+
+func TestNBDDev(t *testing.T) {
+	ctx := context.Background()
+	client := connect(t)
+	defer client.Close()
+
+	name := "my_malloc_bdev"
+	numBlocks := int64(2048)
+	blockSize := int64(512)
+	createArg := ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: numBlocks, BlockSize: blockSize, Name: name}}
+	// TODO: this does not get called when the test fails?
+	defer func() {
+		DeleteBDev(ctx, client, &DeleteBDevArgs{Name: name})
+	}()
+	_, err := ConstructMallocBDev(ctx, client, &createArg)
+	require.NoError(t, err, "Failed to create %+v", createArg)
+
+	nbd, err := GetNBDDisks(ctx, client)
+	assert.NoError(t, err, "get initial list of disks")
+
+	nbdDevice := "/dev/nbd0"
+	startArg := StartNBDDiskArgs{BDevName: name, NBDDevice: nbdDevice}
+	err = StartNBDDisk(ctx, client, startArg)
+	require.NoError(t, err, "Start NBD Disk with %+v", startArg)
+
+	nbd, err = GetNBDDisks(ctx, client)
+	assert.NoError(t, err, "get initial list of disks")
+	assert.Equal(t, nbd, GetNBDDisksResponse{startArg}, "should have one NBD device running")
+
+	stopArg := StopNBDDiskArgs{NBDDevice: nbdDevice}
+	err = StopNBDDisk(ctx, client, stopArg)
+	require.NoError(t, err, "Stop NBD Disk with %+v", stopArg)
+}
