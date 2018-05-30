@@ -83,11 +83,13 @@ func newClientCodec(conn io.ReadWriteCloser) rpc.ClientCodec {
 // net/rpc/json, two changes were made:
 // - add Version (aka jsonrpc)
 // - change Params from list to a single value
+// - Params must be a pointer so that we can use nil to
+//   suppress the creation of the "params" entry (as expected by e.g. get_nbd_disks)
 type clientRequest struct {
-	Version string      `json:"jsonrpc"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params"`
-	Id      uint64      `json:"id"`
+	Version string       `json:"jsonrpc"`
+	Method  string       `json:"method"`
+	Params  *interface{} `json:"params,omitempty"`
+	Id      uint64       `json:"id"`
 }
 
 func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
@@ -95,7 +97,11 @@ func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
 	c.pending[r.Seq] = r.ServiceMethod
 	c.mutex.Unlock()
 	c.req.Method = r.ServiceMethod
-	c.req.Params = param
+	if param == nil {
+		c.req.Params = nil
+	} else {
+		c.req.Params = &param
+	}
 	c.req.Id = r.Seq
 	return c.enc.Encode(&c.req)
 }
