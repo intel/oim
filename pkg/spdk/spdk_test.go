@@ -40,6 +40,17 @@ func TestGetBDevs(t *testing.T) {
 	}
 }
 
+func TestError(t *testing.T) {
+	client := connect(t)
+	defer client.Close()
+
+	// It would be nice to get a well-documented error code here,
+	// but currently we don't (https://github.com/spdk/spdk/issues/319).
+	_, err := GetBDevs(context.Background(), client, &GetBDevsArgs{Name: "no-such-bdev"})
+	require.Error(t, err, "Should have failed to find no-such-bdev")
+	require.True(t, IsJSONError(err, ERROR_INVALID_PARAMS), "IsJSONError(%+v, ERROR_INVALID_PARAMS)", err)
+}
+
 func TestMallocBDev(t *testing.T) {
 	ctx := context.Background()
 	client := connect(t)

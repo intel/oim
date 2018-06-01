@@ -48,8 +48,38 @@ import (
 	"io"
 	"net"
 	"net/rpc"
+	"regexp"
+	"strconv"
 	"sync"
 )
+
+// From SPDK's include/spdk/jsonrpc.h:
+const (
+	ERROR_PARSE_ERROR      = -32700
+	ERROR_INVALID_REQUEST  = -32600
+	ERROR_METHOD_NOT_FOUND = -32601
+	ERROR_INVALID_PARAMS   = -32602
+	ERROR_INTERNAL_ERROR   = -32603
+
+	ERROR_INVALID_STATE = -1
+)
+
+// jsonError matches against errors strings as encoded by ReadResponseHeader.
+var jsonError = regexp.MustCompile(`^code: (-?\d+) msg: (.*)$`)
+
+// IsJSONError checks that the error has the expected error code. Use
+// code == 0 to check for any JSONError.
+func IsJSONError(err error, code int) bool {
+	m := jsonError.FindStringSubmatch(err.Error())
+	if m == nil {
+		return false
+	}
+	errorCode, ok := strconv.Atoi(m[1])
+	if ok != nil {
+		return false
+	}
+	return code == 0 || errorCode == code
+}
 
 type clientCodec struct {
 	dec *json.Decoder // for reading JSON values
@@ -118,6 +148,9 @@ func (r *clientResponse) reset() {
 	r.Error = nil
 }
 
+// ReadResponseHeader parses the response from SPDK. Returning
+// an error here is treated as a failed connection, so we can only
+// do that for real connection problems.
 func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
 	c.resp.reset()
 	if err := c.dec.Decode(&c.resp); err != nil {
@@ -132,14 +165,45 @@ func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
 	r.Error = ""
 	r.Seq = c.resp.Id
 	if c.resp.Error != nil || c.resp.Result == nil {
-		x, ok := c.resp.Error.(string)
-		if !ok {
-			return fmt.Errorf("invalid error %v", c.resp.Error)
+		// SPDK returns a map[string]interface {}
+		// with "code" and "message" as keys.
+		m, ok := c.resp.Error.(map[string]interface{})
+		if ok {
+			code, haveCode := m["code"]
+			message, haveMessage := m["message"]
+			if !haveCode || !haveMessage {
+				return fmt.Errorf("invalid error %v", c.resp.Error)
+			}
+			var codeVal int
+			switch code.(type) {
+			case int:
+				codeVal = code.(int)
+			case float64:
+				codeVal = int(code.(float64))
+			default:
+				haveCode = false
+			}
+			messageVal, haveMessage := message.(string)
+			if !haveCode || !haveMessage {
+				return fmt.Errorf("invalid error content %v", c.resp.Error)
+			}
+			// It would be nice to return the real error code through
+			// net/rpc, but it only supports simple strings. Therefore
+			// we have to encode the available information as string.
+			r.Error = fmt.Sprintf("code: %d msg: %s", codeVal, messageVal)
+		} else {
+			// The following code is from the original
+			// net/rpc/json: it expects a simple string
+			// as error.
+			x, ok := c.resp.Error.(string)
+			if !ok {
+				return fmt.Errorf("invalid error %v", c.resp.Error)
+			}
+			if x == "" {
+				x = "unspecified error"
+			}
+			r.Error = x
 		}
-		if x == "" {
-			x = "unspecified error"
-		}
-		r.Error = x
 	}
 	return nil
 }
