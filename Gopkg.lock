@@ -64,6 +64,65 @@
   revision = "8e809c8a86450a29b90dcc9efbf062d0fe6d9746"
 
 [[projects]]
+  digest = "1:3fc3f5fbe992b179b3a8f14f915b25bf9097774e9494a2883582a715f84f523d"
+  name = "github.com/kubernetes-csi/csi-test"
+  packages = [
+    "pkg/sanity",
+    "utils",
+  ]
+  pruneopts = "UT"
+  revision = "f8ada4fcf7755cf7a941ac49d0bda967bce403dc"
+  version = "v0.2.0-1"
+
+[[projects]]
+  digest = "1:44aed0089693bd52eb5e76a916ebe103cdf406e3d38c4c42a0ca99ee8c27bbc5"
+  name = "github.com/onsi/ginkgo"
+  packages = [
+    ".",
+    "config",
+    "internal/codelocation",
+    "internal/containernode",
+    "internal/failer",
+    "internal/leafnodes",
+    "internal/remote",
+    "internal/spec",
+    "internal/spec_iterator",
+    "internal/specrunner",
+    "internal/suite",
+    "internal/testingtproxy",
+    "internal/writer",
+    "reporters",
+    "reporters/stenographer",
+    "reporters/stenographer/support/go-colorable",
+    "reporters/stenographer/support/go-isatty",
+    "types",
+  ]
+  pruneopts = "UT"
+  revision = "fa5fabab2a1bfbd924faf4c067d07ae414e2aedf"
+  version = "v1.5.0"
+
+[[projects]]
+  digest = "1:1fca381aabf2bfa7efbb8704a474c0098f07db1d1031c9803f2bbf27ea167165"
+  name = "github.com/onsi/gomega"
+  packages = [
+    ".",
+    "format",
+    "internal/assertion",
+    "internal/asyncassertion",
+    "internal/oraclematcher",
+    "internal/testingtsupport",
+    "matchers",
+    "matchers/support/goraph/bipartitegraph",
+    "matchers/support/goraph/edge",
+    "matchers/support/goraph/node",
+    "matchers/support/goraph/util",
+    "types",
+  ]
+  pruneopts = "UT"
+  revision = "62bff4df71bdbc266561a0caee19f0594b17c240"
+  version = "v1.4.0"
+
+[[projects]]
   digest = "1:27af6024faa3c28426a698b8c653be0fd908bc96e25b7d76f2192eb342427db6"
   name = "github.com/opentracing/opentracing-go"
   packages = [
@@ -74,14 +133,6 @@
   pruneopts = "UT"
   revision = "1949ddbfd147afd4d964a9f00b24eb291e0e7c38"
   version = "v1.0.2"
-
-[[projects]]
-  digest = "1:361de06aa7ae272616cbe71c3994a654cc6316324e30998e650f7765b20c5b33"
-  name = "github.com/pborman/uuid"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "e790cca94e6cc75c7064b1332e63811d4aae1a53"
-  version = "v1.1"
 
 [[projects]]
   digest = "1:40e195917a951a8bf867cd05de2a46aaf1806c50cf92eebf4c16f78cd196f747"
@@ -145,10 +196,13 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:a53a9c6ef5dfab06ebd56728a6f80ff905b0bde97f150f86012cdbc4926aa77e"
+  digest = "1:32660fc457b19bc22e73339acd3185ccde06f54292af613eeacafbeec207563f"
   name = "golang.org/x/net"
   packages = [
     "context",
+    "html",
+    "html/atom",
+    "html/charset",
     "http/httpguts",
     "http2",
     "http2/hpack",
@@ -168,17 +222,29 @@
   revision = "7c87d13f8e835d2fb3a70a2912c811ed0c1d241b"
 
 [[projects]]
-  digest = "1:7509ba4347d1f8de6ae9be8818b0cd1abc3deeffe28aeaf4be6d4b6b5178d9ca"
+  digest = "1:1593eb192a256b34419f8e8765d0b0e15f47399a3c32a08b242632b2928391cb"
   name = "golang.org/x/text"
   packages = [
     "collate",
     "collate/build",
+    "encoding",
+    "encoding/charmap",
+    "encoding/htmlindex",
+    "encoding/internal",
+    "encoding/internal/identifier",
+    "encoding/japanese",
+    "encoding/korean",
+    "encoding/simplifiedchinese",
+    "encoding/traditionalchinese",
+    "encoding/unicode",
     "internal/colltab",
     "internal/gen",
     "internal/tag",
     "internal/triegen",
     "internal/ucd",
+    "internal/utf8internal",
     "language",
+    "runes",
     "secure/bidirule",
     "transform",
     "unicode/bidi",
@@ -232,6 +298,14 @@
   version = "v1.12.0"
 
 [[projects]]
+  digest = "1:342378ac4dcb378a5448dd723f0784ae519383532f5e70ade24132c4c8693202"
+  name = "gopkg.in/yaml.v2"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
+  version = "v2.2.1"
+
+[[projects]]
   branch = "master"
   digest = "1:f5fb6c4c9e14909a66efe7d3e49403234cd52523eb3997c5753a880635e8be2d"
   name = "k8s.io/apimachinery"
@@ -267,9 +341,9 @@
     "github.com/golang/glog",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
+    "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/opentracing/opentracing-go",
     "github.com/opentracing/opentracing-go/log",
-    "github.com/pborman/uuid",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
     "github.com/uber/jaeger-client-go/config",

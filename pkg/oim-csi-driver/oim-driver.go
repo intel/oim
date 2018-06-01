@@ -1,5 +1,6 @@
 /*
 Copyright 2017 The Kubernetes Authors.
+Copyright 2018 Intel Corporation.
 
 SPDX-License-Identifier: Apache-2.0
 */
@@ -7,10 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 package oimcsidriver
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
-	"github.com/golang/glog"
 )
 
 const (
@@ -33,23 +33,10 @@ type oimDriver struct {
 	cscap []*csi.ControllerServiceCapability
 }
 
-type oimVolume struct {
-	VolName string `json:"volName"`
-	VolID   string `json:"volID"`
-	VolSize int64  `json:"volSize"`
-	VolPath string `json:"volPath"`
-}
-
-var oimVolumes map[string]oimVolume
-
 var (
 	//	oimDriver     *oim
 	vendorVersion = "0.2.0"
 )
-
-func init() {
-	oimVolumes = map[string]oimVolume{}
-}
 
 func GetOIMDriver() *oimDriver {
 	return &oimDriver{}
@@ -73,13 +60,11 @@ func NewNodeServer(d *CSIDriver) *nodeServer {
 	}
 }
 
-func (od *oimDriver) Run(driverName, nodeID, endpoint string) {
-	glog.Infof("Driver: %v ", driverName)
-
+func (od *oimDriver) Start(driverName, nodeID, endpoint string) (NonBlockingGRPCServer, error) {
 	// Initialize default library driver
 	od.driver = NewCSIDriver(driverName, vendorVersion, nodeID)
 	if od.driver == nil {
-		glog.Fatalln("Failed to initialize CSI Driver.")
+		return nil, errors.New("Failed to initialize CSI Driver.")
 	}
 	od.driver.AddControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME})
 	od.driver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
@@ -91,21 +76,14 @@ func (od *oimDriver) Run(driverName, nodeID, endpoint string) {
 
 	s := NewNonBlockingGRPCServer()
 	s.Start(endpoint, od.ids, od.cs, od.ns)
+	return s, nil
+}
+
+func (od *oimDriver) Run(driverName, nodeID, endpoint string) error {
+	s, err := od.Start(driverName, nodeID, endpoint)
+	if err != nil {
+		return err
+	}
 	s.Wait()
-}
-
-func getVolumeByID(volumeID string) (oimVolume, error) {
-	if oimVol, ok := oimVolumes[volumeID]; ok {
-		return oimVol, nil
-	}
-	return oimVolume{}, fmt.Errorf("volume id %s does not exit in the volumes list", volumeID)
-}
-
-func getVolumeByName(volName string) (oimVolume, error) {
-	for _, oimVol := range oimVolumes {
-		if oimVol.VolName == volName {
-			return oimVol, nil
-		}
-	}
-	return oimVolume{}, fmt.Errorf("volume name %s does not exit in the volumes list", volName)
+	return nil
 }
