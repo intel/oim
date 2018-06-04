@@ -27,9 +27,10 @@ func TestOIMDriver(t *testing.T) {
 
 	// Now call the test suite.
 	config := sanity.Config{
-		TargetPath:  tmp + "/target-path",
-		StagingPath: tmp + "/staging-path",
-		Address:     endpoint,
+		TargetPath:     tmp + "/target-path",
+		StagingPath:    tmp + "/staging-path",
+		Address:        endpoint,
+		TestVolumeSize: 1 * 1024 * 1024,
 	}
 	sanity.Test(t, &config)
 }
