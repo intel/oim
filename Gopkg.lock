@@ -27,6 +27,46 @@
 
 [[projects]]
   branch = "master"
+  digest = "1:5fdfd8dfdb323ae8328363ec4f80a9aeb204da807578a0d620ef8ae54e881cb3"
+  name = "github.com/davecgh/go-xdr"
+  packages = ["xdr2"]
+  pruneopts = "UT"
+  revision = "e6a2ba005892b6a5b27cb5352f64c2e96942dd28"
+
+[[projects]]
+  branch = "master"
+  digest = "1:69674f04d81670b8a9818f376a0d19691c6f14f8c04283c933201792b4b7301b"
+  name = "github.com/digitalocean/go-libvirt"
+  packages = [
+    ".",
+    "internal/constants",
+  ]
+  pruneopts = "UT"
+  revision = "17c24de8037ae3d40336d41a7e9f2a67d0fc1dcf"
+
+[[projects]]
+  branch = "master"
+  digest = "1:b42bf72a4f71f036f329e5791903ee2723ab7054941cdd6a694d30620fb558ab"
+  name = "github.com/digitalocean/go-qemu"
+  packages = [
+    "internal/qmp-gen",
+    "qemu",
+    "qmp",
+    "qmp/raw",
+  ]
+  pruneopts = "UT"
+  revision = "d5e8dbfd06fdb6f19c5149c74b79d5b4318dbfa7"
+
+[[projects]]
+  branch = "master"
+  digest = "1:bbc4aacabe6880bdbce849c64cb061b7eddf39f132af4ea2853ddd32f85fbec3"
+  name = "github.com/fatih/camelcase"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "44e46d280b43ec1531bb25252440e34f1b800b65"
+
+[[projects]]
+  branch = "master"
   digest = "1:1ba1d79f2810270045c328ae5d674321db34e3aae468eb4233883b473c5c0467"
   name = "github.com/golang/glog"
   packages = ["."]
@@ -338,6 +378,8 @@
   analyzer-version = 1
   input-imports = [
     "github.com/container-storage-interface/spec/lib/go/csi/v0",
+    "github.com/digitalocean/go-qemu/qemu",
+    "github.com/digitalocean/go-qemu/qmp",
     "github.com/golang/glog",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
