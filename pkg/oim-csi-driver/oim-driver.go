@@ -60,6 +60,15 @@ func NewNodeServer(d *CSIDriver) *nodeServer {
 	}
 }
 
+// TODO: concurrency protection
+//
+// By default, each gRPC call will execute in its own goroutine. That means
+// that if an operation takes a long time and the sidecar decides to re-issue
+// the call, we end up doing the same thing in parallel.
+//
+// We need to decide between a) serializing all calls or b) serializing
+// only those calls related to the same item (bdev?).
+
 func (od *oimDriver) Start(driverName, nodeID, endpoint string) (NonBlockingGRPCServer, error) {
 	// Initialize default library driver
 	od.driver = NewCSIDriver(driverName, vendorVersion, nodeID)
