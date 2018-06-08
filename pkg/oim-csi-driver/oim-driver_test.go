@@ -55,13 +55,19 @@ func (s SudoMount) Close() {
 }
 
 func TestOIMDriver(t *testing.T) {
+	vhost := os.Getenv("TEST_SPDK_VHOST_SOCKET")
+	if vhost == "" {
+		t.Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+	}
+
 	tmp, err := ioutil.TempDir("", "oim-driver")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmp)
 
-	driver := GetOIMDriver()
 	endpoint := "unix://" + tmp + "/oim-driver.sock"
-	s, err := driver.Start("oim-driver", "test-node", endpoint)
+	driver, err := GetOIMDriver(OptionCSIEndpoint(endpoint), OptionVHostEndpoint(vhost))
+	require.NoError(t, err)
+	s, err := driver.Start()
 	defer s.ForceStop()
 
 	sudo := SetupSudoMount(t)

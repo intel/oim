@@ -23,11 +23,17 @@ const (
 )
 
 type oimDriver struct {
+	driverName    string
+	nodeID        string
+	csiEndpoint   string
+	vhostEndpoint string
+
 	driver *CSIDriver
 
-	ids *identityServer
-	ns  *nodeServer
-	cs  *controllerServer
+	ids   *identityServer
+	ns    *nodeServer
+	cs    *controllerServer
+	vhost string
 
 	cap   []*csi.VolumeCapability_AccessMode
 	cscap []*csi.ControllerServiceCapability
@@ -38,25 +44,68 @@ var (
 	vendorVersion = "0.2.0"
 )
 
-func GetOIMDriver() *oimDriver {
-	return &oimDriver{}
+type DriverOption func(*oimDriver) error
+
+func OptionDriverName(name string) DriverOption {
+	return func(od *oimDriver) error {
+		od.driverName = name
+		return nil
+	}
 }
 
-func NewIdentityServer(d *CSIDriver) *identityServer {
+func OptionNodeID(id string) DriverOption {
+	return func(od *oimDriver) error {
+		od.nodeID = id
+		return nil
+	}
+}
+
+func OptionCSIEndpoint(endpoint string) DriverOption {
+	return func(od *oimDriver) error {
+		od.csiEndpoint = endpoint
+		return nil
+	}
+}
+
+func OptionVHostEndpoint(endpoint string) DriverOption {
+	return func(od *oimDriver) error {
+		od.vhostEndpoint = endpoint
+		return nil
+	}
+}
+
+func GetOIMDriver(options ...DriverOption) (*oimDriver, error) {
+	od := oimDriver{
+		driverName:  "oim-driver",
+		nodeID:      "unset-node-id",
+		csiEndpoint: "/var/run/oim-driver.socket",
+	}
+	for _, op := range options {
+		err := op(&od)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &od, nil
+}
+
+func NewIdentityServer(od *oimDriver) *identityServer {
 	return &identityServer{
-		DefaultIdentityServer: NewDefaultIdentityServer(d),
+		DefaultIdentityServer: NewDefaultIdentityServer(od.driver),
 	}
 }
 
-func NewControllerServer(d *CSIDriver) *controllerServer {
+func NewControllerServer(od *oimDriver) *controllerServer {
 	return &controllerServer{
-		DefaultControllerServer: NewDefaultControllerServer(d),
+		DefaultControllerServer: NewDefaultControllerServer(od.driver),
+		od: od,
 	}
 }
 
-func NewNodeServer(d *CSIDriver) *nodeServer {
+func NewNodeServer(od *oimDriver) *nodeServer {
 	return &nodeServer{
-		DefaultNodeServer: NewDefaultNodeServer(d),
+		DefaultNodeServer: NewDefaultNodeServer(od.driver),
+		od:                od,
 	}
 }
 
@@ -69,9 +118,9 @@ func NewNodeServer(d *CSIDriver) *nodeServer {
 // We need to decide between a) serializing all calls or b) serializing
 // only those calls related to the same item (bdev?).
 
-func (od *oimDriver) Start(driverName, nodeID, endpoint string) (NonBlockingGRPCServer, error) {
+func (od *oimDriver) Start() (NonBlockingGRPCServer, error) {
 	// Initialize default library driver
-	od.driver = NewCSIDriver(driverName, vendorVersion, nodeID)
+	od.driver = NewCSIDriver(od.driverName, vendorVersion, od.nodeID)
 	if od.driver == nil {
 		return nil, errors.New("Failed to initialize CSI Driver.")
 	}
@@ -79,17 +128,17 @@ func (od *oimDriver) Start(driverName, nodeID, endpoint string) (NonBlockingGRPC
 	od.driver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
 
 	// Create GRPC servers
-	od.ids = NewIdentityServer(od.driver)
-	od.ns = NewNodeServer(od.driver)
-	od.cs = NewControllerServer(od.driver)
+	od.ids = NewIdentityServer(od)
+	od.ns = NewNodeServer(od)
+	od.cs = NewControllerServer(od)
 
 	s := NewNonBlockingGRPCServer()
-	s.Start(endpoint, od.ids, od.cs, od.ns)
+	s.Start(od.csiEndpoint, od.ids, od.cs, od.ns)
 	return s, nil
 }
 
-func (od *oimDriver) Run(driverName, nodeID, endpoint string) error {
-	s, err := od.Start(driverName, nodeID, endpoint)
+func (od *oimDriver) Run() error {
+	s, err := od.Start()
 	if err != nil {
 		return err
 	}

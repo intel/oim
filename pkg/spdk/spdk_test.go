@@ -19,7 +19,10 @@ import (
 )
 
 func connect(t *testing.T) *Client {
-	path := "/var/tmp/spdk.sock"
+	path := os.Getenv("TEST_SPDK_VHOST_SOCKET")
+	if path == "" {
+		t.Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+	}
 	client, err := New(path)
 	require.NoError(t, err, "Failed to contact SPDK at %s", path)
 	require.NotNil(t, client, "No client")

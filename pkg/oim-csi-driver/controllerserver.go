@@ -25,6 +25,7 @@ const (
 
 type controllerServer struct {
 	*DefaultControllerServer
+	od *oimDriver
 }
 
 func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -44,7 +45,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	// Connect to SPDK.
 	// TODO: make this configurable and decide whether we need to
 	// talk to a local or remote SPDK.
-	client, err := spdk.New("/var/tmp/spdk.sock")
+	client, err := spdk.New(cs.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -89,7 +90,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 
 	// Create new Malloc bdev.
-	args := spdk.ConstructMallocBDevArgs{spdk.ConstructBDevArgs{
+	args := spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{
 		NumBlocks: capacity / 512,
 		BlockSize: 512,
 		Name:      req.GetName(),
@@ -118,7 +119,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	// Connect to SPDK.
 	// TODO: make this configurable and decide whether we need to
 	// talk to a local or remote SPDK.
-	client, err := spdk.New("/var/tmp/spdk.sock")
+	client, err := spdk.New(cs.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}

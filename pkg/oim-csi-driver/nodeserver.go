@@ -23,6 +23,7 @@ import (
 
 type nodeServer struct {
 	*DefaultNodeServer
+	od *oimDriver
 }
 
 func findNBDDevice(ctx context.Context, client *spdk.Client, volumeID string) (nbdDevice string, err error) {
@@ -81,7 +82,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	// Connect to SPDK.
 	// TODO: make this configurable and decide whether we need to
 	// talk to a local or remote SPDK.
-	client, err := spdk.New("/var/tmp/spdk.sock")
+	client, err := spdk.New(ns.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -167,7 +168,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	// Connect to SPDK.
 	// TODO: make this configurable and decide whether we need to
 	// talk to a local or remote SPDK.
-	client, err := spdk.New("/var/tmp/spdk.sock")
+	client, err := spdk.New(ns.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}

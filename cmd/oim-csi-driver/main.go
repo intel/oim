@@ -35,10 +35,15 @@ func main() {
 	}
 	defer closer.Close()
 
-	handle()
-}
-
-func handle() {
-	driver := oimcsidriver.GetOIMDriver()
-	driver.Run(*driverName, *nodeID, *endpoint)
+	options := []oimcsidriver.DriverOption{
+		oimcsidriver.OptionDriverName(*driverName),
+		oimcsidriver.OptionCSIEndpoint(*endpoint),
+		oimcsidriver.OptionNodeID(*nodeID),
+	}
+	driver, err := oimcsidriver.GetOIMDriver(options...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize driver: %s\n", err)
+		os.Exit(1)
+	}
+	driver.Run()
 }

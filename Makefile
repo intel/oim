@@ -21,26 +21,42 @@ IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
 all: oim-csi-driver-container
 
-test:
-	go test $(IMPORT_PATH)/pkg/...
+# By default, testing only runs tests that work without additional components.
+# Additional tests can be enabled by overriding the following makefile variables
+# or (when invoking go test manually) by setting the corresponding env variables
+
+# Unix domain socket path of a running SPDK vhost.
+TEST_SPDK_VHOST_SOCKET=
+
+TEST_CMD=go test -v
+TEST_ARGS=$(IMPORT_PATH)/pkg/...
+
+test: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
 	go vet $(IMPORT_PATH)/pkg/...
+	mkdir -p _work
+	cd _work && \
+	TEST_SPDK_VHOST_SOCKET=$(TEST_SPDK_VHOST_SOCKET) \
+	    $(TEST_CMD) $(TEST_ARGS)
 
 coverage:
-	mkdir -p _output
-	go test -coverprofile _output/cover.out $(IMPORT_PATH)/pkg/...
-	go tool cover -html=_output/cover.out -o _output/cover.html
+	mkdir -p _work
+	go test -coverprofile _work/cover.out $(IMPORT_PATH)/pkg/...
+	go tool cover -html=_work/cover.out -o _work/cover.html
 
 oim-csi-driver:
 	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o _output/$@ ./cmd/$@
 
+# _output is used as the build context. All files inside it are sent
+# to the Docker daemon when building images.
 %-container: %
-	docker build -t $(IMAGE_TAG) -f ./cmd/$*/Dockerfile .
+	cp cmd/$*/Dockerfile _output/Dockerfile.$*
+	cd _output && docker build -t $(IMAGE_TAG) -f Dockerfile.$* .
 
 push-%: %-container
 	docker push $(IMAGE_TAG)
 
 clean:
 	go clean -r -x
-	-rm -rf _output
+	-rm -rf _output _work
 
 .PHONY: all test coverage clean oim-csi-driver
