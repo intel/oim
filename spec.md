@@ -47,6 +47,8 @@ message RegisterControllerRequest {
 message RegisterControllerReply {
     // Intentionally empty.
 }
+
+// TODO: Forwarding of requests to the OIM Controller.
 ```
 
 ## OIM Controller
@@ -61,12 +63,24 @@ service Controller {
 
     rpc UnmapVolume(UnmapVolumeRequest)
         returns (UnmapVolumeReply) {}
-
 }
 
 message MapVolumeRequest {
     string UUID = 1;
-    map<string, string> params = 2;
+    oneof params {
+        MallocParams malloc = 2;
+        CephParams ceph = 3;
+    }
+}
+
+message MallocParams {
+    int64 size = 1;
+}
+
+message CephParams {
+    string secret = 1;
+    // TODO: real ceph parameters
+    // TODO: do not log secret in debug output
 }
 
 message MapVolumeReply {

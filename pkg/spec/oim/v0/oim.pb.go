@@ -36,7 +36,7 @@ func (m *RegisterControllerRequest) Reset()         { *m = RegisterControllerReq
 func (m *RegisterControllerRequest) String() string { return proto.CompactTextString(m) }
 func (*RegisterControllerRequest) ProtoMessage()    {}
 func (*RegisterControllerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{0}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{0}
 }
 func (m *RegisterControllerRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_RegisterControllerRequest.Unmarshal(m, b)
@@ -80,7 +80,7 @@ func (m *RegisterControllerReply) Reset()         { *m = RegisterControllerReply
 func (m *RegisterControllerReply) String() string { return proto.CompactTextString(m) }
 func (*RegisterControllerReply) ProtoMessage()    {}
 func (*RegisterControllerReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{1}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{1}
 }
 func (m *RegisterControllerReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_RegisterControllerReply.Unmarshal(m, b)
@@ -101,18 +101,21 @@ func (m *RegisterControllerReply) XXX_DiscardUnknown() {
 var xxx_messageInfo_RegisterControllerReply proto.InternalMessageInfo
 
 type MapVolumeRequest struct {
-	UUID                 string            `protobuf:"bytes,1,opt,name=UUID" json:"UUID,omitempty"`
-	Params               map[string]string `protobuf:"bytes,2,rep,name=params" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	XXX_NoUnkeyedLiteral struct{}          `json:"-"`
-	XXX_unrecognized     []byte            `json:"-"`
-	XXX_sizecache        int32             `json:"-"`
+	UUID string `protobuf:"bytes,1,opt,name=UUID" json:"UUID,omitempty"`
+	// Types that are valid to be assigned to Params:
+	//	*MapVolumeRequest_Malloc
+	//	*MapVolumeRequest_Ceph
+	Params               isMapVolumeRequest_Params `protobuf_oneof:"params"`
+	XXX_NoUnkeyedLiteral struct{}                  `json:"-"`
+	XXX_unrecognized     []byte                    `json:"-"`
+	XXX_sizecache        int32                     `json:"-"`
 }
 
 func (m *MapVolumeRequest) Reset()         { *m = MapVolumeRequest{} }
 func (m *MapVolumeRequest) String() string { return proto.CompactTextString(m) }
 func (*MapVolumeRequest) ProtoMessage()    {}
 func (*MapVolumeRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{2}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{2}
 }
 func (m *MapVolumeRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_MapVolumeRequest.Unmarshal(m, b)
@@ -132,6 +135,27 @@ func (m *MapVolumeRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MapVolumeRequest proto.InternalMessageInfo
 
+type isMapVolumeRequest_Params interface {
+	isMapVolumeRequest_Params()
+}
+
+type MapVolumeRequest_Malloc struct {
+	Malloc *MallocParams `protobuf:"bytes,2,opt,name=malloc,oneof"`
+}
+type MapVolumeRequest_Ceph struct {
+	Ceph *CephParams `protobuf:"bytes,3,opt,name=ceph,oneof"`
+}
+
+func (*MapVolumeRequest_Malloc) isMapVolumeRequest_Params() {}
+func (*MapVolumeRequest_Ceph) isMapVolumeRequest_Params()   {}
+
+func (m *MapVolumeRequest) GetParams() isMapVolumeRequest_Params {
+	if m != nil {
+		return m.Params
+	}
+	return nil
+}
+
 func (m *MapVolumeRequest) GetUUID() string {
 	if m != nil {
 		return m.UUID
@@ -139,11 +163,168 @@ func (m *MapVolumeRequest) GetUUID() string {
 	return ""
 }
 
-func (m *MapVolumeRequest) GetParams() map[string]string {
-	if m != nil {
-		return m.Params
+func (m *MapVolumeRequest) GetMalloc() *MallocParams {
+	if x, ok := m.GetParams().(*MapVolumeRequest_Malloc); ok {
+		return x.Malloc
 	}
 	return nil
+}
+
+func (m *MapVolumeRequest) GetCeph() *CephParams {
+	if x, ok := m.GetParams().(*MapVolumeRequest_Ceph); ok {
+		return x.Ceph
+	}
+	return nil
+}
+
+// XXX_OneofFuncs is for the internal use of the proto package.
+func (*MapVolumeRequest) XXX_OneofFuncs() (func(msg proto.Message, b *proto.Buffer) error, func(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error), func(msg proto.Message) (n int), []interface{}) {
+	return _MapVolumeRequest_OneofMarshaler, _MapVolumeRequest_OneofUnmarshaler, _MapVolumeRequest_OneofSizer, []interface{}{
+		(*MapVolumeRequest_Malloc)(nil),
+		(*MapVolumeRequest_Ceph)(nil),
+	}
+}
+
+func _MapVolumeRequest_OneofMarshaler(msg proto.Message, b *proto.Buffer) error {
+	m := msg.(*MapVolumeRequest)
+	// params
+	switch x := m.Params.(type) {
+	case *MapVolumeRequest_Malloc:
+		b.EncodeVarint(2<<3 | proto.WireBytes)
+		if err := b.EncodeMessage(x.Malloc); err != nil {
+			return err
+		}
+	case *MapVolumeRequest_Ceph:
+		b.EncodeVarint(3<<3 | proto.WireBytes)
+		if err := b.EncodeMessage(x.Ceph); err != nil {
+			return err
+		}
+	case nil:
+	default:
+		return fmt.Errorf("MapVolumeRequest.Params has unexpected type %T", x)
+	}
+	return nil
+}
+
+func _MapVolumeRequest_OneofUnmarshaler(msg proto.Message, tag, wire int, b *proto.Buffer) (bool, error) {
+	m := msg.(*MapVolumeRequest)
+	switch tag {
+	case 2: // params.malloc
+		if wire != proto.WireBytes {
+			return true, proto.ErrInternalBadWireType
+		}
+		msg := new(MallocParams)
+		err := b.DecodeMessage(msg)
+		m.Params = &MapVolumeRequest_Malloc{msg}
+		return true, err
+	case 3: // params.ceph
+		if wire != proto.WireBytes {
+			return true, proto.ErrInternalBadWireType
+		}
+		msg := new(CephParams)
+		err := b.DecodeMessage(msg)
+		m.Params = &MapVolumeRequest_Ceph{msg}
+		return true, err
+	default:
+		return false, nil
+	}
+}
+
+func _MapVolumeRequest_OneofSizer(msg proto.Message) (n int) {
+	m := msg.(*MapVolumeRequest)
+	// params
+	switch x := m.Params.(type) {
+	case *MapVolumeRequest_Malloc:
+		s := proto.Size(x.Malloc)
+		n += 1 // tag and wire
+		n += proto.SizeVarint(uint64(s))
+		n += s
+	case *MapVolumeRequest_Ceph:
+		s := proto.Size(x.Ceph)
+		n += 1 // tag and wire
+		n += proto.SizeVarint(uint64(s))
+		n += s
+	case nil:
+	default:
+		panic(fmt.Sprintf("proto: unexpected type %T in oneof", x))
+	}
+	return n
+}
+
+type MallocParams struct {
+	Size                 int64    `protobuf:"varint,1,opt,name=size" json:"size,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *MallocParams) Reset()         { *m = MallocParams{} }
+func (m *MallocParams) String() string { return proto.CompactTextString(m) }
+func (*MallocParams) ProtoMessage()    {}
+func (*MallocParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_oim_6186fc703fda91d0, []int{3}
+}
+func (m *MallocParams) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_MallocParams.Unmarshal(m, b)
+}
+func (m *MallocParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_MallocParams.Marshal(b, m, deterministic)
+}
+func (dst *MallocParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MallocParams.Merge(dst, src)
+}
+func (m *MallocParams) XXX_Size() int {
+	return xxx_messageInfo_MallocParams.Size(m)
+}
+func (m *MallocParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_MallocParams.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MallocParams proto.InternalMessageInfo
+
+func (m *MallocParams) GetSize() int64 {
+	if m != nil {
+		return m.Size
+	}
+	return 0
+}
+
+type CephParams struct {
+	Secret               string   `protobuf:"bytes,1,opt,name=secret" json:"secret,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *CephParams) Reset()         { *m = CephParams{} }
+func (m *CephParams) String() string { return proto.CompactTextString(m) }
+func (*CephParams) ProtoMessage()    {}
+func (*CephParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_oim_6186fc703fda91d0, []int{4}
+}
+func (m *CephParams) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_CephParams.Unmarshal(m, b)
+}
+func (m *CephParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_CephParams.Marshal(b, m, deterministic)
+}
+func (dst *CephParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_CephParams.Merge(dst, src)
+}
+func (m *CephParams) XXX_Size() int {
+	return xxx_messageInfo_CephParams.Size(m)
+}
+func (m *CephParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_CephParams.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_CephParams proto.InternalMessageInfo
+
+func (m *CephParams) GetSecret() string {
+	if m != nil {
+		return m.Secret
+	}
+	return ""
 }
 
 type MapVolumeReply struct {
@@ -156,7 +337,7 @@ func (m *MapVolumeReply) Reset()         { *m = MapVolumeReply{} }
 func (m *MapVolumeReply) String() string { return proto.CompactTextString(m) }
 func (*MapVolumeReply) ProtoMessage()    {}
 func (*MapVolumeReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{3}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{5}
 }
 func (m *MapVolumeReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_MapVolumeReply.Unmarshal(m, b)
@@ -187,7 +368,7 @@ func (m *UnmapVolumeRequest) Reset()         { *m = UnmapVolumeRequest{} }
 func (m *UnmapVolumeRequest) String() string { return proto.CompactTextString(m) }
 func (*UnmapVolumeRequest) ProtoMessage()    {}
 func (*UnmapVolumeRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{4}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{6}
 }
 func (m *UnmapVolumeRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_UnmapVolumeRequest.Unmarshal(m, b)
@@ -224,7 +405,7 @@ func (m *UnmapVolumeReply) Reset()         { *m = UnmapVolumeReply{} }
 func (m *UnmapVolumeReply) String() string { return proto.CompactTextString(m) }
 func (*UnmapVolumeReply) ProtoMessage()    {}
 func (*UnmapVolumeReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_ea0bc9660605c281, []int{5}
+	return fileDescriptor_oim_6186fc703fda91d0, []int{7}
 }
 func (m *UnmapVolumeReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_UnmapVolumeReply.Unmarshal(m, b)
@@ -248,7 +429,8 @@ func init() {
 	proto.RegisterType((*RegisterControllerRequest)(nil), "oim.v0.RegisterControllerRequest")
 	proto.RegisterType((*RegisterControllerReply)(nil), "oim.v0.RegisterControllerReply")
 	proto.RegisterType((*MapVolumeRequest)(nil), "oim.v0.MapVolumeRequest")
-	proto.RegisterMapType((map[string]string)(nil), "oim.v0.MapVolumeRequest.ParamsEntry")
+	proto.RegisterType((*MallocParams)(nil), "oim.v0.MallocParams")
+	proto.RegisterType((*CephParams)(nil), "oim.v0.CephParams")
 	proto.RegisterType((*MapVolumeReply)(nil), "oim.v0.MapVolumeReply")
 	proto.RegisterType((*UnmapVolumeRequest)(nil), "oim.v0.UnmapVolumeRequest")
 	proto.RegisterType((*UnmapVolumeReply)(nil), "oim.v0.UnmapVolumeReply")
@@ -423,29 +605,30 @@ var _Controller_serviceDesc = grpc.ServiceDesc{
 	Metadata: "oim.proto",
 }
 
-func init() { proto.RegisterFile("oim.proto", fileDescriptor_oim_ea0bc9660605c281) }
+func init() { proto.RegisterFile("oim.proto", fileDescriptor_oim_6186fc703fda91d0) }
 
-var fileDescriptor_oim_ea0bc9660605c281 = []byte{
-	// 323 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x52, 0x4d, 0x4b, 0xc3, 0x40,
-	0x14, 0x34, 0xad, 0xad, 0xf6, 0x15, 0x24, 0x3c, 0x44, 0xd3, 0x3d, 0xf8, 0x11, 0x3c, 0xf4, 0x94,
-	0x4a, 0xbd, 0xa8, 0x08, 0x82, 0xda, 0x43, 0x0f, 0x82, 0x04, 0xe2, 0xa1, 0xb7, 0x2d, 0xdd, 0x86,
-	0xe0, 0x26, 0xbb, 0x6e, 0x92, 0x4a, 0xfe, 0x87, 0x77, 0xff, 0xaa, 0x64, 0x93, 0x48, 0xb4, 0x69,
-	0xf1, 0xf6, 0x3e, 0xe6, 0xcd, 0xce, 0x0c, 0x0b, 0x3d, 0x11, 0x08, 0x47, 0x2a, 0x91, 0x08, 0xec,
-	0xe6, 0xe5, 0xea, 0x92, 0x9c, 0xf8, 0x42, 0xf8, 0x9c, 0x8d, 0xf4, 0x74, 0x9e, 0x2e, 0x47, 0x1f,
-	0x8a, 0x4a, 0xc9, 0x54, 0x5c, 0xe0, 0xec, 0x29, 0x0c, 0x5c, 0xe6, 0x07, 0x71, 0xc2, 0xd4, 0xa3,
-	0x88, 0x12, 0x25, 0x38, 0x67, 0xca, 0x65, 0xef, 0x29, 0x8b, 0x13, 0x44, 0xd8, 0xf5, 0xbc, 0xe9,
-	0x93, 0x65, 0x9c, 0x19, 0xc3, 0x9e, 0xab, 0x6b, 0xb4, 0x60, 0x8f, 0x2e, 0x16, 0x8a, 0xc5, 0xb1,
-	0xd5, 0xd2, 0xe3, 0xaa, 0xb5, 0x07, 0x70, 0xdc, 0x44, 0x25, 0x79, 0x66, 0x7f, 0x19, 0x60, 0x3e,
-	0x53, 0xf9, 0x2a, 0x78, 0x1a, 0xb2, 0x6d, 0xec, 0x77, 0xd0, 0x95, 0x54, 0xd1, 0x30, 0x27, 0x6f,
-	0x0f, 0xfb, 0xe3, 0x0b, 0xa7, 0xf0, 0xe1, 0xfc, 0xbd, 0x76, 0x5e, 0x34, 0x6c, 0x12, 0x25, 0x2a,
-	0x73, 0xcb, 0x1b, 0x72, 0x03, 0xfd, 0xda, 0x18, 0x4d, 0x68, 0xbf, 0xb1, 0xac, 0xe4, 0xcf, 0x4b,
-	0x3c, 0x84, 0xce, 0x8a, 0xf2, 0x94, 0x95, 0xd2, 0x8b, 0xe6, 0xb6, 0x75, 0x6d, 0xd8, 0x26, 0x1c,
-	0xd4, 0x9e, 0xc8, 0x35, 0x0f, 0x01, 0xbd, 0x28, 0xfc, 0x87, 0x68, 0x1b, 0xc1, 0xfc, 0x85, 0x94,
-	0x3c, 0x1b, 0x2f, 0x61, 0xbf, 0x08, 0x43, 0x65, 0x38, 0x03, 0x5c, 0x0f, 0x06, 0xcf, 0x2b, 0x6b,
-	0x1b, 0xf3, 0x27, 0xa7, 0xdb, 0x20, 0xb9, 0xc6, 0x9d, 0xf1, 0xa7, 0x01, 0x50, 0x23, 0xbd, 0x87,
-	0xde, 0x8f, 0x0d, 0xb4, 0x36, 0x85, 0x47, 0x8e, 0x1a, 0x36, 0x9a, 0x0f, 0x27, 0xd0, 0xaf, 0x79,
-	0x41, 0x52, 0x01, 0xd7, 0xa3, 0x20, 0x56, 0xe3, 0x4e, 0xd3, 0x3c, 0x74, 0x66, 0x6d, 0x11, 0x88,
-	0x79, 0x57, 0x7f, 0xb2, 0xab, 0xef, 0x00, 0x00, 0x00, 0xff, 0xff, 0x51, 0x91, 0x47, 0x47, 0x99,
-	0x02, 0x00, 0x00,
+var fileDescriptor_oim_6186fc703fda91d0 = []byte{
+	// 349 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x92, 0x4f, 0x4f, 0xf2, 0x40,
+	0x10, 0x87, 0xe9, 0x0b, 0x6f, 0x85, 0xc1, 0x18, 0x32, 0x31, 0x58, 0x7a, 0xf0, 0xcf, 0xc6, 0x03,
+	0xa7, 0x62, 0xf0, 0x03, 0x98, 0x80, 0x26, 0x72, 0x20, 0x31, 0x4d, 0xf0, 0xc0, 0xad, 0xc0, 0x00,
+	0x4d, 0xb6, 0xec, 0xba, 0x5b, 0x34, 0xf8, 0x11, 0x3c, 0xfb, 0x81, 0x4d, 0x17, 0x0a, 0x25, 0x54,
+	0xe2, 0x6d, 0x76, 0xe6, 0xc9, 0x2f, 0xf3, 0x4c, 0x0b, 0x15, 0x11, 0x0a, 0x4f, 0x2a, 0x11, 0x0b,
+	0xb4, 0x93, 0xf2, 0xfd, 0xce, 0xbd, 0x9c, 0x09, 0x31, 0xe3, 0xd4, 0x32, 0xdd, 0xd1, 0x72, 0xda,
+	0xfa, 0x50, 0x81, 0x94, 0xa4, 0xf4, 0x9a, 0x63, 0x3d, 0x68, 0xf8, 0x34, 0x0b, 0x75, 0x4c, 0xaa,
+	0x2b, 0x16, 0xb1, 0x12, 0x9c, 0x93, 0xf2, 0xe9, 0x6d, 0x49, 0x3a, 0x46, 0x84, 0xd2, 0x60, 0xd0,
+	0x7b, 0x74, 0xac, 0x6b, 0xab, 0x59, 0xf1, 0x4d, 0x8d, 0x0e, 0x9c, 0x04, 0x93, 0x89, 0x22, 0xad,
+	0x9d, 0x7f, 0xa6, 0x9d, 0x3e, 0x59, 0x03, 0x2e, 0xf2, 0xa2, 0x24, 0x5f, 0xb1, 0x2f, 0x0b, 0x6a,
+	0xfd, 0x40, 0xbe, 0x0a, 0xbe, 0x8c, 0xe8, 0x58, 0xba, 0x07, 0x76, 0x14, 0x70, 0x2e, 0xc6, 0x26,
+	0xbc, 0xda, 0x3e, 0xf7, 0xd6, 0x1e, 0x5e, 0xdf, 0x74, 0x5f, 0x02, 0x15, 0x44, 0xfa, 0xb9, 0xe0,
+	0x6f, 0x28, 0x6c, 0x42, 0x69, 0x4c, 0x72, 0xee, 0x14, 0x0d, 0x8d, 0x29, 0xdd, 0x25, 0x39, 0xdf,
+	0xb2, 0x86, 0xe8, 0x94, 0xc1, 0x96, 0xa6, 0xc3, 0x18, 0x9c, 0x66, 0xd3, 0x92, 0x3d, 0x74, 0xf8,
+	0x49, 0x66, 0x8f, 0xa2, 0x6f, 0x6a, 0x76, 0x0b, 0xb0, 0xcb, 0xc0, 0x3a, 0xd8, 0x9a, 0xc6, 0x8a,
+	0xe2, 0xcd, 0xae, 0x9b, 0x17, 0xab, 0xc1, 0x59, 0xc6, 0x2a, 0x11, 0x6d, 0x02, 0x0e, 0x16, 0xd1,
+	0x1f, 0x4c, 0x19, 0x42, 0x6d, 0x8f, 0x94, 0x7c, 0xd5, 0x9e, 0x42, 0x79, 0x7d, 0x41, 0xb5, 0xc2,
+	0x21, 0xe0, 0xe1, 0x35, 0xf1, 0x26, 0x35, 0xfc, 0xf5, 0xa3, 0xb9, 0x57, 0xc7, 0x90, 0x64, 0xc7,
+	0x42, 0xfb, 0xdb, 0x02, 0xc8, 0x84, 0x3e, 0x40, 0x65, 0xab, 0x81, 0xce, 0xee, 0xe2, 0xfb, 0x16,
+	0x6e, 0x3d, 0x67, 0x62, 0xf2, 0xf0, 0x09, 0xaa, 0x19, 0x17, 0x74, 0x53, 0xf0, 0xf0, 0x14, 0xae,
+	0x93, 0x3b, 0x33, 0x31, 0x9d, 0xff, 0xc3, 0xa2, 0x08, 0xc5, 0xc8, 0x36, 0x7f, 0xe6, 0xfd, 0x4f,
+	0x00, 0x00, 0x00, 0xff, 0xff, 0x9c, 0x29, 0x9d, 0x97, 0xce, 0x02, 0x00, 0x00,
 }
