@@ -78,7 +78,7 @@ func GetOIMDriver(options ...DriverOption) (*oimDriver, error) {
 	od := oimDriver{
 		driverName:  "oim-driver",
 		nodeID:      "unset-node-id",
-		csiEndpoint: "/var/run/oim-driver.socket",
+		csiEndpoint: "unix:///var/run/oim-driver.socket",
 	}
 	for _, op := range options {
 		err := op(&od)
