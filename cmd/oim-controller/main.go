@@ -25,6 +25,8 @@ func init() {
 
 var (
 	endpoint   = flag.String("endpoint", "unix:///tmp/controller.sock", "OIM controller endpoint")
+	spdk       = flag.String("spdk", "/var/tmp/vhost.sock", "SPDK VHost RPC socket path")
+	vhost      = flag.String("vhost-scsi-controller", "vhost.0", "SPDK VirtIO SCSI controller name")
 	hardwareID = flag.String("hardwareid", "", "unique id for the controlled hardware")
 )
 
@@ -39,6 +41,8 @@ func main() {
 
 	options := []oimcontroller.Option{
 		oimcontroller.OptionHardwareID(*hardwareID),
+		oimcontroller.OptionSPDK(*spdk),
+		oimcontroller.OptionVHostController(*vhost),
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {
