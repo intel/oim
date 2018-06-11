@@ -19,7 +19,7 @@ REGISTRY_NAME=localhost:5000
 IMAGE_VERSION_oim-csi-driver=canary
 IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
-all: oim-csi-driver-container
+all: oim-csi-driver
 
 # By default, testing only runs tests that work without additional components.
 # Additional tests can be enabled by overriding the following makefile variables
@@ -35,7 +35,7 @@ TEST_QEMU_IMAGE=
 TEST_CMD=go test -v
 TEST_ARGS=$(IMPORT_PATH)/pkg/...
 
-test: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
+test: all $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
 	go vet $(IMPORT_PATH)/pkg/...
 	mkdir -p _work
 	cd _work && \
