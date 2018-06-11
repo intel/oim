@@ -1,0 +1,5 @@
+/.protoc
+/oim.a
+/oim/v0/.build/
+/protoc
+/protoc-gen-go

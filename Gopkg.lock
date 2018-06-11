@@ -74,7 +74,7 @@
   revision = "23def4e6c14b4da8ac2ed8007337bc5eb5007998"
 
 [[projects]]
-  digest = "1:cb22af0ed7c72d495d8be1106233ee553898950f15fd3f5404406d44c2e86888"
+  digest = "1:4c3902ed2d562ad828e077149a7969200a3d27852a7b4fb5c1e1055675dbd0f3"
   name = "github.com/golang/protobuf"
   packages = [
     "proto",
@@ -82,6 +82,7 @@
     "ptypes/any",
     "ptypes/duration",
     "ptypes/timestamp",
+    "ptypes/wrappers",
   ]
   pruneopts = "UT"
   revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
@@ -381,6 +382,8 @@
     "github.com/digitalocean/go-qemu/qemu",
     "github.com/digitalocean/go-qemu/qmp",
     "github.com/golang/glog",
+    "github.com/golang/protobuf/proto",
+    "github.com/golang/protobuf/ptypes/wrappers",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
