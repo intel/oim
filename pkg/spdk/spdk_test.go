@@ -170,3 +170,139 @@ func TestNBDDev(t *testing.T) {
 	err = StopNBDDisk(ctx, client, stopArg)
 	require.NoError(t, err, "Stop NBD Disk with %+v", stopArg)
 }
+
+func TestSCSI(t *testing.T) {
+	ctx := context.Background()
+	client := connect(t)
+	defer client.Close()
+
+	var err error
+
+	checkControllers := func(t *testing.T, expected GetVHostControllersResponse) {
+		controllers, err := GetVHostControllers(ctx, client)
+		require.NoError(t, err, "GetVHostControllers")
+		assert.Equal(t, expected, controllers)
+	}
+
+	controller := "my-scsi-vhost"
+	constructArgs := ConstructVHostSCSIControllerArgs{
+		Controller: controller,
+	}
+	err = ConstructVHostSCSIController(ctx, client, constructArgs)
+	require.NoError(t, err, "Construct VHostSCSI controller with %v", constructArgs)
+	defer RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller})
+
+	expected := GetVHostControllersResponse{
+		Controller{
+			Controller: controller,
+			CPUMask:    "0x1",
+			BackendSpecific: BackendSpecificType{
+				"scsi": SCSIControllerSpecific{},
+			},
+		},
+	}
+	checkControllers(t, expected)
+
+	bdevArgs := ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}}
+	created, err := ConstructMallocBDev(ctx, client, bdevArgs)
+	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
+	defer DeleteBDev(ctx, client, DeleteBDevArgs{Name: created[0]})
+	created2, err := ConstructMallocBDev(ctx, client, bdevArgs)
+	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
+	defer DeleteBDev(ctx, client, DeleteBDevArgs{Name: created2[0]})
+
+	addLUN := AddVHostSCSILUNArgs{
+		Controller: controller,
+		BDevName:   created[0],
+	}
+	err = AddVHostSCSILUN(ctx, client, addLUN)
+	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN)
+	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
+		SCSIControllerTarget{
+			TargetName: "Target 0",
+			LUNs: []SCSIControllerLUN{
+				SCSIControllerLUN{
+					BDevName: created[0],
+				},
+			},
+		},
+	}
+	checkControllers(t, expected)
+
+	addLUN2 := AddVHostSCSILUNArgs{
+		Controller:    controller,
+		SCSITargetNum: 1,
+		BDevName:      created2[0],
+	}
+	err = AddVHostSCSILUN(ctx, client, addLUN2)
+	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN2)
+	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
+		SCSIControllerTarget{
+			TargetName: "Target 0",
+			LUNs: []SCSIControllerLUN{
+				SCSIControllerLUN{
+					BDevName: created[0],
+				},
+			},
+		},
+		SCSIControllerTarget{
+			TargetName: "Target 1",
+			ID:         1,
+			SCSIDevNum: 1,
+			LUNs: []SCSIControllerLUN{
+				SCSIControllerLUN{
+					BDevName: created2[0],
+				},
+			},
+		},
+	}
+	checkControllers(t, expected)
+
+	controller2 := "my-scsi-vhost2"
+	constructArgs2 := ConstructVHostSCSIControllerArgs{
+		Controller: controller2,
+	}
+	err = ConstructVHostSCSIController(ctx, client, constructArgs2)
+	require.NoError(t, err, "Construct VHostSCSI controller with %v", constructArgs2)
+	defer RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller2})
+
+	expected = append(expected,
+		Controller{
+			Controller: controller2,
+			CPUMask:    "0x1",
+			BackendSpecific: BackendSpecificType{
+				"scsi": SCSIControllerSpecific{},
+			},
+		})
+	checkControllers(t, expected)
+
+	removeArgs := RemoveVHostSCSITargetArgs{
+		Controller:    controller,
+		SCSITargetNum: 0,
+	}
+	err = RemoveVHostSCSITarget(ctx, client, removeArgs)
+	require.NoError(t, err, "RemoveVHostSCSITarget %v", removeArgs)
+	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
+		SCSIControllerTarget{
+			TargetName: "Target 1",
+			ID:         1,
+			SCSIDevNum: 1,
+			LUNs: []SCSIControllerLUN{
+				SCSIControllerLUN{
+					BDevName: created2[0],
+				},
+			},
+		},
+	}
+	checkControllers(t, expected)
+
+	// Cannot remove non-empty controller.
+	err = RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller})
+	require.Error(t, err, "Remove VHost controller %s", controller)
+	checkControllers(t, expected)
+
+	err = RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller2})
+	require.NoError(t, err, "Remove VHost controller %s", controller2)
+	expected = expected[0:1]
+	checkControllers(t, expected)
+}

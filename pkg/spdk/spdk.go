@@ -99,3 +99,136 @@ type StopNBDDiskArgs struct {
 func StopNBDDisk(ctx context.Context, client *Client, args StopNBDDiskArgs) error {
 	return client.Invoke(ctx, "stop_nbd_disk", args, nil)
 }
+
+type ConstructVHostSCSIControllerArgs struct {
+	CPUMask    string `json:"cpumask,omitempty"`
+	Controller string `json:"ctrlr"`
+}
+
+func ConstructVHostSCSIController(ctx context.Context, client *Client, args ConstructVHostSCSIControllerArgs) error {
+	return client.Invoke(ctx, "construct_vhost_scsi_controller", args, nil)
+}
+
+type AddVHostSCSILUNArgs struct {
+	Controller    string `json:"ctrlr"`
+	SCSITargetNum uint32 `json:"scsi_target_num"`
+	BDevName      string `json:"bdev_name"`
+}
+
+func AddVHostSCSILUN(ctx context.Context, client *Client, args AddVHostSCSILUNArgs) error {
+	return client.Invoke(ctx, "add_vhost_scsi_lun", args, nil)
+}
+
+type RemoveVHostSCSITargetArgs struct {
+	Controller    string `json:"ctrlr"`
+	SCSITargetNum uint32 `json:"scsi_target_num"`
+}
+
+func RemoveVHostSCSITarget(ctx context.Context, client *Client, args RemoveVHostSCSITargetArgs) error {
+	return client.Invoke(ctx, "remove_vhost_scsi_target", args, nil)
+}
+
+type RemoveVHostControllerArgs struct {
+	Controller string `json:"ctrlr"`
+}
+
+func RemoveVHostController(ctx context.Context, client *Client, args RemoveVHostControllerArgs) error {
+	return client.Invoke(ctx, "remove_vhost_controller", args, nil)
+}
+
+type GetVHostControllersResponse []Controller
+
+type Controller struct {
+	Controller string `json:"ctrlr"`
+	CPUMask    string `json:"cpumask"`
+	// BackendSpecific holds the parsed JSON response for known
+	// backends (like SCSIControllerSpecific), otherwise
+	// the JSON data converted to basic types (map, list, etc.)
+	BackendSpecific BackendSpecificType `json:"backend_specific"`
+}
+
+type BackendSpecificType map[string]interface{}
+type SCSIControllerSpecific []SCSIControllerTarget
+type SCSIControllerTarget struct {
+	TargetName string
+	LUNs       []SCSIControllerLUN
+	ID         int32
+	SCSIDevNum uint32
+}
+type SCSIControllerLUN struct {
+	LUN      int32
+	BDevName string
+}
+
+// getSCSIBackendSpecific interprets the Controller.BackendSpecific value for
+// map entries with key "scsi". See https://github.com/spdk/spdk/issues/329#issuecomment-396266197
+// and spdk_vhost_scsi_dump_info_json().
+func getSCSIBackendSpecific(in interface{}) SCSIControllerSpecific {
+	result := SCSIControllerSpecific{}
+	list, ok := in.([]interface{})
+	if !ok {
+		return result
+	}
+	for _, entry := range list {
+		if hash, ok := entry.(map[string]interface{}); ok {
+			target := SCSIControllerTarget{
+				LUNs: []SCSIControllerLUN{},
+			}
+			for key, value := range hash {
+				switch key {
+				case "target_name":
+					if name, ok := value.(string); ok {
+						target.TargetName = name
+					}
+				case "id":
+					if id, ok := value.(float64); ok {
+						target.ID = int32(id)
+					}
+				case "scsi_dev_num":
+					if devNum, ok := value.(float64); ok {
+						target.SCSIDevNum = uint32(devNum)
+					}
+				case "luns":
+					if luns, ok := value.([]interface{}); ok {
+						for _, lun := range luns {
+							var l SCSIControllerLUN
+							if hash, ok := lun.(map[string]interface{}); ok {
+								for key, value := range hash {
+									switch key {
+									case "id":
+										if id, ok := value.(float64); ok {
+											l.LUN = int32(id)
+										}
+									case "bdev_name":
+										if name, ok := value.(string); ok {
+											l.BDevName = name
+										}
+									}
+								}
+							}
+							target.LUNs = append(target.LUNs, l)
+						}
+					}
+				}
+			}
+			result = append(result, target)
+		}
+	}
+	return result
+}
+
+func GetVHostControllers(ctx context.Context, client *Client) (GetVHostControllersResponse, error) {
+	var response GetVHostControllersResponse
+	err := client.Invoke(ctx, "get_vhost_controllers", nil, &response)
+	if err == nil {
+		for _, controller := range response {
+			for backend, specific := range controller.BackendSpecific {
+				switch backend {
+				case "scsi":
+					controller.BackendSpecific[backend] = getSCSIBackendSpecific(specific)
+				}
+			}
+		}
+	}
+	return response, err
+}
