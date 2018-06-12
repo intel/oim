@@ -39,15 +39,8 @@ type BDev struct {
 
 type GetBDevsResponse []BDev
 
-func GetBDevs(ctx context.Context, client *Client, args *GetBDevsArgs) (GetBDevsResponse, error) {
+func GetBDevs(ctx context.Context, client *Client, args GetBDevsArgs) (GetBDevsResponse, error) {
 	var response GetBDevsResponse
-	// nil gets encoded as "params": null, which spdk doesn't
-	// accept. The empty struct however is fine (in
-	// v18.04-126-g9a9bef0a, thanks to
-	// https://github.com/spdk/spdk/issues/303)
-	if args == nil {
-		args = &GetBDevsArgs{}
-	}
 	err := client.Invoke(ctx, "get_bdevs", args, &response)
 	if err != nil {
 		return nil, err
@@ -59,7 +52,7 @@ type DeleteBDevArgs struct {
 	Name string `json:"name"`
 }
 
-func DeleteBDev(ctx context.Context, client *Client, args *DeleteBDevArgs) error {
+func DeleteBDev(ctx context.Context, client *Client, args DeleteBDevArgs) error {
 	return client.Invoke(ctx, "delete_bdev", args, nil)
 }
 
@@ -76,7 +69,7 @@ type ConstructMallocBDevArgs struct {
 	ConstructBDevArgs
 }
 
-func ConstructMallocBDev(ctx context.Context, client *Client, args *ConstructMallocBDevArgs) (ConstructBDevResponse, error) {
+func ConstructMallocBDev(ctx context.Context, client *Client, args ConstructMallocBDevArgs) (ConstructBDevResponse, error) {
 	var response ConstructBDevResponse
 	err := client.Invoke(ctx, "construct_malloc_bdev", args, &response)
 	return response, err

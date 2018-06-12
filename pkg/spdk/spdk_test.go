@@ -32,15 +32,9 @@ func connect(t *testing.T) *Client {
 func TestGetBDevs(t *testing.T) {
 	client := connect(t)
 	defer client.Close()
-	args := []*GetBDevsArgs{
-		nil,
-		&GetBDevsArgs{},
-	}
-	for _, arg := range args {
-		response, err := GetBDevs(context.Background(), client, arg)
-		assert.NoError(t, err, "Failed to list bdevs with %+v: %s", arg)
-		assert.Empty(t, response, "Unexpected non-empty bdev list")
-	}
+	response, err := GetBDevs(context.Background(), client, GetBDevsArgs{})
+	assert.NoError(t, err, "Failed to list bdevs: %s", err)
+	assert.Empty(t, response, "Unexpected non-empty bdev list")
 }
 
 func TestError(t *testing.T) {
@@ -49,7 +43,7 @@ func TestError(t *testing.T) {
 
 	// It would be nice to get a well-documented error code here,
 	// but currently we don't (https://github.com/spdk/spdk/issues/319).
-	_, err := GetBDevs(context.Background(), client, &GetBDevsArgs{Name: "no-such-bdev"})
+	_, err := GetBDevs(context.Background(), client, GetBDevsArgs{Name: "no-such-bdev"})
 	require.Error(t, err, "Should have failed to find no-such-bdev")
 	require.True(t, IsJSONError(err, ERROR_INVALID_PARAMS), "IsJSONError(%+v, ERROR_INVALID_PARAMS)", err)
 }
@@ -63,7 +57,7 @@ func TestMallocBDev(t *testing.T) {
 	cleanup := func(when string) {
 		t.Logf("Cleaning up at %s: %+v", when, created)
 		for _, bdev := range created {
-			err := DeleteBDev(ctx, client, &DeleteBDevArgs{Name: bdev})
+			err := DeleteBDev(ctx, client, DeleteBDevArgs{Name: bdev})
 			require.NoError(t, err, "Failed to delete bdev %s: %s", bdev)
 		}
 		created = ConstructBDevResponse{}
@@ -78,7 +72,7 @@ func TestMallocBDev(t *testing.T) {
 		cleanup(fmt.Sprintf("bdev %d", i))
 		// Can't use := here, it would shadow "created"!
 		var err error
-		created, err = ConstructMallocBDev(ctx, client, &arg)
+		created, err = ConstructMallocBDev(ctx, client, arg)
 		if !assert.NoError(t, err, "Failed to create %+v", arg) {
 			continue
 		}
@@ -91,7 +85,7 @@ func TestMallocBDev(t *testing.T) {
 		if arg.Name != "" {
 			assert.Equal(t, arg.Name, name, "choosen name")
 		}
-		bdevs, err := GetBDevs(ctx, client, &GetBDevsArgs{Name: name})
+		bdevs, err := GetBDevs(ctx, client, GetBDevsArgs{Name: name})
 		t.Logf("bdev %s attributes: %+v", name, bdevs)
 		if !assert.NoError(t, err, "Failed to retrieve bdev %s attributes", name) {
 			continue
@@ -133,9 +127,9 @@ func TestNBDDev(t *testing.T) {
 	createArg := ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: numBlocks, BlockSize: blockSize, Name: name}}
 	// TODO: this does not get called when the test fails?
 	defer func() {
-		DeleteBDev(ctx, client, &DeleteBDevArgs{Name: name})
+		DeleteBDev(ctx, client, DeleteBDevArgs{Name: name})
 	}()
-	_, err := ConstructMallocBDev(ctx, client, &createArg)
+	_, err := ConstructMallocBDev(ctx, client, createArg)
 	require.NoError(t, err, "Failed to create %+v", createArg)
 
 	nbd, err := GetNBDDisks(ctx, client)

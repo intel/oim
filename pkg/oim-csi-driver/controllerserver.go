@@ -53,7 +53,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	// Need to check for already existing volume name, and if found
 	// check for the requested capacity and already allocated capacity
-	bdevs, err := spdk.GetBDevs(ctx, client, &spdk.GetBDevsArgs{Name: req.GetName()})
+	bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: req.GetName()})
 	if err == nil && len(bdevs) == 1 {
 		bdev := bdevs[0]
 		// Since err is nil, it means the volume with the same name already exists
@@ -95,7 +95,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		BlockSize: 512,
 		Name:      req.GetName(),
 	}}
-	_, err = spdk.ConstructMallocBDev(ctx, client, &args)
+	_, err = spdk.ConstructMallocBDev(ctx, client, args)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to create SPDK Malloc BDev: %s", err))
 	}
@@ -132,7 +132,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	// We must not error out when the BDev does not exist (might have been deleted already).
 	// TODO: proper detection of "bdev not found" (https://github.com/spdk/spdk/issues/319).
 	volumeID := req.VolumeId
-	if err := spdk.DeleteBDev(ctx, client, &spdk.DeleteBDevArgs{Name: volumeID}); err != nil && !spdk.IsJSONError(err, spdk.ERROR_INVALID_PARAMS) {
+	if err := spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: volumeID}); err != nil && !spdk.IsJSONError(err, spdk.ERROR_INVALID_PARAMS) {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to delete SPDK Malloc BDev %s: %s", volumeID, err))
 	}
 	return &csi.DeleteVolumeResponse{}, nil
