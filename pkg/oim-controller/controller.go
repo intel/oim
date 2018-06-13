@@ -67,9 +67,29 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 
 	var err error
 
-	// TODO: if this BDev is active as LUN, do nothing because a previous MapVolume
+	// If this BDev is active as LUN, do nothing because a previous MapVolume
 	// call must have succeeded (idempotency!).
-	// Depends on https://github.com/spdk/spdk/issues/329
+	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("GetVHostControllers: %s", err))
+	}
+	for _, controller := range controllers {
+		for key, value := range controller.BackendSpecific {
+			switch key {
+			case "scsi":
+				if scsi, ok := value.(spdk.SCSIControllerSpecific); ok {
+					for _, target := range scsi {
+						for _, lun := range target.LUNs {
+							if lun.BDevName == uuid {
+								// BDev already active.
+								return &oim.MapVolumeReply{}, nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Create a new SCSI target with a LUN connected to this BDev. We iterate over all available
 	// targets and attempt to use them.
@@ -97,7 +117,47 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 }
 
 func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest) (*oim.UnmapVolumeReply, error) {
-	return nil, errors.New("not implemented")
+	uuid := in.GetUUID()
+	if uuid == "" {
+		return nil, errors.New("empty UUID")
+	}
+
+	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("GetVHostControllers: %s", err))
+	}
+	// For the sake of completeness we keep iterating even after having found
+	// something.
+	for _, controller := range controllers {
+		for key, value := range controller.BackendSpecific {
+			switch key {
+			case "scsi":
+				if scsi, ok := value.(spdk.SCSIControllerSpecific); ok {
+					for _, target := range scsi {
+						for _, lun := range target.LUNs {
+							if lun.BDevName == uuid {
+								// Found the right SCSI target.
+								removeArgs := spdk.RemoveVHostSCSITargetArgs{
+									Controller:    controller.Controller,
+									SCSITargetNum: target.SCSIDevNum,
+								}
+								if err := spdk.RemoveVHostSCSITarget(ctx, c.SPDK, removeArgs); err != nil {
+									return nil, errors.New(fmt.Sprintf("RemoveVHostSCSITarget: %s", err))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Don't fail when the BDev is not found (idempotency).
+	if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: uuid}); err != nil {
+		// TODO: detect error (https://github.com/spdk/spdk/issues/319)
+	}
+
+	return &oim.UnmapVolumeReply{}, nil
 }
 
 type Option func(c *Controller) error
