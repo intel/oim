@@ -35,9 +35,10 @@ func ParseEndpoint(ep string) (string, string, error) {
 
 // NonBlockingGRPCServer provides the common functionatilty for a gRPC server.
 type NonBlockingGRPCServer struct {
-	Endpoint string
-	wg       sync.WaitGroup
-	server   *grpc.Server
+	Endpoint      string
+	ServerOptions []grpc.ServerOption
+	wg            sync.WaitGroup
+	server        *grpc.Server
 }
 
 type RegisterService func(*grpc.Server)
@@ -71,6 +72,7 @@ func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
 	opts := []grpc.ServerOption{
 		grpc.UnaryInterceptor(interceptor),
 	}
+	opts = append(opts, s.ServerOptions...)
 	server := grpc.NewServer(opts...)
 	s.server = server
 
