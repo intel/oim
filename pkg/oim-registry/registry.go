@@ -9,7 +9,14 @@ package oimregistry
 import (
 	"context"
 	"errors"
+	"strings"
 
+	"github.com/mwitkow/grpc-proxy/proxy"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+
+	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
@@ -36,6 +43,38 @@ func (r *Registry) RegisterController(ctx context.Context, in *oim.RegisterContr
 	address := in.GetAddress()
 	r.db.Store(uuid, address)
 	return &oim.RegisterControllerReply{}, nil
+}
+
+// StreamDirectory returns a director which transparently
+// proxies gRPC method calls to the corresponding controller.
+func (r *Registry) StreamDirector() proxy.StreamDirector {
+	return func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
+		// Make sure we never forward internal services.
+		if strings.HasPrefix(fullMethodName, "/oim.v0.Registry/") {
+			return nil, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		// Copy the inbound metadata explicitly.
+		outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
+		if ok {
+			// Decide on which backend to dial
+			if hardwareID, exists := md["hardwareid"]; exists {
+				address := r.db.Lookup(hardwareID[0])
+				if address == "" {
+					return outCtx, nil, grpc.Errorf(codes.Unavailable, "%s: not registered", hardwareID[0])
+				}
+				opts := []grpc.DialOption{
+					grpc.WithInsecure(), // TODO: secure connection.
+					grpc.WithCodec(proxy.Codec()),
+					grpc.WithDialer(oimcommon.ChooseDialer(address)),
+				}
+				// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
+				conn, err := grpc.DialContext(ctx, address, opts...)
+				return outCtx, conn, err
+			}
+		}
+		return outCtx, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+	}
 }
 
 type Option func(r *Registry) error
