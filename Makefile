@@ -32,7 +32,10 @@ TEST_SPDK_VHOST_SOCKET=
 # "clear-kvm".
 TEST_QEMU_IMAGE=
 
-TEST_CMD=go test -v
+# Disabling parallelism is important, because the QEMU virtual machine and SPDK
+# are shared between different packages.
+# TODO: start app/vhost per test, dynamically choose ssh port for QEMU
+TEST_CMD=go test -v -p 1
 TEST_ARGS=$(IMPORT_PATH)/pkg/...
 
 test: all $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
@@ -42,6 +45,13 @@ test: all $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/sta
 	TEST_SPDK_VHOST_SOCKET=$(TEST_SPDK_VHOST_SOCKET) \
 	TEST_QEMU_IMAGE=$(addprefix $$(pwd)/, $(TEST_QEMU_IMAGE)) \
 	    $(TEST_CMD) $(TEST_ARGS)
+
+force_test: clean_testcache test
+
+# go caches test results. If we want to rerun tests because e.g. SPDK
+# was restarted, then we must throw away cached results first.
+clean_testcache:
+	go clean -testcache
 
 coverage:
 	mkdir -p _work
@@ -64,7 +74,7 @@ clean:
 	go clean -r -x
 	-rm -rf _output _work
 
-.PHONY: all test coverage clean oim-csi-driver
+.PHONY: all test coverage clean oim-csi-driver clean_testcache force_test
 
 # Downloads and unpacks the latest Clear Linux KVM image.
 # This intentionally uses a different directory, otherwise
