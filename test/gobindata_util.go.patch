@@ -1,0 +1,35 @@
+*** vendor/k8s.io/kubernetes/test/e2e/generated/gobindata_util.go	2018-06-14 17:12:57.478748050 +0200
+--- gobindata_util.go	2018-06-14 16:04:32.130858660 +0200
+***************
+*** 19,24 ****
+--- 19,25 ----
+  //go:generate ../../../hack/generate-bindata.sh
+  
+  import "github.com/golang/glog"
++ import "errors"
+  
+  /*
+  ReadOrDie reads a file from gobindata.
+***************
+*** 26,35 ****
+  */
+  func ReadOrDie(filePath string) []byte {
+  
+! 	fileBytes, err := Asset(filePath)
+  	if err != nil {
+  		gobindataMsg := "An error occurred, possibly gobindata doesn't know about the file you're opening. For questions on maintaining gobindata, contact the sig-testing group."
+! 		glog.Infof("Available gobindata files: %v ", AssetNames())
+  		glog.Fatalf("Failed opening %v , with error %v.  %v.", filePath, err, gobindataMsg)
+  	}
+  	return fileBytes
+--- 27,36 ----
+  */
+  func ReadOrDie(filePath string) []byte {
+  
+! 	fileBytes, err := []byte{}, errors.New("gobindata not vendored")
+  	if err != nil {
+  		gobindataMsg := "An error occurred, possibly gobindata doesn't know about the file you're opening. For questions on maintaining gobindata, contact the sig-testing group."
+! 		glog.Infof("Available gobindata files: %v ", "none")
+  		glog.Fatalf("Failed opening %v , with error %v.  %v.", filePath, err, gobindataMsg)
+  	}
+  	return fileBytes

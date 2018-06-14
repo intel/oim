@@ -19,7 +19,19 @@ REGISTRY_NAME=localhost:5000
 IMAGE_VERSION_oim-csi-driver=canary
 IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
+# Build main set of components.
 all: oim-controller oim-csi-driver oim-registry
+
+# Run operations only developers should need after making code changes.
+update: update_dep
+
+# We have to do some post-processing because dep does not support
+# go-bindata.
+update_dep: test/gobindata_util.go.patch
+	dep ensure -v
+	patch vendor/k8s.io/kubernetes/test/e2e/generated/gobindata_util.go <$<
+
+.PHONY: update update_dep
 
 # By default, testing only runs tests that work without additional components.
 # Additional tests can be enabled by overriding the following makefile variables
@@ -193,5 +205,6 @@ test: test_proto
 test_proto: $(OIM_PROTO)
 	awk '{ if (length > 72) print NR, $$0 }' $? | diff - /dev/null
 
+update: update_spec
 update_spec: $(OIM_PROTO)
 	$(MAKE) -C pkg/spec

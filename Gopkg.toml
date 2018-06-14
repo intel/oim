@@ -24,6 +24,9 @@
 #   go-tests = true
 #   unused-packages = true
 
+[prune]
+  go-tests = true
+  unused-packages = true
 
 [[constraint]]
   name = "github.com/container-storage-interface/spec"
@@ -67,6 +70,88 @@
   name = "k8s.io/kubernetes"
   version = "1.10.2"
 
-[prune]
-  go-tests = true
-  unused-packages = true
+# Must pick version compatible with Kubernetes.
+[[override]]
+  name = "k8s.io/apimachinery"
+  revision = "kubernetes-1.10.2"
+[[override]]
+  name = "k8s.io/api"
+  revision = "kubernetes-1.10.2"
+[[override]]
+  name = "k8s.io/apiserver"
+  revision = "kubernetes-1.10.2"
+#[[override]]
+#  name = "k8s.io/utils"
+#  revision = "kubernetes-1.10.2"
+#[[override]]
+#  name = "k8s.io/kube-openapi"
+#  revision = "kubernetes-1.10.2"
+[[override]]
+  name = "k8s.io/kube-aggregator"
+  revision = "kubernetes-1.10.2"
+
+[[override]]
+  # This is the last revision which still has golang.org/x/exp/inotify,
+  # something that Kubernetes depends on.
+  name = "golang.org/x/exp"
+  revision = "f2486d8f4791367d077f7fa69b7855041f5b2ddf"
+
+# Need just the right version, see docker/libnetwork/vendor.conf.
+[[override]]
+  name = "github.com/vishvananda/netlink"
+  revision = "b2de5d10e38ecce8607e6b438b6d174f389a004e"
+
+# Kubernetes needs something recent, but not too recent.
+# Revision from kubernetes/Godeps/Godeps.json.
+[[override]]
+  name = "github.com/docker/docker"
+  revision = "4f3616fb1c112e206b88cb7a9922bf49067a7756"
+[[override]]
+  name = "github.com/codedellemc/goscaleio"
+  revision = "20e2ce2cf8852dc78bd42b76698dcd8dcd77b7b1"
+[[override]]
+  name = "github.com/vmware/photon-controller-go-sdk"
+  revision = "4a435daef6ccd3d0edaac1161e76f51a70c2589a"
+[[override]]
+  name = "github.com/libopenstorage/openstorage"
+  revision = "093a0c3888753c2056e7373183693d670c6bba01"
+
+[[override]]
+  # Both Kubernetes and docker/docker need the new reference.ParseNormalizedNamed
+  # API call, which isn't yet in any stable release.
+  name = "github.com/docker/distribution"
+  branch = "master"
+
+[[override]]
+  # The only release is too old for Kubernetes.
+  name = "github.com/rancher/go-rancher"
+  branch = "master"
+
+[[override]]
+  # Kubernetes needs older version.
+  name = "github.com/russross/blackfriday"
+  version = "^1.5.1"
+
+# Pick versions which still use github.com/Sirupsen/logrus like
+# github.com/docker/docker v17.05.0-ce-rc3 does.
+# [[override]]
+#   name = "github.com/opencontainers/runc"
+#   revision = "v1.0.0-rc3"
+# [[override]]
+#   name = "github.com/codedellemc/goscaleio"
+#   revision = "485da3636bfcc8e70f74fe7bdc7cb25e5a6e4c4a"
+# [[override]]
+#   name = "github.com/Microsoft/hcsshim"
+#   version = "<=0.5.22"
+# [[override]]
+#   # No 0.7.2 release, and
+#   # github.com/docker/libnetwork@v0.7.0-rc.7 not allowed by constraint <=0.8.0
+#   # so we have to pick again ourselves.
+#   name = "github.com/docker/libnetwork"
+#   revision = "v0.7.2-rc.1"
+
+#[[override]]
+#  # Some older versions contain an azure-storage-go submodule
+#  # that cannot be fetched anymore. Avoid those...
+#  name = "github.com/Azure/azure-sdk-for-go"
+#  version = ">12.0.0"
