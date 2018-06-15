@@ -40,9 +40,9 @@ func main() {
 	defer closer.Close()
 
 	options := []oimcontroller.Option{
-		oimcontroller.OptionHardwareID(*hardwareID),
-		oimcontroller.OptionSPDK(*spdk),
-		oimcontroller.OptionVHostController(*vhost),
+		oimcontroller.WithHardwareID(*hardwareID),
+		oimcontroller.WithSPDK(*spdk),
+		oimcontroller.WithVHostController(*vhost),
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {

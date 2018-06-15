@@ -36,8 +36,8 @@ var _ = Describe("OIM Controller", func() {
 		vhostPath = filepath.Join(filepath.Dir(spdkPath), vhost)
 		var err error
 
-		c, err = oimcontroller.New(oimcontroller.OptionSPDK(spdkPath),
-			oimcontroller.OptionVHostController(vhostPath))
+		c, err = oimcontroller.New(oimcontroller.WithSPDK(spdkPath),
+			oimcontroller.WithVHostController(vhostPath))
 		Expect(err).NotTo(HaveOccurred())
 	})
 

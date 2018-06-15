@@ -65,7 +65,7 @@ func TestOIMDriver(t *testing.T) {
 	defer os.RemoveAll(tmp)
 
 	endpoint := "unix://" + tmp + "/oim-driver.sock"
-	driver, err := GetOIMDriver(OptionCSIEndpoint(endpoint), OptionVHostEndpoint(vhost))
+	driver, err := New(WithCSIEndpoint(endpoint), WithVHostEndpoint(vhost))
 	require.NoError(t, err)
 	s, err := driver.Start()
 	defer s.ForceStop()

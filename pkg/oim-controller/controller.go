@@ -162,14 +162,14 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 
 type Option func(c *Controller) error
 
-func OptionHardwareID(hardwareID string) Option {
+func WithHardwareID(hardwareID string) Option {
 	return func(c *Controller) error {
 		c.hardwareID = hardwareID
 		return nil
 	}
 }
 
-func OptionSPDK(path string) Option {
+func WithSPDK(path string) Option {
 	return func(c *Controller) error {
 		if path == "" {
 			c.SPDK = nil
@@ -184,7 +184,7 @@ func OptionSPDK(path string) Option {
 	}
 }
 
-func OptionVHostController(vhost string) Option {
+func WithVHostController(vhost string) Option {
 	return func(c *Controller) error {
 		c.vhostSCSI = vhost
 		return nil

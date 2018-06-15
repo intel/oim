@@ -47,37 +47,37 @@ var (
 	vendorVersion = "0.2.0"
 )
 
-type DriverOption func(*oimDriver) error
+type Option func(*oimDriver) error
 
-func OptionDriverName(name string) DriverOption {
+func WithDriverName(name string) Option {
 	return func(od *oimDriver) error {
 		od.driverName = name
 		return nil
 	}
 }
 
-func OptionNodeID(id string) DriverOption {
+func WithNodeID(id string) Option {
 	return func(od *oimDriver) error {
 		od.nodeID = id
 		return nil
 	}
 }
 
-func OptionCSIEndpoint(endpoint string) DriverOption {
+func WithCSIEndpoint(endpoint string) Option {
 	return func(od *oimDriver) error {
 		od.csiEndpoint = endpoint
 		return nil
 	}
 }
 
-func OptionVHostEndpoint(endpoint string) DriverOption {
+func WithVHostEndpoint(endpoint string) Option {
 	return func(od *oimDriver) error {
 		od.vhostEndpoint = endpoint
 		return nil
 	}
 }
 
-func GetOIMDriver(options ...DriverOption) (*oimDriver, error) {
+func New(options ...Option) (*oimDriver, error) {
 	od := oimDriver{
 		driverName:  "oim-driver",
 		nodeID:      "unset-node-id",
