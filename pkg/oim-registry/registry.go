@@ -21,14 +21,14 @@ import (
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
-// RegistryDB stores the mapping from hardware ID to gRPC address of
-// the controller for that hardware.
+// RegistryDB stores the mapping from controller ID to gRPC address of
+// the controller.
 type RegistryDB interface {
 	// Store a new mapping. Empty address removes the entry.
-	Store(hardwareID, address string)
+	Store(controllerID, address string)
 
 	// Lookup returns the endpoint or the empty string if not found.
-	Lookup(hardwareID string) (address string)
+	Lookup(controllerID string) (address string)
 }
 
 // Registry implements oim.Registry.
@@ -37,12 +37,12 @@ type Registry struct {
 }
 
 func (r *Registry) RegisterController(ctx context.Context, in *oim.RegisterControllerRequest) (*oim.RegisterControllerReply, error) {
-	uuid := in.GetUUID()
-	if uuid == "" {
-		return nil, errors.New("Empty UUID")
+	controllerID := in.GetControllerId()
+	if controllerID == "" {
+		return nil, errors.New("Empty controller ID")
 	}
 	address := in.GetAddress()
-	r.db.Store(uuid, address)
+	r.db.Store(controllerID, address)
 	return &oim.RegisterControllerReply{}, nil
 }
 
@@ -59,10 +59,10 @@ func (r *Registry) StreamDirector() proxy.StreamDirector {
 		outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
 		if ok {
 			// Decide on which backend to dial
-			if hardwareID, exists := md["hardwareid"]; exists {
-				address := r.db.Lookup(hardwareID[0])
+			if controllerID, exists := md["controllerid"]; exists {
+				address := r.db.Lookup(controllerID[0])
 				if address == "" {
-					return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", hardwareID[0])
+					return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", controllerID[0])
 				}
 				opts := []grpc.DialOption{
 					grpc.WithInsecure(), // TODO: secure connection.

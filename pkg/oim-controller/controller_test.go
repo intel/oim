@@ -44,7 +44,7 @@ var _ = Describe("OIM Controller", func() {
 	Describe("attaching a volume", func() {
 		It("should fail when missing parameters", func() {
 			request := oim.MapVolumeRequest{
-				UUID: "foobar",
+				VolumeId: "foobar",
 			}
 			_, err := c.MapVolume(context.Background(), &request)
 			Expect(err).To(HaveOccurred())
@@ -105,12 +105,12 @@ var _ = Describe("OIM Controller", func() {
 				Expect(failed).To(BeEmpty())
 			})
 
-			mapVolume := func(uuid string) (oim.MapVolumeRequest, spdk.GetVHostControllersResponse) {
+			mapVolume := func(volumeID string) (oim.MapVolumeRequest, spdk.GetVHostControllersResponse) {
 				var err error
 				ctx := context.Background()
 
 				add := oim.MapVolumeRequest{
-					UUID: uuid,
+					VolumeId: volumeID,
 					Params: &oim.MapVolumeRequest_Malloc{
 						Malloc: &oim.MallocParams{
 							Size: 1 * 1024 * 1024,
@@ -129,18 +129,18 @@ var _ = Describe("OIM Controller", func() {
 				Expect(scsi).To(HaveLen(1))
 				Expect(scsi[0].SCSIDevNum).To(Equal(uint32(0)))
 				Expect(scsi[0].LUNs).To(HaveLen(1))
-				Expect(scsi[0].LUNs[0].BDevName).To(Equal(uuid))
+				Expect(scsi[0].LUNs[0].BDevName).To(Equal(volumeID))
 
 				return add, controllers
 			}
 
 			It("should work without QEMU", func() {
 				var err error
-				uuid := "controller-test"
+				volumeID := "controller-test"
 				ctx := context.Background()
 
 				By("mapping a volume")
-				add, controllers := mapVolume(uuid)
+				add, controllers := mapVolume(volumeID)
 
 				By("mapping again")
 				_, err = c.MapVolume(context.Background(), &add)
@@ -151,7 +151,7 @@ var _ = Describe("OIM Controller", func() {
 
 				By("unmapping")
 				remove := oim.UnmapVolumeRequest{
-					UUID: "controller-test",
+					VolumeId: "controller-test",
 				}
 				_, err = c.UnmapVolume(context.Background(), &remove)
 				Expect(err).NotTo(HaveOccurred())
@@ -194,13 +194,13 @@ var _ = Describe("OIM Controller", func() {
 				})
 
 				It("should block device appear", func() {
-					uuid := "controller-test"
+					volumeID := "controller-test"
 
 					out, err := vm.SSH("lsblk")
 					Expect(err).NotTo(HaveOccurred())
 					Expect(out).NotTo(ContainSubstring("sda"))
 
-					mapVolume(uuid)
+					mapVolume(volumeID)
 
 					Eventually(func() (string, error) {
 						return vm.SSH("lsblk")

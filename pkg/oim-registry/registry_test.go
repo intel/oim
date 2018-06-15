@@ -47,14 +47,14 @@ var _ = Describe("OIM Registry", func() {
 			var err error
 			r, err := oimregistry.New(oimregistry.DB(db))
 			Expect(err).NotTo(HaveOccurred())
-			hardwareID := "foo"
+			controllerID := "foo"
 			address := "tpc:///1.1.1.1/"
 			_, err = r.RegisterController(ctx, &oim.RegisterControllerRequest{
-				UUID:    hardwareID,
-				Address: address,
+				ControllerId: controllerID,
+				Address:      address,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(db).To(Equal(oimregistry.MemRegistryDB{hardwareID: address}))
+			Expect(db).To(Equal(oimregistry.MemRegistryDB{controllerID: address}))
 		})
 	})
 
@@ -95,16 +95,16 @@ var _ = Describe("OIM Registry", func() {
 			}
 		})
 
-		It("should fail for unknown hardware", func() {
-			ctx := metadata.AppendToOutgoingContext(ctx, "hardwareid", "no-such-hardware")
+		It("should fail for unknown controller", func() {
+			ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", "no-such-controller")
 			_, err := controllerClient.MapVolume(ctx, &oim.MapVolumeRequest{})
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("no-such-hardware: not registered"))
+			Expect(err.Error()).To(ContainSubstring("no-such-controller: not registered"))
 		})
 
-		Context("with hardware", func() {
+		Context("with controller", func() {
 			var (
-				hardwareID       = "mock-hardware"
+				controllerID     = "mock-controller"
 				controller       *MockController
 				controllerServer *oimcommon.NonBlockingGRPCServer
 			)
@@ -121,8 +121,8 @@ var _ = Describe("OIM Registry", func() {
 
 				// Register this controller.
 				_, err = registry.RegisterController(ctx, &oim.RegisterControllerRequest{
-					UUID:    hardwareID,
-					Address: controllerAddress,
+					ControllerId: controllerID,
+					Address:      controllerAddress,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -138,14 +138,14 @@ var _ = Describe("OIM Registry", func() {
 				var err error
 				var callCtx context.Context
 
-				callCtx = metadata.AppendToOutgoingContext(ctx, "hardwareid", "no-such-hardware")
+				callCtx = metadata.AppendToOutgoingContext(ctx, "controllerid", "no-such-controller")
 				_, err = controllerClient.MapVolume(callCtx, &oim.MapVolumeRequest{})
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("no-such-hardware: not registered"))
+				Expect(err.Error()).To(ContainSubstring("no-such-controller: not registered"))
 
-				callCtx = metadata.AppendToOutgoingContext(ctx, "hardwareid", hardwareID)
+				callCtx = metadata.AppendToOutgoingContext(ctx, "controllerid", controllerID)
 				args := oim.MapVolumeRequest{
-					UUID: "my-volume",
+					VolumeId: "my-volume",
 				}
 				expected := args
 				_, err = controllerClient.MapVolume(callCtx, &args)

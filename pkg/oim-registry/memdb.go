@@ -9,13 +9,13 @@ package oimregistry
 // MemRegistryDB implements an in-memory DB for Registry.
 type MemRegistryDB map[string]string
 
-func (m MemRegistryDB) Store(hardwareID, address string) {
+func (m MemRegistryDB) Store(controllerID, address string) {
 	if address == "" {
-		delete(m, hardwareID)
+		delete(m, controllerID)
 	} else {
-		m[hardwareID] = address
+		m[controllerID] = address
 	}
 }
-func (m MemRegistryDB) Lookup(hardwareID string) (address string) {
-	return m[hardwareID]
+func (m MemRegistryDB) Lookup(controllerID string) (address string) {
+	return m[controllerID]
 }

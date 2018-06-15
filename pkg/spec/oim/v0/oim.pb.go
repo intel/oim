@@ -25,7 +25,13 @@ var _ = math.Inf
 const _ = proto.ProtoPackageIsVersion2 // please upgrade the proto package
 
 type RegisterControllerRequest struct {
-	UUID                 string   `protobuf:"bytes,1,opt,name=UUID" json:"UUID,omitempty"`
+	// An identifier for the OIM controller which is unique
+	// among all controllers connected to the OIM registry.
+	ControllerId string `protobuf:"bytes,1,opt,name=controller_id,json=controllerId" json:"controller_id,omitempty"`
+	// A string that can be used for grpc.Dial to connect
+	// to the OIM controller.
+	// See https://github.com/grpc/grpc/blob/master/doc/naming.md.
+	// An empty string removes the database entry.
 	Address              string   `protobuf:"bytes,2,opt,name=address" json:"address,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
@@ -36,7 +42,7 @@ func (m *RegisterControllerRequest) Reset()         { *m = RegisterControllerReq
 func (m *RegisterControllerRequest) String() string { return proto.CompactTextString(m) }
 func (*RegisterControllerRequest) ProtoMessage()    {}
 func (*RegisterControllerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{0}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{0}
 }
 func (m *RegisterControllerRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_RegisterControllerRequest.Unmarshal(m, b)
@@ -56,9 +62,9 @@ func (m *RegisterControllerRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_RegisterControllerRequest proto.InternalMessageInfo
 
-func (m *RegisterControllerRequest) GetUUID() string {
+func (m *RegisterControllerRequest) GetControllerId() string {
 	if m != nil {
-		return m.UUID
+		return m.ControllerId
 	}
 	return ""
 }
@@ -80,7 +86,7 @@ func (m *RegisterControllerReply) Reset()         { *m = RegisterControllerReply
 func (m *RegisterControllerReply) String() string { return proto.CompactTextString(m) }
 func (*RegisterControllerReply) ProtoMessage()    {}
 func (*RegisterControllerReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{1}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{1}
 }
 func (m *RegisterControllerReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_RegisterControllerReply.Unmarshal(m, b)
@@ -101,7 +107,13 @@ func (m *RegisterControllerReply) XXX_DiscardUnknown() {
 var xxx_messageInfo_RegisterControllerReply proto.InternalMessageInfo
 
 type MapVolumeRequest struct {
-	UUID string `protobuf:"bytes,1,opt,name=UUID" json:"UUID,omitempty"`
+	// An identifier for the volume that must be unique
+	// among all volumes mapped by the OIM controller.
+	// All calls with the same identifier must have the
+	// same parameters.
+	VolumeId string `protobuf:"bytes,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
+	// These parameters define how to access the volume.
+	//
 	// Types that are valid to be assigned to Params:
 	//	*MapVolumeRequest_Malloc
 	//	*MapVolumeRequest_Ceph
@@ -115,7 +127,7 @@ func (m *MapVolumeRequest) Reset()         { *m = MapVolumeRequest{} }
 func (m *MapVolumeRequest) String() string { return proto.CompactTextString(m) }
 func (*MapVolumeRequest) ProtoMessage()    {}
 func (*MapVolumeRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{2}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{2}
 }
 func (m *MapVolumeRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_MapVolumeRequest.Unmarshal(m, b)
@@ -156,9 +168,9 @@ func (m *MapVolumeRequest) GetParams() isMapVolumeRequest_Params {
 	return nil
 }
 
-func (m *MapVolumeRequest) GetUUID() string {
+func (m *MapVolumeRequest) GetVolumeId() string {
 	if m != nil {
-		return m.UUID
+		return m.VolumeId
 	}
 	return ""
 }
@@ -251,7 +263,11 @@ func _MapVolumeRequest_OneofSizer(msg proto.Message) (n int) {
 	return n
 }
 
+// For testing purposes a volume can be created in memory
+// when it gets mapped for the first time. The data gets
+// lost once the volume gets unmapped.
 type MallocParams struct {
+	// The desired size in bytes. Must be a multiple of 512.
 	Size                 int64    `protobuf:"varint,1,opt,name=size" json:"size,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
@@ -262,7 +278,7 @@ func (m *MallocParams) Reset()         { *m = MallocParams{} }
 func (m *MallocParams) String() string { return proto.CompactTextString(m) }
 func (*MallocParams) ProtoMessage()    {}
 func (*MallocParams) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{3}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{3}
 }
 func (m *MallocParams) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_MallocParams.Unmarshal(m, b)
@@ -289,6 +305,8 @@ func (m *MallocParams) GetSize() int64 {
 	return 0
 }
 
+// Defines a Ceph block device. This is currently a placeholder
+// to demonstrate how MapVolumeRequest.params will work.
 type CephParams struct {
 	Secret               string   `protobuf:"bytes,1,opt,name=secret" json:"secret,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
@@ -300,7 +318,7 @@ func (m *CephParams) Reset()         { *m = CephParams{} }
 func (m *CephParams) String() string { return proto.CompactTextString(m) }
 func (*CephParams) ProtoMessage()    {}
 func (*CephParams) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{4}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{4}
 }
 func (m *CephParams) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_CephParams.Unmarshal(m, b)
@@ -327,7 +345,16 @@ func (m *CephParams) GetSecret() string {
 	return ""
 }
 
+// The reply tells the caller enough about the mapped volume
+// to access it.
 type MapVolumeReply struct {
+	// The PCI address of the controller which provides
+	// access to the volume.
+	PciAddress string `protobuf:"bytes,1,opt,name=pci_address,json=pciAddress" json:"pci_address,omitempty"`
+	// The SCSI target and LUN in the format
+	// x:y without extra zeros.
+	// Only set for SCSI controllers.
+	ScsiDevice           string   `protobuf:"bytes,2,opt,name=scsi_device,json=scsiDevice" json:"scsi_device,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -337,7 +364,7 @@ func (m *MapVolumeReply) Reset()         { *m = MapVolumeReply{} }
 func (m *MapVolumeReply) String() string { return proto.CompactTextString(m) }
 func (*MapVolumeReply) ProtoMessage()    {}
 func (*MapVolumeReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{5}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{5}
 }
 func (m *MapVolumeReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_MapVolumeReply.Unmarshal(m, b)
@@ -357,8 +384,23 @@ func (m *MapVolumeReply) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_MapVolumeReply proto.InternalMessageInfo
 
+func (m *MapVolumeReply) GetPciAddress() string {
+	if m != nil {
+		return m.PciAddress
+	}
+	return ""
+}
+
+func (m *MapVolumeReply) GetScsiDevice() string {
+	if m != nil {
+		return m.ScsiDevice
+	}
+	return ""
+}
+
 type UnmapVolumeRequest struct {
-	UUID                 string   `protobuf:"bytes,1,opt,name=UUID" json:"UUID,omitempty"`
+	// The volume ID that was used when mapping the volume.
+	VolumeId             string   `protobuf:"bytes,1,opt,name=volume_id,json=volumeId" json:"volume_id,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -368,7 +410,7 @@ func (m *UnmapVolumeRequest) Reset()         { *m = UnmapVolumeRequest{} }
 func (m *UnmapVolumeRequest) String() string { return proto.CompactTextString(m) }
 func (*UnmapVolumeRequest) ProtoMessage()    {}
 func (*UnmapVolumeRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{6}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{6}
 }
 func (m *UnmapVolumeRequest) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_UnmapVolumeRequest.Unmarshal(m, b)
@@ -388,9 +430,9 @@ func (m *UnmapVolumeRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_UnmapVolumeRequest proto.InternalMessageInfo
 
-func (m *UnmapVolumeRequest) GetUUID() string {
+func (m *UnmapVolumeRequest) GetVolumeId() string {
 	if m != nil {
-		return m.UUID
+		return m.VolumeId
 	}
 	return ""
 }
@@ -405,7 +447,7 @@ func (m *UnmapVolumeReply) Reset()         { *m = UnmapVolumeReply{} }
 func (m *UnmapVolumeReply) String() string { return proto.CompactTextString(m) }
 func (*UnmapVolumeReply) ProtoMessage()    {}
 func (*UnmapVolumeReply) Descriptor() ([]byte, []int) {
-	return fileDescriptor_oim_6186fc703fda91d0, []int{7}
+	return fileDescriptor_oim_68d17cb2f1d81d6b, []int{7}
 }
 func (m *UnmapVolumeReply) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_UnmapVolumeReply.Unmarshal(m, b)
@@ -447,6 +489,8 @@ const _ = grpc.SupportPackageIsVersion4
 // Client API for Registry service
 
 type RegistryClient interface {
+	// Adds a new entry to the registry DB or overwrites
+	// an existing one.
 	RegisterController(ctx context.Context, in *RegisterControllerRequest, opts ...grpc.CallOption) (*RegisterControllerReply, error)
 }
 
@@ -470,6 +514,8 @@ func (c *registryClient) RegisterController(ctx context.Context, in *RegisterCon
 // Server API for Registry service
 
 type RegistryServer interface {
+	// Adds a new entry to the registry DB or overwrites
+	// an existing one.
 	RegisterController(context.Context, *RegisterControllerRequest) (*RegisterControllerReply, error)
 }
 
@@ -511,7 +557,14 @@ var _Registry_serviceDesc = grpc.ServiceDesc{
 // Client API for Controller service
 
 type ControllerClient interface {
+	// Makes a volume available via the accelerator hardware.
+	// The call must be idempotent: when a caller is unsure whether
+	// a call was executed or what the result was, MapVolume
+	// can be called again and will succeed without changing
+	// anything.
 	MapVolume(ctx context.Context, in *MapVolumeRequest, opts ...grpc.CallOption) (*MapVolumeReply, error)
+	// Removes access to the volume.
+	// Also idempotent.
 	UnmapVolume(ctx context.Context, in *UnmapVolumeRequest, opts ...grpc.CallOption) (*UnmapVolumeReply, error)
 }
 
@@ -544,7 +597,14 @@ func (c *controllerClient) UnmapVolume(ctx context.Context, in *UnmapVolumeReque
 // Server API for Controller service
 
 type ControllerServer interface {
+	// Makes a volume available via the accelerator hardware.
+	// The call must be idempotent: when a caller is unsure whether
+	// a call was executed or what the result was, MapVolume
+	// can be called again and will succeed without changing
+	// anything.
 	MapVolume(context.Context, *MapVolumeRequest) (*MapVolumeReply, error)
+	// Removes access to the volume.
+	// Also idempotent.
 	UnmapVolume(context.Context, *UnmapVolumeRequest) (*UnmapVolumeReply, error)
 }
 
@@ -605,30 +665,34 @@ var _Controller_serviceDesc = grpc.ServiceDesc{
 	Metadata: "oim.proto",
 }
 
-func init() { proto.RegisterFile("oim.proto", fileDescriptor_oim_6186fc703fda91d0) }
+func init() { proto.RegisterFile("oim.proto", fileDescriptor_oim_68d17cb2f1d81d6b) }
 
-var fileDescriptor_oim_6186fc703fda91d0 = []byte{
-	// 349 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x92, 0x4f, 0x4f, 0xf2, 0x40,
-	0x10, 0x87, 0xe9, 0x0b, 0x6f, 0x85, 0xc1, 0x18, 0x32, 0x31, 0x58, 0x7a, 0xf0, 0xcf, 0xc6, 0x03,
-	0xa7, 0x62, 0xf0, 0x03, 0x98, 0x80, 0x26, 0x72, 0x20, 0x31, 0x4d, 0xf0, 0xc0, 0xad, 0xc0, 0x00,
-	0x4d, 0xb6, 0xec, 0xba, 0x5b, 0x34, 0xf8, 0x11, 0x3c, 0xfb, 0x81, 0x4d, 0x17, 0x0a, 0x25, 0x54,
-	0xe2, 0x6d, 0x76, 0xe6, 0xc9, 0x2f, 0xf3, 0x4c, 0x0b, 0x15, 0x11, 0x0a, 0x4f, 0x2a, 0x11, 0x0b,
-	0xb4, 0x93, 0xf2, 0xfd, 0xce, 0xbd, 0x9c, 0x09, 0x31, 0xe3, 0xd4, 0x32, 0xdd, 0xd1, 0x72, 0xda,
-	0xfa, 0x50, 0x81, 0x94, 0xa4, 0xf4, 0x9a, 0x63, 0x3d, 0x68, 0xf8, 0x34, 0x0b, 0x75, 0x4c, 0xaa,
-	0x2b, 0x16, 0xb1, 0x12, 0x9c, 0x93, 0xf2, 0xe9, 0x6d, 0x49, 0x3a, 0x46, 0x84, 0xd2, 0x60, 0xd0,
-	0x7b, 0x74, 0xac, 0x6b, 0xab, 0x59, 0xf1, 0x4d, 0x8d, 0x0e, 0x9c, 0x04, 0x93, 0x89, 0x22, 0xad,
-	0x9d, 0x7f, 0xa6, 0x9d, 0x3e, 0x59, 0x03, 0x2e, 0xf2, 0xa2, 0x24, 0x5f, 0xb1, 0x2f, 0x0b, 0x6a,
-	0xfd, 0x40, 0xbe, 0x0a, 0xbe, 0x8c, 0xe8, 0x58, 0xba, 0x07, 0x76, 0x14, 0x70, 0x2e, 0xc6, 0x26,
-	0xbc, 0xda, 0x3e, 0xf7, 0xd6, 0x1e, 0x5e, 0xdf, 0x74, 0x5f, 0x02, 0x15, 0x44, 0xfa, 0xb9, 0xe0,
-	0x6f, 0x28, 0x6c, 0x42, 0x69, 0x4c, 0x72, 0xee, 0x14, 0x0d, 0x8d, 0x29, 0xdd, 0x25, 0x39, 0xdf,
-	0xb2, 0x86, 0xe8, 0x94, 0xc1, 0x96, 0xa6, 0xc3, 0x18, 0x9c, 0x66, 0xd3, 0x92, 0x3d, 0x74, 0xf8,
-	0x49, 0x66, 0x8f, 0xa2, 0x6f, 0x6a, 0x76, 0x0b, 0xb0, 0xcb, 0xc0, 0x3a, 0xd8, 0x9a, 0xc6, 0x8a,
-	0xe2, 0xcd, 0xae, 0x9b, 0x17, 0xab, 0xc1, 0x59, 0xc6, 0x2a, 0x11, 0x6d, 0x02, 0x0e, 0x16, 0xd1,
-	0x1f, 0x4c, 0x19, 0x42, 0x6d, 0x8f, 0x94, 0x7c, 0xd5, 0x9e, 0x42, 0x79, 0x7d, 0x41, 0xb5, 0xc2,
-	0x21, 0xe0, 0xe1, 0x35, 0xf1, 0x26, 0x35, 0xfc, 0xf5, 0xa3, 0xb9, 0x57, 0xc7, 0x90, 0x64, 0xc7,
-	0x42, 0xfb, 0xdb, 0x02, 0xc8, 0x84, 0x3e, 0x40, 0x65, 0xab, 0x81, 0xce, 0xee, 0xe2, 0xfb, 0x16,
-	0x6e, 0x3d, 0x67, 0x62, 0xf2, 0xf0, 0x09, 0xaa, 0x19, 0x17, 0x74, 0x53, 0xf0, 0xf0, 0x14, 0xae,
-	0x93, 0x3b, 0x33, 0x31, 0x9d, 0xff, 0xc3, 0xa2, 0x08, 0xc5, 0xc8, 0x36, 0x7f, 0xe6, 0xfd, 0x4f,
-	0x00, 0x00, 0x00, 0xff, 0xff, 0x9c, 0x29, 0x9d, 0x97, 0xce, 0x02, 0x00, 0x00,
+var fileDescriptor_oim_68d17cb2f1d81d6b = []byte{
+	// 404 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x92, 0xc1, 0x6e, 0xd3, 0x40,
+	0x10, 0x86, 0x6b, 0x52, 0x4c, 0x3c, 0x29, 0xa8, 0x1a, 0xa1, 0xe2, 0x1a, 0x89, 0xc2, 0xc2, 0xa1,
+	0x27, 0x17, 0xc2, 0x03, 0x20, 0x5a, 0x90, 0xe8, 0xa1, 0x12, 0xb2, 0x04, 0x87, 0x5c, 0x22, 0x67,
+	0x3d, 0x49, 0x56, 0x5a, 0x67, 0x97, 0x5d, 0x27, 0xc8, 0xbc, 0x06, 0x3c, 0x30, 0xf2, 0xda, 0x8e,
+	0x1d, 0x25, 0x20, 0xf5, 0xe6, 0xfd, 0xe7, 0xf3, 0x3f, 0x3b, 0xff, 0x2c, 0x04, 0x4a, 0xe4, 0xb1,
+	0x36, 0xaa, 0x50, 0xe8, 0x57, 0x9f, 0x9b, 0xb7, 0xd1, 0x8b, 0x85, 0x52, 0x0b, 0x49, 0x57, 0x4e,
+	0x9d, 0xad, 0xe7, 0x57, 0x3f, 0x4d, 0xaa, 0x35, 0x19, 0x5b, 0x73, 0x6c, 0x02, 0xe7, 0x09, 0x2d,
+	0x84, 0x2d, 0xc8, 0xdc, 0xa8, 0x55, 0x61, 0x94, 0x94, 0x64, 0x12, 0xfa, 0xb1, 0x26, 0x5b, 0xe0,
+	0x6b, 0x78, 0xcc, 0xb7, 0xe2, 0x54, 0x64, 0xa1, 0xf7, 0xd2, 0xbb, 0x0c, 0x92, 0x93, 0x4e, 0xbc,
+	0xcd, 0x30, 0x84, 0x47, 0x69, 0x96, 0x19, 0xb2, 0x36, 0x7c, 0xe0, 0xca, 0xed, 0x91, 0x9d, 0xc3,
+	0xb3, 0x43, 0xde, 0x5a, 0x96, 0xec, 0xb7, 0x07, 0xa7, 0x77, 0xa9, 0xfe, 0xae, 0xe4, 0x3a, 0xa7,
+	0xb6, 0xdd, 0x73, 0x08, 0x36, 0x4e, 0xe8, 0x5a, 0x0d, 0x6b, 0xe1, 0x36, 0xc3, 0x18, 0xfc, 0x3c,
+	0x95, 0x52, 0x71, 0xd7, 0x65, 0x34, 0x7e, 0x1a, 0xd7, 0x13, 0xc6, 0x77, 0x4e, 0xfd, 0x9a, 0x9a,
+	0x34, 0xb7, 0x5f, 0x8e, 0x92, 0x86, 0xc2, 0x4b, 0x38, 0xe6, 0xa4, 0x97, 0xe1, 0xc0, 0xd1, 0xd8,
+	0xd2, 0x37, 0xa4, 0x97, 0x5b, 0xd6, 0x11, 0xd7, 0x43, 0xf0, 0xb5, 0x53, 0x18, 0x83, 0x93, 0xbe,
+	0x1b, 0x22, 0x1c, 0x5b, 0xf1, 0x8b, 0xdc, 0x5d, 0x06, 0x89, 0xfb, 0x66, 0x6f, 0x00, 0x3a, 0x0f,
+	0x3c, 0x03, 0xdf, 0x12, 0x37, 0x54, 0x34, 0xf7, 0x6d, 0x4e, 0x2c, 0x81, 0x27, 0xbd, 0xf1, 0xb4,
+	0x2c, 0xf1, 0x02, 0x46, 0x9a, 0x8b, 0x69, 0x1b, 0x55, 0x8d, 0x83, 0xe6, 0xe2, 0x63, 0xad, 0x54,
+	0x80, 0xe5, 0x56, 0x4c, 0x33, 0xda, 0x08, 0x4e, 0x4d, 0x96, 0x50, 0x49, 0x9f, 0x9c, 0xc2, 0xde,
+	0x01, 0x7e, 0x5b, 0xe5, 0xf7, 0x09, 0x8d, 0x21, 0x9c, 0xee, 0xfc, 0xa2, 0x65, 0x39, 0x9e, 0xc3,
+	0xb0, 0xde, 0x8a, 0x29, 0x71, 0x02, 0xb8, 0xbf, 0x21, 0x7c, 0xd5, 0x86, 0xf5, 0xcf, 0x97, 0x11,
+	0x5d, 0xfc, 0x0f, 0xa9, 0x16, 0x7c, 0x34, 0xfe, 0xe3, 0x01, 0xf4, 0x4c, 0x3f, 0x40, 0xb0, 0x4d,
+	0x04, 0xc3, 0x6e, 0x79, 0xbb, 0xe3, 0x44, 0x67, 0x07, 0x2a, 0xce, 0x0f, 0x3f, 0xc3, 0xa8, 0x37,
+	0x0b, 0x46, 0x2d, 0xb8, 0x9f, 0x49, 0x14, 0x1e, 0xac, 0x39, 0x9b, 0xeb, 0x87, 0x93, 0x81, 0x12,
+	0xf9, 0xcc, 0x77, 0xcf, 0xff, 0xfd, 0xdf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x19, 0xb5, 0x1e, 0x89,
+	0x33, 0x03, 0x00, 0x00,
 }

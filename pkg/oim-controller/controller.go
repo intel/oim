@@ -20,15 +20,15 @@ import (
 
 // Controller implements oim.Controller.
 type Controller struct {
-	hardwareID string
-	SPDK       *spdk.Client
-	vhostSCSI  string
+	controllerID string
+	SPDK         *spdk.Client
+	vhostSCSI    string
 }
 
 func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
-	uuid := in.GetUUID()
-	if uuid == "" {
-		return nil, errors.New("empty UUID")
+	volumeID := in.GetVolumeId()
+	if volumeID == "" {
+		return nil, errors.New("empty volume ID")
 	}
 
 	if c.SPDK == nil {
@@ -39,7 +39,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	}
 
 	// Reuse or create BDev.
-	if _, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: uuid}); err != nil {
+	if _, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: volumeID}); err != nil {
 		// TODO: check error more carefully instead of assuming that it merely
 		// wasn't found.
 		switch x := in.Params.(type) {
@@ -49,7 +49,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 				ConstructBDevArgs: spdk.ConstructBDevArgs{
 					NumBlocks: size / 512,
 					BlockSize: 512,
-					Name:      uuid,
+					Name:      volumeID,
 				},
 			}
 			if _, err := spdk.ConstructMallocBDev(ctx, c.SPDK, args); err != nil {
@@ -64,7 +64,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		}
 	} else {
 		// BDev with the intended name already exists. Assume that it is the right one.
-		oimcommon.Infof(1, ctx, "Reusing existing BDev %s", uuid)
+		oimcommon.Infof(1, ctx, "Reusing existing BDev %s", volumeID)
 	}
 
 	var err error
@@ -82,7 +82,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 				if scsi, ok := value.(spdk.SCSIControllerSpecific); ok {
 					for _, target := range scsi {
 						for _, lun := range target.LUNs {
-							if lun.BDevName == uuid {
+							if lun.BDevName == volumeID {
 								// BDev already active.
 								return &oim.MapVolumeReply{}, nil
 							}
@@ -101,7 +101,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		args := spdk.AddVHostSCSILUNArgs{
 			Controller:    c.vhostSCSI,
 			SCSITargetNum: target,
-			BDevName:      uuid,
+			BDevName:      volumeID,
 		}
 		err = spdk.AddVHostSCSILUN(ctx, c.SPDK, args)
 		if err == nil {
@@ -119,9 +119,9 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 }
 
 func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest) (*oim.UnmapVolumeReply, error) {
-	uuid := in.GetUUID()
-	if uuid == "" {
-		return nil, errors.New("empty UUID")
+	volumeID := in.GetVolumeId()
+	if volumeID == "" {
+		return nil, errors.New("empty volume ID")
 	}
 
 	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
@@ -137,7 +137,7 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 				if scsi, ok := value.(spdk.SCSIControllerSpecific); ok {
 					for _, target := range scsi {
 						for _, lun := range target.LUNs {
-							if lun.BDevName == uuid {
+							if lun.BDevName == volumeID {
 								// Found the right SCSI target.
 								removeArgs := spdk.RemoveVHostSCSITargetArgs{
 									Controller:    controller.Controller,
@@ -155,7 +155,7 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 	}
 
 	// Don't fail when the BDev is not found (idempotency).
-	if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: uuid}); err != nil {
+	if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: volumeID}); err != nil {
 		// TODO: detect error (https://github.com/spdk/spdk/issues/319)
 	}
 
@@ -164,9 +164,9 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 
 type Option func(c *Controller) error
 
-func WithHardwareID(hardwareID string) Option {
+func WithControllerID(controllerID string) Option {
 	return func(c *Controller) error {
-		c.hardwareID = hardwareID
+		c.controllerID = controllerID
 		return nil
 	}
 }
@@ -195,7 +195,7 @@ func WithVHostController(vhost string) Option {
 
 func New(options ...Option) (*Controller, error) {
 	c := Controller{
-		hardwareID: "unset-hardware-id",
+		controllerID: "unset-controller-id",
 	}
 	for _, op := range options {
 		err := op(&c)
