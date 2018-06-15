@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spec/oim/v0"
@@ -51,7 +52,7 @@ func (r *Registry) StreamDirector() proxy.StreamDirector {
 	return func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
 		// Make sure we never forward internal services.
 		if strings.HasPrefix(fullMethodName, "/oim.v0.Registry/") {
-			return nil, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+			return nil, nil, status.Error(codes.Unimplemented, "Unknown method")
 		}
 		md, ok := metadata.FromIncomingContext(ctx)
 		// Copy the inbound metadata explicitly.
@@ -61,7 +62,7 @@ func (r *Registry) StreamDirector() proxy.StreamDirector {
 			if hardwareID, exists := md["hardwareid"]; exists {
 				address := r.db.Lookup(hardwareID[0])
 				if address == "" {
-					return outCtx, nil, grpc.Errorf(codes.Unavailable, "%s: not registered", hardwareID[0])
+					return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", hardwareID[0])
 				}
 				opts := []grpc.DialOption{
 					grpc.WithInsecure(), // TODO: secure connection.
@@ -73,7 +74,7 @@ func (r *Registry) StreamDirector() proxy.StreamDirector {
 				return outCtx, conn, err
 			}
 		}
-		return outCtx, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+		return outCtx, nil, status.Error(codes.Unimplemented, "Unknown method")
 	}
 }
 
