@@ -98,3 +98,18 @@ func New(options ...Option) (*Registry, error) {
 	}
 	return &r, nil
 }
+
+// Creates a server as required to run the registry service.
+func Server(endpoint string, registry *Registry) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+	service := func(s *grpc.Server) {
+		oim.RegisterRegistryServer(s, registry)
+	}
+	server := &oimcommon.NonBlockingGRPCServer{
+		Endpoint: endpoint,
+		ServerOptions: []grpc.ServerOption{
+			grpc.CustomCodec(proxy.Codec()),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(registry.StreamDirector())),
+		},
+	}
+	return server, service
+}

@@ -12,11 +12,8 @@ import (
 	"fmt"
 	"os"
 
-	"google.golang.org/grpc"
-
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
-	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
 func init() {
@@ -49,12 +46,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize server: %s\n", err)
 		os.Exit(1)
 	}
-	server := oimcommon.NonBlockingGRPCServer{
-		Endpoint: *endpoint,
-	}
-	service := func(s *grpc.Server) {
-		oim.RegisterControllerServer(s, controller)
-	}
+	server, service := oimcontroller.Server(*endpoint, controller)
 	if err := server.Run(service); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to run server: %s\n", err)
 		os.Exit(1)

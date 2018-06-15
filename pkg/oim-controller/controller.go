@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 
+	"google.golang.org/grpc"
+
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
@@ -202,4 +204,14 @@ func New(options ...Option) (*Controller, error) {
 		}
 	}
 	return &c, nil
+}
+
+func Server(endpoint string, c oim.ControllerServer) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+	service := func(s *grpc.Server) {
+		oim.RegisterControllerServer(s, c)
+	}
+	server := &oimcommon.NonBlockingGRPCServer{
+		Endpoint: endpoint,
+	}
+	return server, service
 }

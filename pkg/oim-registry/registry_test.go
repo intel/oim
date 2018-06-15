@@ -12,11 +12,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mwitkow/grpc-proxy/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 	. "github.com/onsi/ginkgo"
@@ -76,16 +76,7 @@ var _ = Describe("OIM Registry", func() {
 			registry, err = oimregistry.New()
 			Expect(err).NotTo(HaveOccurred())
 			registryAddress := "unix://" + filepath.Join(tmpDir, "registry.sock")
-			registryServer = &oimcommon.NonBlockingGRPCServer{
-				Endpoint: registryAddress,
-				ServerOptions: []grpc.ServerOption{
-					grpc.CustomCodec(proxy.Codec()),
-					grpc.UnknownServiceHandler(proxy.TransparentHandler(registry.StreamDirector())),
-				},
-			}
-			service := func(s *grpc.Server) {
-				oim.RegisterRegistryServer(s, registry)
-			}
+			registryServer, service := oimregistry.Server(registryAddress, registry)
 			err = registryServer.Start(service)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -124,15 +115,7 @@ var _ = Describe("OIM Registry", func() {
 				// Spin up controller.
 				controller = &MockController{}
 				controllerAddress := "unix://" + filepath.Join(tmpDir, "controller.sock")
-				controllerServer = &oimcommon.NonBlockingGRPCServer{
-					Endpoint: controllerAddress,
-					ServerOptions: []grpc.ServerOption{
-						grpc.CustomCodec(proxy.Codec()),
-					},
-				}
-				service := func(s *grpc.Server) {
-					oim.RegisterControllerServer(s, controller)
-				}
+				controllerServer, service := oimcontroller.Server(controllerAddress, controller)
 				err = controllerServer.Start(service)
 				Expect(err).NotTo(HaveOccurred())
 
