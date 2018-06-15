@@ -27,10 +27,6 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
-const (
-	csiHostPathPluginImage string = "quay.io/k8scsi/hostpathplugin:v0.2.0"
-)
-
 func csiHostPathPod(
 	client clientset.Interface,
 	config framework.VolumeTestConfig,
@@ -58,7 +54,7 @@ func csiHostPathPod(
 			Containers: []v1.Container{
 				{
 					Name:            "external-provisioner",
-					Image:           csiExternalProvisionerImage,
+					Image:           csiContainerImage("csi-provisioner"),
 					ImagePullPolicy: v1.PullAlways,
 					Args: []string{
 						"--v=5",
@@ -74,7 +70,7 @@ func csiHostPathPod(
 				},
 				{
 					Name:            "driver-registrar",
-					Image:           csiDriverRegistrarImage,
+					Image:           csiContainerImage("driver-registrar"),
 					ImagePullPolicy: v1.PullAlways,
 					Args: []string{
 						"--v=5",
@@ -99,7 +95,7 @@ func csiHostPathPod(
 				},
 				{
 					Name:            "external-attacher",
-					Image:           csiExternalAttacherImage,
+					Image:           csiContainerImage("csi-attacher"),
 					ImagePullPolicy: v1.PullAlways,
 					Args: []string{
 						"--v=5",
@@ -120,7 +116,7 @@ func csiHostPathPod(
 				},
 				{
 					Name:            "hostpath-driver",
-					Image:           csiHostPathPluginImage,
+					Image:           csiContainerImage("hostpathplugin"),
 					ImagePullPolicy: v1.PullAlways,
 					SecurityContext: &v1.SecurityContext{
 						Privileged: &priv,
