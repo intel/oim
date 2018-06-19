@@ -51,6 +51,16 @@ var _ = Describe("OIM Controller", func() {
 		})
 
 		Context("with SPDK", func() {
+			var (
+				// Names must match for MapVolume to succeed.
+				volumeID = "controller-test"
+				bdevName = volumeID
+				bdevArgs = oim.ProvisionMallocBDevRequest{
+					BdevName: bdevName,
+					Size:     1 * 1024 * 1024,
+				}
+			)
+
 			BeforeEach(func() {
 				if spdkPath == "" {
 					Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
@@ -72,12 +82,23 @@ var _ = Describe("OIM Controller", func() {
 					out, err := cmd.CombinedOutput()
 					Expect(err).NotTo(HaveOccurred(), "'sudo chmod' output: %s", string(out))
 				}
+
+				_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs)
+				Expect(err).NotTo(HaveOccurred())
 			})
 
 			AfterEach(func() {
 				// Clean up all bdevs and thus also VHost LUNs which might
 				// have been created during testing.
 				failed := []error{}
+
+				bdevArgs := oim.ProvisionMallocBDevRequest{
+					BdevName: bdevName,
+				}
+				_, err := c.ProvisionMallocBDev(context.Background(), &bdevArgs)
+				if err != nil {
+					failed = append(failed, fmt.Errorf("ProvisionMallocBDev: %s", err))
+				}
 
 				bdevs, err := spdk.GetBDevs(context.Background(), c.SPDK, spdk.GetBDevsArgs{})
 				if err != nil {
@@ -105,16 +126,14 @@ var _ = Describe("OIM Controller", func() {
 				Expect(failed).To(BeEmpty())
 			})
 
-			mapVolume := func(volumeID string) (oim.MapVolumeRequest, spdk.GetVHostControllersResponse) {
+			mapVolume := func() (oim.MapVolumeRequest, spdk.GetVHostControllersResponse) {
 				var err error
 				ctx := context.Background()
 
 				add := oim.MapVolumeRequest{
 					VolumeId: volumeID,
 					Params: &oim.MapVolumeRequest_Malloc{
-						Malloc: &oim.MallocParams{
-							Size: 1 * 1024 * 1024,
-						},
+						Malloc: &oim.MallocParams{},
 					},
 				}
 				_, err = c.MapVolume(context.Background(), &add)
@@ -134,13 +153,32 @@ var _ = Describe("OIM Controller", func() {
 				return add, controllers
 			}
 
+			It("should have idempotent ProvisionMallocBDev", func() {
+				_, err := c.ProvisionMallocBDev(context.Background(), &bdevArgs)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create new BDev.
+				bdevArgs2 := oim.ProvisionMallocBDevRequest{
+					BdevName: bdevName + "2",
+					Size:     1 * 1024 * 1024,
+				}
+				_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Delete twice.
+				bdevArgs2.Size = 0
+				_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
 			It("should work without QEMU", func() {
 				var err error
-				volumeID := "controller-test"
 				ctx := context.Background()
 
 				By("mapping a volume")
-				add, controllers := mapVolume(volumeID)
+				add, controllers := mapVolume()
 
 				By("mapping again")
 				_, err = c.MapVolume(context.Background(), &add)
@@ -194,13 +232,11 @@ var _ = Describe("OIM Controller", func() {
 				})
 
 				It("should block device appear", func() {
-					volumeID := "controller-test"
-
 					out, err := vm.SSH("lsblk")
 					Expect(err).NotTo(HaveOccurred())
 					Expect(out).NotTo(ContainSubstring("sda"))
 
-					mapVolume(volumeID)
+					mapVolume()
 
 					Eventually(func() (string, error) {
 						return vm.SSH("lsblk")

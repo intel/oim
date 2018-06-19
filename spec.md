@@ -100,6 +100,11 @@ service Controller {
     // Also idempotent.
     rpc UnmapVolume(UnmapVolumeRequest)
         returns (UnmapVolumeReply) {}
+
+    // Creates or deletes (when size is zero) an
+    // in-memory BDev for testing.
+    rpc ProvisionMallocBDev(ProvisionMallocBDevRequest)
+        returns (ProvisionMallocBDevReply) {}
 }
 
 message MapVolumeRequest {
@@ -115,12 +120,11 @@ message MapVolumeRequest {
     }
 }
 
-// For testing purposes a volume can be created in memory
-// when it gets mapped for the first time. The data gets
-// lost once the volume gets unmapped.
+// For testing purposes, an existing Malloc BDev can be used.
+// It needs to be provisioned separately to ensure that its
+// data survives multiple Map/Unmap operations. It's name
+// must be <volume_id>.
 message MallocParams {
-    // The desired size in bytes. Must be a multiple of 512.
-    int64 size = 1;
 }
 
 // Defines a Ceph block device. This is currently a placeholder
@@ -149,6 +153,17 @@ message UnmapVolumeRequest {
 }
 
 message UnmapVolumeReply {
+    // Intentionally empty.
+}
+
+message ProvisionMallocBDevRequest {
+    // The desired name of the new BDev.
+    string bdev_name = 1;
+    // The desired size in bytes. Must be a multiple of 512.
+    int64 size = 2;
+}
+
+message ProvisionMallocBDevReply {
     // Intentionally empty.
 }
 ```

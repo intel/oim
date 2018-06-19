@@ -44,17 +44,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		// wasn't found.
 		switch x := in.Params.(type) {
 		case *oim.MapVolumeRequest_Malloc:
-			size := x.Malloc.Size
-			args := spdk.ConstructMallocBDevArgs{
-				ConstructBDevArgs: spdk.ConstructBDevArgs{
-					NumBlocks: size / 512,
-					BlockSize: 512,
-					Name:      volumeID,
-				},
-			}
-			if _, err := spdk.ConstructMallocBDev(ctx, c.SPDK, args); err != nil {
-				return nil, errors.New(fmt.Sprintf("ConstructMallocBDev failed: %s", err))
-			}
+			return nil, fmt.Errorf("no existing MallocBDev with name %s found", volumeID)
 		case *oim.MapVolumeRequest_Ceph:
 			return nil, errors.New("not implemented")
 		case nil:
@@ -155,11 +145,41 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 	}
 
 	// Don't fail when the BDev is not found (idempotency).
-	if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: volumeID}); err != nil {
-		// TODO: detect error (https://github.com/spdk/spdk/issues/319)
-	}
+	// TODO: check whether this is really a BDev created by MapVolume.
+	// if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: volumeID}); err != nil {
+	//	// TODO: detect error (https://github.com/spdk/spdk/issues/319)
+	// }
 
 	return &oim.UnmapVolumeReply{}, nil
+}
+
+func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionMallocBDevRequest) (*oim.ProvisionMallocBDevReply, error) {
+	bdevName := in.GetBdevName()
+	if bdevName == "" {
+		return nil, errors.New("empty BDev name")
+	}
+	size := in.Size
+	if size != 0 {
+		bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
+		if err != nil || len(bdevs) != 1 {
+			args := spdk.ConstructMallocBDevArgs{
+				ConstructBDevArgs: spdk.ConstructBDevArgs{
+					NumBlocks: size / 512,
+					BlockSize: 512,
+					Name:      bdevName,
+				},
+			}
+			// TODO: detect already existing BDev of the same name (https://github.com/spdk/spdk/issues/319)
+			if _, err := spdk.ConstructMallocBDev(ctx, c.SPDK, args); err != nil {
+				return nil, errors.New(fmt.Sprintf("ConstructMallocBDev failed: %s", err))
+			}
+		}
+	} else {
+		if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: bdevName}); err != nil {
+			// TODO: detect error (https://github.com/spdk/spdk/issues/319)
+		}
+	}
+	return &oim.ProvisionMallocBDevReply{}, nil
 }
 
 type Option func(c *Controller) error
