@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
@@ -21,10 +22,13 @@ func init() {
 }
 
 var (
-	endpoint     = flag.String("endpoint", "unix:///tmp/controller.sock", "OIM controller endpoint")
-	spdk         = flag.String("spdk", "/var/tmp/vhost.sock", "SPDK VHost RPC socket path")
-	vhost        = flag.String("vhost-scsi-controller", "vhost.0", "SPDK VirtIO SCSI controller name")
-	controllerID = flag.String("controllerid", "", "unique id for this controller instance")
+	endpoint          = flag.String("endpoint", "tcp://:8999", "OIM controller endpoint for net.Listen")
+	spdk              = flag.String("spdk", "/var/tmp/vhost.sock", "SPDK VHost RPC socket path")
+	vhost             = flag.String("vhost-scsi-controller", "vhost.0", "SPDK VirtIO SCSI controller name")
+	controllerID      = flag.String("controllerid", "", "unique id for this controller instance")
+	controllerAddress = flag.String("controller-address", "ipv4:///oim-controller:8999", "external gRPC name for use with grpc.Dial that corresponds to the endpoint")
+	registry          = flag.String("registry", "", "gRPC name that connects to the OIM registry, empty disables registration")
+	registryDelay     = flag.Duration("registry-delay", time.Minute, "determines how long the controller waits before registering at the OIM registry")
 )
 
 func main() {
@@ -40,6 +44,9 @@ func main() {
 		oimcontroller.WithControllerID(*controllerID),
 		oimcontroller.WithSPDK(*spdk),
 		oimcontroller.WithVHostController(*vhost),
+		oimcontroller.WithControllerAddress(*controllerAddress),
+		oimcontroller.WithRegistry(*registry),
+		oimcontroller.WithRegistryDelay(*registryDelay),
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {

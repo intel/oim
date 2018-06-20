@@ -10,6 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -20,9 +23,15 @@ import (
 
 // Controller implements oim.Controller.
 type Controller struct {
-	controllerID string
-	SPDK         *spdk.Client
-	vhostSCSI    string
+	registryAddress string
+	registryDelay   time.Duration
+	controllerID    string
+	controllerAddr  string
+	SPDK            *spdk.Client
+	vhostSCSI       string
+
+	wg   sync.WaitGroup
+	stop chan<- interface{}
 }
 
 func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
@@ -184,6 +193,30 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 
 type Option func(c *Controller) error
 
+func WithRegistry(address string) Option {
+	return func(c *Controller) error {
+		c.registryAddress = address
+		return nil
+	}
+}
+
+func WithRegistryDelay(delay time.Duration) Option {
+	return func(c *Controller) error {
+		c.registryDelay = delay
+		return nil
+	}
+}
+
+// WithControllerAddress sets the *external* address for the
+// controller, i.e. what the OIM registry needs to use for gRPC.Dial
+// to contact the controller.
+func WithControllerAddress(address string) Option {
+	return func(c *Controller) error {
+		c.controllerAddr = address
+		return nil
+	}
+}
+
 func WithControllerID(controllerID string) Option {
 	return func(c *Controller) error {
 		c.controllerID = controllerID
@@ -215,7 +248,8 @@ func WithVHostController(vhost string) Option {
 
 func New(options ...Option) (*Controller, error) {
 	c := Controller{
-		controllerID: "unset-controller-id",
+		controllerID:  "unset-controller-id",
+		registryDelay: time.Minute,
 	}
 	for _, op := range options {
 		err := op(&c)
@@ -223,7 +257,79 @@ func New(options ...Option) (*Controller, error) {
 			return nil, err
 		}
 	}
+
+	if c.registryAddress != "" && (c.controllerID == "" || c.controllerAddr == "") {
+		return nil, errors.New("Need both controller ID and external controller address for registering  with the OIM registry.")
+	}
+
 	return &c, nil
+}
+
+// Starts the interaction with the OIM Registry, if one was configured.
+func (c *Controller) Start() error {
+	if c.registryAddress == "" {
+		return nil
+	}
+
+	stop := make(chan interface{})
+	c.stop = stop
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Register for the first time immediately.
+		again := time.After(0 * time.Second)
+		done := make(chan bool)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-done:
+				// TODO (?): exponential backoff when registry is down
+				again = time.After(c.registryDelay)
+			case <-again:
+				// Run at most one call at a time by re-arming
+				// the time only after we are done.
+				go func() {
+					c.register(ctx)
+					done <- true
+				}()
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (c *Controller) register(ctx context.Context) {
+	// Dial anew, because a) when the registry is down
+	// and our address uses Unix domain sockets, dialing
+	// will fail permanently and b) we don't want to keep
+	// a permanent connection from each controller to
+	// the registry.
+	log.Printf("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
+	// TODO: secure connection
+	opts := oimcommon.ChooseDialOpts(c.registryAddress, grpc.WithInsecure())
+	conn, err := grpc.DialContext(ctx, c.registryAddress, opts...)
+	if err != nil {
+		log.Printf("error connecting to OIM registry: %s", err)
+	}
+	defer conn.Close()
+	registry := oim.NewRegistryClient(conn)
+	registry.RegisterController(ctx, &oim.RegisterControllerRequest{
+		ControllerId: c.controllerID,
+		Address:      c.controllerAddr,
+	})
+}
+
+// Stops the interaction with the OIM Registry, if one was configured.
+func (c *Controller) Stop() {
+	if c.stop != nil {
+		close(c.stop)
+		c.wg.Wait()
+	}
 }
 
 func Server(endpoint string, c oim.ControllerServer) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {

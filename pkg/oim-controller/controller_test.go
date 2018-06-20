@@ -13,8 +13,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
+	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
+	"github.com/intel/oim/pkg/oim-registry"
 	"github.com/intel/oim/pkg/qemu"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
@@ -39,6 +42,98 @@ var _ = Describe("OIM Controller", func() {
 		c, err = oimcontroller.New(oimcontroller.WithSPDK(spdkPath),
 			oimcontroller.WithVHostController(vhostPath))
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	Describe("registration", func() {
+		var (
+			db              *oimregistry.MemRegistryDB
+			registry        *oimregistry.Registry
+			registryServer  *oimcommon.NonBlockingGRPCServer
+			registryAddress string
+		)
+
+		BeforeEach(func() {
+			var err error
+
+			// Spin up registry.
+			db = &oimregistry.MemRegistryDB{}
+			registry, err = oimregistry.New(oimregistry.DB(db))
+			Expect(err).NotTo(HaveOccurred())
+			registryServer, service := oimregistry.Server("tcp4://:0", registry)
+			err = registryServer.Start(service)
+			Expect(err).NotTo(HaveOccurred())
+			addr := registryServer.Addr()
+			Expect(addr).NotTo(BeNil())
+			// No tcp4:/// prefix. It causes gRPC to block?!
+			registryAddress = addr.String()
+		})
+
+		AfterEach(func() {
+			if registryServer != nil {
+				registryServer.ForceStop()
+				registryServer.Wait()
+			}
+		})
+
+		It("should work", func() {
+			addr := "foo://bar"
+			controllerID := "controller-registration-test-1"
+			c, err := oimcontroller.New(
+				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithControllerID(controllerID),
+				oimcontroller.WithControllerAddress(addr),
+			)
+			err = c.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer c.Stop()
+
+			Eventually(func() oimregistry.MemRegistryDB {
+				return *db
+			}).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+		})
+
+		It("should re-register", func() {
+			addr := "foo://bar"
+			controllerID := "controller-registration-test-2"
+			c, err := oimcontroller.New(
+				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithControllerID(controllerID),
+				oimcontroller.WithControllerAddress(addr),
+				oimcontroller.WithRegistryDelay(5*time.Second),
+			)
+			err = c.Start()
+			Expect(err).NotTo(HaveOccurred())
+			defer c.Stop()
+
+			getDB := func() oimregistry.MemRegistryDB {
+				return *db
+			}
+			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+			(*db)[controllerID] = ""
+			Consistently(getDB, 4*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: ""}))
+			Eventually(getDB, 120*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+		})
+
+		It("should really stop", func() {
+			addr := "foo://bar"
+			controllerID := "controller-registration-test-3"
+			c, err := oimcontroller.New(
+				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithControllerID(controllerID),
+				oimcontroller.WithControllerAddress(addr),
+				oimcontroller.WithRegistryDelay(5*time.Second),
+			)
+			err = c.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			getDB := func() oimregistry.MemRegistryDB {
+				return *db
+			}
+			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+			c.Stop()
+			(*db)[controllerID] = ""
+			Consistently(getDB, 10*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: ""}))
+		})
 	})
 
 	Describe("attaching a volume", func() {
