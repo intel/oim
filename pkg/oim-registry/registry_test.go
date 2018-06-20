@@ -87,7 +87,8 @@ var _ = Describe("OIM Registry", func() {
 			err = registryServer.Start(service)
 			Expect(err).NotTo(HaveOccurred())
 
-			conn, err := grpc.Dial(registryAddress, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithDialer(oimcommon.ChooseDialer(registryAddress)))
+			opts := oimcommon.ChooseDialOpts(registryAddress, grpc.WithBlock())
+			conn, err := grpc.Dial(registryAddress, opts...)
 			Expect(err).NotTo(HaveOccurred())
 			controllerClient = oim.NewControllerClient(conn)
 		})

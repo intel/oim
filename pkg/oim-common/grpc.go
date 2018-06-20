@@ -11,6 +11,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 // GRPCDialer can be used with grpc.WithDialer. It supports
@@ -26,11 +28,16 @@ func GRPCDialer(endpoint string, t time.Duration) (net.Conn, error) {
 	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
-// ChooseDialer returns GRPCDialer if needed for the endpoint,
-// otherwise nil for the default behavior.
-func ChooseDialer(endpoint string) func(string, time.Duration) (net.Conn, error) {
+// ChooseDialOpts sets certain default options for the given endpoint,
+// then adds the ones given as additional parameters. For unix://
+// endpoints it activates the custom dialer and disables security.
+func ChooseDialOpts(endpoint string, opts ...grpc.DialOption) []grpc.DialOption {
 	if strings.HasPrefix(endpoint, "unix://") {
-		return GRPCDialer
+		return append([]grpc.DialOption{
+			grpc.WithDialer(GRPCDialer),
+			grpc.WithInsecure(),
+		},
+			opts...)
 	}
-	return nil
+	return opts
 }

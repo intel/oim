@@ -64,11 +64,8 @@ func (r *Registry) StreamDirector() proxy.StreamDirector {
 				if address == "" {
 					return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", controllerID[0])
 				}
-				opts := []grpc.DialOption{
-					grpc.WithInsecure(), // TODO: secure connection.
-					grpc.WithCodec(proxy.Codec()),
-					grpc.WithDialer(oimcommon.ChooseDialer(address)),
-				}
+				opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()))
+
 				// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
 				conn, err := grpc.DialContext(ctx, address, opts...)
 				return outCtx, conn, err
