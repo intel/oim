@@ -43,6 +43,8 @@ type NonBlockingGRPCServer struct {
 	ServerOptions []grpc.ServerOption
 	wg            sync.WaitGroup
 	server        *grpc.Server
+
+	addr net.Addr
 }
 
 type RegisterService func(*grpc.Server)
@@ -67,6 +69,7 @@ func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
 	if err != nil {
 		return err
 	}
+	s.addr = listener.Addr()
 
 	interceptor := grpc_middleware.ChainUnaryServer(
 		otgrpc.OpenTracingServerInterceptor(
@@ -94,9 +97,16 @@ func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
 	return nil
 }
 
+// Addr returns the address on which the server is listening, nil if none.
+// Can be used to find the actual port when using tcp://:0 as endpoint.
+func (s *NonBlockingGRPCServer) Addr() net.Addr {
+	return s.addr
+}
+
 // Wait for completion of the background server.
 func (s *NonBlockingGRPCServer) Wait() {
 	s.wg.Wait()
+	s.addr = nil
 }
 
 // Stop the background server, allowing it to finish current requests.
