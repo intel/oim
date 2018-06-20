@@ -24,7 +24,11 @@ import (
 // ParseEndpoint splits a string of the format (unix|tcp)://<address> and returns
 // the network and address separately.
 func ParseEndpoint(ep string) (string, string, error) {
-	if strings.HasPrefix(strings.ToLower(ep), "unix://") || strings.HasPrefix(strings.ToLower(ep), "tcp://") {
+	lower := strings.ToLower(ep)
+	if strings.HasPrefix(lower, "unix://") ||
+		strings.HasPrefix(lower, "tcp://") ||
+		strings.HasPrefix(lower, "tcp4://") ||
+		strings.HasPrefix(lower, "tcp6://") {
 		s := strings.SplitN(ep, "://", 2)
 		if s[1] != "" {
 			return s[0], s[1], nil
