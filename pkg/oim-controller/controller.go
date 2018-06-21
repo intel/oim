@@ -29,6 +29,7 @@ type Controller struct {
 	controllerAddr  string
 	SPDK            *spdk.Client
 	vhostSCSI       string
+	vhostDev        string
 
 	wg   sync.WaitGroup
 	stop chan<- interface{}
@@ -39,12 +40,14 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	if volumeID == "" {
 		return nil, errors.New("empty volume ID")
 	}
-
 	if c.SPDK == nil {
 		return nil, errors.New("not connected to SPDK")
 	}
 	if c.vhostSCSI == "" {
 		return nil, errors.New("no VHost SCSI controller configured")
+	}
+	if c.vhostDev == "" {
+		return nil, errors.New("no /sys/dev/block substring configured")
 	}
 
 	// Reuse or create BDev.
@@ -83,7 +86,10 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 						for _, lun := range target.LUNs {
 							if lun.BDevName == volumeID {
 								// BDev already active.
-								return &oim.MapVolumeReply{}, nil
+								return &oim.MapVolumeReply{
+									Device: c.vhostDev,
+									Scsi:   fmt.Sprintf("%d:0", target.SCSIDevNum),
+								}, nil
 							}
 						}
 					}
@@ -105,7 +111,10 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		err = spdk.AddVHostSCSILUN(ctx, c.SPDK, args)
 		if err == nil {
 			// Success!
-			return &oim.MapVolumeReply{}, nil
+			return &oim.MapVolumeReply{
+				Device: c.vhostDev,
+				Scsi:   fmt.Sprintf("%d:0", target),
+			}, nil
 		}
 	}
 
@@ -242,6 +251,13 @@ func WithSPDK(path string) Option {
 func WithVHostController(vhost string) Option {
 	return func(c *Controller) error {
 		c.vhostSCSI = vhost
+		return nil
+	}
+}
+
+func WithVHostDev(dev string) Option {
+	return func(c *Controller) error {
+		c.vhostDev = dev
 		return nil
 	}
 }

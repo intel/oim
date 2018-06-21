@@ -31,6 +31,10 @@ var _ = Describe("OIM Controller", func() {
 		spdkPath  = os.Getenv("TEST_SPDK_VHOST_SOCKET")
 		vhost     = "controller-test-vhost"
 		vhostPath string
+		// Bus, address, and device string must match.
+		vhostBus  = "pci.0"
+		vhostAddr = 0x15
+		vhostDev  = fmt.Sprintf("/devices/pci0000:00/0000:00:%x.0/", vhostAddr)
 	)
 
 	BeforeEach(func() {
@@ -40,6 +44,7 @@ var _ = Describe("OIM Controller", func() {
 		var err error
 
 		c, err = oimcontroller.New(oimcontroller.WithSPDK(spdkPath),
+			oimcontroller.WithVHostDev(vhostDev),
 			oimcontroller.WithVHostController(vhostPath))
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -231,8 +236,12 @@ var _ = Describe("OIM Controller", func() {
 						Malloc: &oim.MallocParams{},
 					},
 				}
-				_, err = c.MapVolume(context.Background(), &add)
+				reply, err := c.MapVolume(context.Background(), &add)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(reply).To(Equal(&oim.MapVolumeReply{
+					Device: vhostDev,
+					Scsi:   "0:0",
+				}))
 
 				controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 				Expect(err).NotTo(HaveOccurred())
@@ -313,7 +322,7 @@ var _ = Describe("OIM Controller", func() {
 						"-numa", "node,memdev=mem",
 						"-m", "256",
 						"-chardev", "socket,id=vhost0,path="+vhostPath,
-						"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0")
+						"-device", fmt.Sprintf("vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=%s,addr=0x%x", vhostBus, vhostAddr))
 					Expect(err).NotTo(HaveOccurred())
 
 					Eventually(func() (string, error) {

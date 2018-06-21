@@ -136,15 +136,17 @@ message CephParams {
 }
 
 // The reply tells the caller enough about the mapped volume
-// to access it.
+// to find it in /sys/dev/block.
 message MapVolumeReply {
-    // The PCI address of the controller which provides
-    // access to the volume.
-    string pci_address = 1;
+    // This string must be a substring of the symlink target
+    // and has to be long enough to avoid mismatches.
+    // Example: /devices/pci0000:00/0000:00:15.0/ for a QEMU
+    // vhost SCSI device with bus=pci.0,addr=0x15
+    string device = 1;
     // The SCSI target and LUN in the format
-    // x:y without extra zeros.
-    // Only set for SCSI controllers.
-    string scsi_device = 2;
+    // x:y without extra zeros. Empty for non-SCSI
+    // controllers.
+    string scsi = 2;
 }
 
 message UnmapVolumeRequest {
