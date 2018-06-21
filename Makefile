@@ -19,8 +19,11 @@ REGISTRY_NAME=localhost:5000
 IMAGE_VERSION_oim-csi-driver=canary
 IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
+OIM_CMDS=oim-controller oim-csi-driver oim-registry
+
 # Build main set of components.
-all: oim-controller oim-csi-driver oim-registry
+.PHONY: all
+all: $(OIM_CMDS)
 
 # Run operations only developers should need after making code changes.
 update: update_dep
@@ -50,27 +53,38 @@ TEST_QEMU_IMAGE=
 TEST_CMD=go test -v -p 1
 TEST_ARGS=$(IMPORT_PATH)/pkg/...
 
-test: all $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
-	go vet $(IMPORT_PATH)/pkg/...
+.PHONY: test
+test: all vet run_tests
+
+.PHONY: vet
+vet:
+	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
+
+.PHONY: run_tests
+run_tests: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
 	mkdir -p _work
 	cd _work && \
 	TEST_SPDK_VHOST_SOCKET=$(TEST_SPDK_VHOST_SOCKET) \
 	TEST_QEMU_IMAGE=$(addprefix $$(pwd)/, $(TEST_QEMU_IMAGE)) \
 	    $(TEST_CMD) $(TEST_ARGS)
 
+.PHONY: force_test
 force_test: clean_testcache test
 
 # go caches test results. If we want to rerun tests because e.g. SPDK
 # was restarted, then we must throw away cached results first.
+.PHONY: clean_testcache
 clean_testcache:
 	go clean -testcache
 
+.PHONY: coverage
 coverage:
 	mkdir -p _work
 	go test -coverprofile _work/cover.out $(IMPORT_PATH)/pkg/...
 	go tool cover -html=_work/cover.out -o _work/cover.html
 
-oim-controller oim-csi-driver oim-registry:
+.PHONY: $(OIM_CMDS)
+$(OIM_CMDS):
 	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o _output/$@ ./cmd/$@
 
 # _output is used as the build context. All files inside it are sent
@@ -82,11 +96,10 @@ oim-controller oim-csi-driver oim-registry:
 push-%: %-container
 	docker push $(IMAGE_TAG)
 
+.PHONY: clean
 clean:
 	go clean -r -x
 	-rm -rf _output _work
-
-.PHONY: all test coverage clean oim-csi-driver clean_testcache force_test
 
 # Downloads and unpacks the latest Clear Linux KVM image.
 # This intentionally uses a different directory, otherwise
