@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
+	"github.com/opentracing/opentracing-go"
 	"google.golang.org/grpc"
 )
 
@@ -32,12 +35,31 @@ func GRPCDialer(endpoint string, t time.Duration) (net.Conn, error) {
 // then adds the ones given as additional parameters. For unix://
 // endpoints it activates the custom dialer and disables security.
 func ChooseDialOpts(endpoint string, opts ...grpc.DialOption) []grpc.DialOption {
+	result := []grpc.DialOption{}
+
 	if strings.HasPrefix(endpoint, "unix://") {
-		return append([]grpc.DialOption{
+		result = append(result,
 			grpc.WithDialer(GRPCDialer),
 			grpc.WithInsecure(),
-		},
-			opts...)
+		)
+	} else {
+		// TODO: enable security for tcp
+		result = append(result,
+			grpc.WithInsecure(),
+		)
 	}
-	return opts
+
+	// TODO: kubernetes-csi uses grpc.WithBackoffMaxDelay(time.Second),
+	// should we do the same?
+
+	// Tracing of outgoing calls, including remote and local logging.
+	interceptor := grpc_middleware.ChainUnaryClient(
+		otgrpc.OpenTracingClientInterceptor(
+			opentracing.GlobalTracer(),
+			otgrpc.SpanDecorator(TraceGRPCPayload)),
+		LogGRPCClient)
+	opts = append(opts, grpc.WithUnaryInterceptor(interceptor))
+
+	result = append(result, opts...)
+	return result
 }
