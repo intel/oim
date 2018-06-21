@@ -17,7 +17,9 @@ limitations under the License.
 package storage
 
 import (
+	"io/ioutil"
 	"math/rand"
+	"os"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -30,7 +32,12 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 
+	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/oim-controller"
+	"github.com/intel/oim/pkg/oim-registry"
+
 	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 )
 
 func csiServiceAccount(
@@ -234,6 +241,125 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 				parameters:   map[string]string{},
 				claimSize:    "1Gi",
 				expectedSize: "1Gi",
+				nodeName:     node.Name,
+			}
+
+			claim := newClaim(t, ns.GetName(), "")
+			class := newStorageClass(t, ns.GetName(), "")
+			claim.Spec.StorageClassName = &class.ObjectMeta.Name
+			testDynamicProvisioning(t, cs, claim, class)
+		})
+	})
+
+	// Create one of these for each of the drivers to be tested
+	// CSI hostPath driver test
+	Describe("Sanity CSI plugin test using OIM CSI driver", func() {
+
+		var (
+			spdkPath                         = os.Getenv("TEST_SPDK_VHOST_SOCKET")
+			clusterRole                      *rbacv1.ClusterRole
+			serviceAccount                   *v1.ServiceAccount
+			registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
+			controller                       *oimcontroller.Controller
+			tmpDir                           string
+
+			// This matches how e2e.go configures QEMU.
+			// TODO: refactor to avoid duplication.
+			vhostDev = "/devices/pci0000:00/0000:00:15.0/"
+			vhost    = "e2e-test-vhost"
+		)
+
+		BeforeEach(func() {
+			if spdkPath == "" {
+				Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+			}
+
+			// TODO: check that we run with Kubernetes on QEMU.
+			var err error
+
+			// TODO: test binaries instead or in addition?
+
+			By("starting OIM registry")
+			// Spin up registry on the host. We
+			// intentionally use the hostname here instead
+			// of localhost, because then the resulting
+			// address has one external IP address.
+			// The assumptions are that:
+			// - the hostname can be resolved
+			// - the resulting IP address is different
+			//   from the network inside QEMU and thus
+			//   can be reached via the QEMU NAT from inside
+			//   the virtual machine
+			registry, err := oimregistry.New()
+			Expect(err).NotTo(HaveOccurred())
+			hostname, err := os.Hostname()
+			Expect(err).NotTo(HaveOccurred())
+			registryServer, registryService := oimregistry.Server("tcp4://"+hostname+":0", registry)
+			err = registryServer.Start(registryService)
+			Expect(err).NotTo(HaveOccurred())
+			addr := registryServer.Addr()
+			Expect(addr).NotTo(BeNil())
+			// No tcp4:/// prefix. It causes gRPC to block?!
+			registryAddress := addr.String()
+
+			By("starting OIM controller")
+			controllerID := "oim-e2e-controller"
+			tmpDir, err = ioutil.TempDir("", "oim-e2e-test")
+			Expect(err).NotTo(HaveOccurred())
+			controllerAddress := "unix:///" + tmpDir + "/controller.sock"
+			controller, err = oimcontroller.New(
+				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithControllerID(controllerID),
+				oimcontroller.WithControllerAddress(controllerAddress),
+				oimcontroller.WithVHostController(vhost),
+				oimcontroller.WithVHostDev(vhostDev),
+				oimcontroller.WithSPDK(spdkPath),
+			)
+			controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller)
+			err = controllerServer.Start(controllerService)
+			Expect(err).NotTo(HaveOccurred())
+			err = controller.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			By("deploying CSI OIM driver")
+			clusterRole = csiClusterRole(cs, config, false)
+			serviceAccount = csiServiceAccount(cs, config, false)
+			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
+			csiOIMPod(cs, config, false, f, serviceAccount, registryAddress, controllerID)
+		})
+
+		AfterEach(func() {
+			By("uninstalling CSI OIM driver")
+			csiOIMPod(cs, config, true, f, serviceAccount, "", "")
+			csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
+			serviceAccount = csiServiceAccount(cs, config, true)
+			clusterRole = csiClusterRole(cs, config, true)
+
+			By("stopping OIM services")
+			if registryServer != nil {
+				registryServer.ForceStop()
+				registryServer.Wait()
+			}
+			if controllerServer != nil {
+				controllerServer.ForceStop()
+				controllerServer.Wait()
+			}
+			if controller != nil {
+				controller.Stop()
+			}
+			if tmpDir != "" {
+				os.RemoveAll(tmpDir)
+			}
+
+		})
+
+		It("should provision storage", func() {
+			t := storageClassTest{
+				name:         "oim-csi-driver",
+				provisioner:  "oim-csi-driver",
+				parameters:   map[string]string{},
+				claimSize:    "1Mi",
+				expectedSize: "1Mi",
 				nodeName:     node.Name,
 			}
 

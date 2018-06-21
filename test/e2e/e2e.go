@@ -198,7 +198,7 @@ func setupProviderConfig(masterNode bool) error {
 					"-numa", "node,memdev=mem",
 					"-m", "1024",
 					"-chardev", "socket,id=vhost0,path="+vhostPath,
-					"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0",
+					"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15",
 				)
 			}
 			vm, err := qemu.StartQEMU(opts...)

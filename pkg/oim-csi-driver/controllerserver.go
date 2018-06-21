@@ -15,8 +15,12 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
+	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
 const (
@@ -42,9 +46,15 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Error(codes.InvalidArgument, "Volume Capabilities missing in request")
 	}
 
+	if cs.od.vhostEndpoint != "" {
+		return cs.createVolumeSPDK(ctx, req)
+	} else {
+		return cs.createVolumeOIM(ctx, req)
+	}
+}
+
+func (cs *controllerServer) createVolumeSPDK(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Connect to SPDK.
-	// TODO: make this configurable and decide whether we need to
-	// talk to a local or remote SPDK.
 	client, err := spdk.New(cs.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
@@ -109,16 +119,47 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}, nil
 }
 
-func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+func (cs *controllerServer) createVolumeOIM(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
+	// Check for maximum available capacity
+	capacity := int64(req.GetCapacityRange().GetRequiredBytes())
+	if capacity >= maxStorageCapacity {
+		return nil, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity)
+	}
 
+	// If capacity is unset, round up to minimum size (1MB?).
+	if capacity == 0 {
+		capacity = mib
+	}
+
+	if err := cs.provisionOIM(ctx, req.GetName(), capacity); err != nil {
+		return nil, err
+	}
+
+	return &csi.CreateVolumeResponse{
+		Volume: &csi.Volume{
+			// We use the unique name also as ID.
+			Id:            req.GetName(),
+			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+			Attributes:    req.GetParameters(),
+		},
+	}, nil
+}
+
+func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
 
+	if cs.od.vhostEndpoint != "" {
+		return cs.deleteVolumeSPDK(ctx, req)
+	} else {
+		return cs.deleteVolumeOIM(ctx, req)
+	}
+}
+
+func (cs *controllerServer) deleteVolumeSPDK(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Connect to SPDK.
-	// TODO: make this configurable and decide whether we need to
-	// talk to a local or remote SPDK.
 	client, err := spdk.New(cs.od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
@@ -136,6 +177,31 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to delete SPDK Malloc BDev %s: %s", volumeID, err))
 	}
 	return &csi.DeleteVolumeResponse{}, nil
+}
+
+func (cs *controllerServer) deleteVolumeOIM(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+	if err := cs.provisionOIM(ctx, req.GetVolumeId(), 0); err != nil {
+		return nil, err
+	}
+	return &csi.DeleteVolumeResponse{}, nil
+
+}
+
+func (cs *controllerServer) provisionOIM(ctx context.Context, bdevName string, size int64) error {
+	// Connect to OIM controller through OIM registry.
+	opts := oimcommon.ChooseDialOpts(cs.od.oimRegistryAddress)
+	conn, err := grpc.Dial(cs.od.oimRegistryAddress, opts...)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", cs.od.oimRegistryAddress, err))
+	}
+	defer conn.Close()
+	controllerClient := oim.NewControllerClient(conn)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", cs.od.oimControllerID)
+	_, err = controllerClient.ProvisionMallocBDev(ctx, &oim.ProvisionMallocBDevRequest{
+		BdevName: bdevName,
+		Size:     size,
+	})
+	return err
 }
 
 func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {

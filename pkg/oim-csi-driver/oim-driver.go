@@ -26,10 +26,12 @@ const (
 )
 
 type oimDriver struct {
-	driverName    string
-	nodeID        string
-	csiEndpoint   string
-	vhostEndpoint string
+	driverName         string
+	nodeID             string
+	csiEndpoint        string
+	vhostEndpoint      string
+	oimRegistryAddress string
+	oimControllerID    string
 
 	driver *CSIDriver
 
@@ -77,6 +79,20 @@ func WithVHostEndpoint(endpoint string) Option {
 	}
 }
 
+func WithOIMRegistryAddress(address string) Option {
+	return func(od *oimDriver) error {
+		od.oimRegistryAddress = address
+		return nil
+	}
+}
+
+func WithOIMControllerID(id string) Option {
+	return func(od *oimDriver) error {
+		od.oimControllerID = id
+		return nil
+	}
+}
+
 func New(options ...Option) (*oimDriver, error) {
 	od := oimDriver{
 		driverName:  "oim-driver",
@@ -88,6 +104,15 @@ func New(options ...Option) (*oimDriver, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if od.vhostEndpoint != "" && od.oimRegistryAddress != "" {
+		return nil, errors.New("SPDK and OIM registry usage are mutually exclusive")
+	}
+	if od.vhostEndpoint == "" && od.oimRegistryAddress == "" {
+		return nil, errors.New("Either SPDK or OIM registry must be selected")
+	}
+	if od.oimRegistryAddress != "" && od.oimControllerID == "" {
+		return nil, errors.New("Cannot use a OIM registry without a controller ID")
 	}
 	return &od, nil
 }
