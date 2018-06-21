@@ -124,6 +124,10 @@ clean:
 # lack of entropy directly after starting a virtual machine.
 # https://github.com/clearlinux/distribution/issues/97
 #
+# A registry on the build host (i.e. localhost:5000) is marked
+# as insecure in Clear Linux under the hostname of the build host.
+# Otherwise pulling images fails.
+#
 # The latest upstream Kubernetes binaries are used because that way
 # the resulting installation is always up-to-date. Some workarounds
 # in systemd units are necessary to get that up and running.
@@ -181,6 +185,7 @@ _work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clea
 	./ssh-clear-kvm 'mkdir -p /opt/cni/bin/; for i in /usr/libexec/cni/*; do ln -s $$i /opt/cni/bin/; done' && \
 	./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/' && \
 	./ssh-clear-kvm "( echo '[Service]'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/clear.conf" && \
+	./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"$$(hostname):5000\"] }' >/etc/docker/daemon.json" && \
 	./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker' && \
 	./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI' && \
 	./ssh-clear-kvm 'mkdir -p .kube' && \
