@@ -236,7 +236,7 @@ func TestFindDev(t *testing.T) {
 	// Find sda.
 	dev, major, minor, err = findDev(tmp, "/devices/pci0000:00/0000:00:17.0/", "0:0")
 	assert.NoError(t, err)
-	assert.Equal(t, "/dev/sda", dev)
+	assert.Equal(t, "sda", dev)
 	assert.Equal(t, major, 8)
 	assert.Equal(t, minor, 0)
 
@@ -248,12 +248,12 @@ func TestFindDev(t *testing.T) {
 	// Find sda.
 	dev, major, minor, err = findDev(tmp, "/devices/pci0000:00/0000:00:17.0/", "")
 	assert.NoError(t, err)
-	assert.Equal(t, "/dev/sda", dev)
+	assert.Equal(t, "sda", dev)
 
 	// No deadline.
 	dev, major, minor, err = waitForDevice(context.Background(), tmp, "/devices/pci0000:00/0000:00:17.0/", "0:0")
 	assert.NoError(t, err)
-	assert.Equal(t, "/dev/sda", dev)
+	assert.Equal(t, "sda", dev)
 	assert.Equal(t, major, 8)
 	assert.Equal(t, minor, 0)
 
@@ -274,7 +274,7 @@ func TestFindDev(t *testing.T) {
 	defer timer.Stop()
 	dev, major, minor, err = waitForDevice(timeout2, tmp, "/devices/pci0000:00/0000:00:17.0/", "1:0")
 	assert.NoError(t, err)
-	assert.Equal(t, "/dev/sdc", dev)
+	assert.Equal(t, "sdc", dev)
 	assert.Equal(t, major, 9)
 	assert.Equal(t, minor, 0)
 

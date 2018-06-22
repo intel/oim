@@ -183,14 +183,18 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 		// The actual /dev folder might not have the device,
 		// for example when we run in a Docker container where
-		// /dev was populated at startup time.
-		// TODO: better always create the device node at a place unique
-		// for the volume, then remove when unmapping.
-		log.Printf("Ensuring that %s exists for %d:%d", dev, major, minor)
-		if err := syscall.Mknod(dev, syscall.S_IFBLK|0666, makedev(major, minor)); err != nil && !os.IsExist(err) {
+		// /dev was populated at startup time. Therefore we
+		// create a temporary block special file.
+		tmpDir, err := ioutil.TempDir("", dev)
+		if err != nil {
 			return nil, err
 		}
-		device = dev
+		devNode := filepath.Join(tmpDir, dev)
+		defer os.RemoveAll(tmpDir)
+		if err := syscall.Mknod(devNode, syscall.S_IFBLK|0666, makedev(major, minor)); err != nil && !os.IsExist(err) {
+			return nil, err
+		}
+		device = devNode
 	}
 
 	options := []string{}
@@ -285,7 +289,7 @@ func findDev(sys, blockDev, blockSCSI string) (string, int, int, error) {
 			// the main block device before its partitions (i.e. 8:0 before 8:1).
 			sep := strings.LastIndex(target, block)
 			if sep != -1 {
-				dev := "/dev/" + target[sep+len(block):]
+				dev := target[sep+len(block):]
 				log.Printf("Found block device %s = %s", entry.Name(), dev)
 				parts := majorMinor.FindStringSubmatch(entry.Name())
 				if parts == nil {
@@ -336,7 +340,21 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to stop SPDK NDB disk %+v: %s", args, err))
 		}
 	} else {
-		return nil, status.Error(codes.Unimplemented, "TODO: find device")
+		// Connect to OIM controller through OIM registry.
+		opts := oimcommon.ChooseDialOpts(ns.od.oimRegistryAddress)
+		conn, err := grpc.Dial(ns.od.oimRegistryAddress, opts...)
+		if err != nil {
+			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", ns.od.oimRegistryAddress, err))
+		}
+		controllerClient := oim.NewControllerClient(conn)
+
+		// Make volume available and/or find out where it is.
+		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", ns.od.oimControllerID)
+		if _, err := controllerClient.UnmapVolume(ctx, &oim.UnmapVolumeRequest{
+			VolumeId: volumeID,
+		}); err != nil {
+			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("UnmapVolume for %s failed: %s", volumeID, err))
+		}
 	}
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
