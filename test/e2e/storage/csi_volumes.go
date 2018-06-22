@@ -17,6 +17,7 @@ limitations under the License.
 package storage
 
 import (
+	"context"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -35,6 +36,7 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
+	e2eutils "github.com/intel/oim/test/e2e/utils"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -262,6 +264,8 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
 			controller                       *oimcontroller.Controller
 			tmpDir                           string
+			ctx                              context.Context
+			cancel                           context.CancelFunc
 
 			// This matches how e2e.go configures QEMU.
 			// TODO: refactor to avoid duplication.
@@ -273,6 +277,8 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			if spdkPath == "" {
 				Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
 			}
+
+			ctx, cancel = context.WithCancel(context.Background())
 
 			// TODO: check that we run with Kubernetes on QEMU.
 			var err error
@@ -326,9 +332,13 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			serviceAccount = csiServiceAccount(cs, config, false)
 			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
 			csiOIMPod(cs, config, false, f, serviceAccount, registryAddress, controllerID)
+			e2eutils.CopyAllLogs(ctx, cs, ns.Name, "csi-pod", GinkgoWriter)
+			e2eutils.WatchPods(ctx, cs, GinkgoWriter)
 		})
 
 		AfterEach(func() {
+			cancel()
+
 			By("uninstalling CSI OIM driver")
 			csiOIMPod(cs, config, true, f, serviceAccount, "", "")
 			csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
@@ -350,7 +360,6 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			if tmpDir != "" {
 				os.RemoveAll(tmpDir)
 			}
-
 		})
 
 		It("should provision storage", func() {

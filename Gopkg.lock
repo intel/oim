@@ -3037,6 +3037,7 @@
     "github.com/onsi/gomega",
     "github.com/opentracing/opentracing-go",
     "github.com/opentracing/opentracing-go/log",
+    "github.com/pkg/errors",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
     "github.com/uber/jaeger-client-go/config",
