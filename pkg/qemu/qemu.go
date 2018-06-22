@@ -116,7 +116,7 @@ func StartQEMU(qemuOptions ...string) (*VM, error) {
 	}
 
 	// Give VM some time to power up, then kill it.
-	timer := time.AfterFunc(10*time.Second, func() {
+	timer := time.AfterFunc(60*time.Second, func() {
 		vm.Cmd.Process.Kill()
 	})
 
