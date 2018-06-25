@@ -4,7 +4,7 @@ Copyright 2018 Intel Corporation.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package spdk
+package spdk_test
 
 import (
 	"context"
@@ -16,63 +16,65 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/spdk"
+	testspdk "github.com/intel/oim/test/pkg/spdk"
 )
 
-func connect(t *testing.T) *Client {
-	path := os.Getenv("TEST_SPDK_VHOST_SOCKET")
-	if path == "" {
-		t.Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+func connect(t *testing.T) *spdk.Client {
+	var err error
+
+	err = testspdk.Init(t, false)
+	require.NoError(t, err)
+	if testspdk.SPDK == nil {
+		t.Skip("No SPDK vhost.")
 	}
-	client, err := New(path)
-	require.NoError(t, err, "Failed to contact SPDK at %s", path)
-	require.NotNil(t, client, "No client")
-	return client
+	return testspdk.SPDK
 }
 
 func TestGetBDevs(t *testing.T) {
+	defer testspdk.Finalize()
 	client := connect(t)
-	defer client.Close()
-	response, err := GetBDevs(context.Background(), client, GetBDevsArgs{})
+	response, err := spdk.GetBDevs(context.Background(), client, spdk.GetBDevsArgs{})
 	assert.NoError(t, err, "Failed to list bdevs: %s", err)
 	assert.Empty(t, response, "Unexpected non-empty bdev list")
 }
 
 func TestError(t *testing.T) {
+	defer testspdk.Finalize()
 	client := connect(t)
-	defer client.Close()
 
 	// It would be nice to get a well-documented error code here,
 	// but currently we don't (https://github.com/spdk/spdk/issues/319).
-	_, err := GetBDevs(context.Background(), client, GetBDevsArgs{Name: "no-such-bdev"})
+	_, err := spdk.GetBDevs(context.Background(), client, spdk.GetBDevsArgs{Name: "no-such-bdev"})
 	require.Error(t, err, "Should have failed to find no-such-bdev")
-	require.True(t, IsJSONError(err, ERROR_INVALID_PARAMS), "IsJSONError(%+v, ERROR_INVALID_PARAMS)", err)
+	require.True(t, spdk.IsJSONError(err, spdk.ERROR_INVALID_PARAMS), "IsJSONError(%+v, ERROR_INVALID_PARAMS)", err)
 }
 
 func TestMallocBDev(t *testing.T) {
 	ctx := context.Background()
+	defer testspdk.Finalize()
 	client := connect(t)
-	defer client.Close()
 
-	var created ConstructBDevResponse
+	var created spdk.ConstructBDevResponse
 	cleanup := func(when string) {
 		t.Logf("Cleaning up at %s: %+v", when, created)
 		for _, bdev := range created {
-			err := DeleteBDev(ctx, client, DeleteBDevArgs{Name: bdev})
+			err := spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: bdev})
 			require.NoError(t, err, "Failed to delete bdev %s: %s", bdev)
 		}
-		created = ConstructBDevResponse{}
+		created = spdk.ConstructBDevResponse{}
 	}
 	defer cleanup("deferred cleanup")
 
 	// 1MB seems to be the minimum size?
-	for i, arg := range []ConstructMallocBDevArgs{
-		ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}},
-		ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: 4096, BlockSize: 512, Name: "MyMallocBdev", UUID: "11111111-2222-3333-4444-555555555555"}},
+	for i, arg := range []spdk.ConstructMallocBDevArgs{
+		spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}},
+		spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: 4096, BlockSize: 512, Name: "MyMallocBdev", UUID: "11111111-2222-3333-4444-555555555555"}},
 	} {
 		cleanup(fmt.Sprintf("bdev %d", i))
 		// Can't use := here, it would shadow "created"!
 		var err error
-		created, err = ConstructMallocBDev(ctx, client, arg)
+		created, err = spdk.ConstructMallocBDev(ctx, client, arg)
 		if !assert.NoError(t, err, "Failed to create %+v", arg) {
 			continue
 		}
@@ -85,7 +87,7 @@ func TestMallocBDev(t *testing.T) {
 		if arg.Name != "" {
 			assert.Equal(t, arg.Name, name, "choosen name")
 		}
-		bdevs, err := GetBDevs(ctx, client, GetBDevsArgs{Name: name})
+		bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: name})
 		t.Logf("bdev %s attributes: %+v", name, bdevs)
 		if !assert.NoError(t, err, "Failed to retrieve bdev %s attributes", name) {
 			continue
@@ -95,13 +97,13 @@ func TestMallocBDev(t *testing.T) {
 			continue
 		}
 		bdev := bdevs[0]
-		expected := BDev{
+		expected := spdk.BDev{
 			Name:        name,
 			ProductName: "Malloc disk",
 			BlockSize:   arg.BlockSize,
 			NumBlocks:   arg.NumBlocks,
 			UUID:        arg.UUID,
-			SupportedIOTypes: SupportedIOTypes{
+			SupportedIOTypes: spdk.SupportedIOTypes{
 				Read:       true,
 				Write:      true,
 				Unmap:      true,
@@ -118,21 +120,21 @@ func TestMallocBDev(t *testing.T) {
 
 func TestNBDDev(t *testing.T) {
 	ctx := context.Background()
+	defer testspdk.Finalize()
 	client := connect(t)
-	defer client.Close()
 
 	name := "my_malloc_bdev"
 	numBlocks := int64(2048)
 	blockSize := int64(512)
-	createArg := ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: numBlocks, BlockSize: blockSize, Name: name}}
+	createArg := spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: numBlocks, BlockSize: blockSize, Name: name}}
 	// TODO: this does not get called when the test fails?
 	defer func() {
-		DeleteBDev(ctx, client, DeleteBDevArgs{Name: name})
+		spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: name})
 	}()
-	_, err := ConstructMallocBDev(ctx, client, createArg)
+	_, err := spdk.ConstructMallocBDev(ctx, client, createArg)
 	require.NoError(t, err, "Failed to create %+v", createArg)
 
-	nbd, err := GetNBDDisks(ctx, client)
+	nbd, err := spdk.GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
 
 	// Find the first unused nbd device node. Unfortunately
@@ -154,74 +156,74 @@ func TestNBDDev(t *testing.T) {
 	}
 	t.Logf("Using NBD %s, %+v", nbdDevice, nbdFile)
 
-	startArg := StartNBDDiskArgs{BDevName: name, NBDDevice: nbdDevice}
-	err = StartNBDDisk(ctx, client, startArg)
+	startArg := spdk.StartNBDDiskArgs{BDevName: name, NBDDevice: nbdDevice}
+	err = spdk.StartNBDDisk(ctx, client, startArg)
 	require.NoError(t, err, "Start NBD Disk with %+v", startArg)
 
-	nbd, err = GetNBDDisks(ctx, client)
+	nbd, err = spdk.GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
-	assert.Equal(t, nbd, GetNBDDisksResponse{startArg}, "should have one NBD device running")
+	assert.Equal(t, nbd, spdk.GetNBDDisksResponse{startArg}, "should have one NBD device running")
 
 	size, err := oimcommon.GetBlkSize64(nbdFile)
 	require.NoError(t, err)
 	assert.Equal(t, numBlocks*blockSize, size, "NBD device size")
 
-	stopArg := StopNBDDiskArgs{NBDDevice: nbdDevice}
-	err = StopNBDDisk(ctx, client, stopArg)
+	stopArg := spdk.StopNBDDiskArgs{NBDDevice: nbdDevice}
+	err = spdk.StopNBDDisk(ctx, client, stopArg)
 	require.NoError(t, err, "Stop NBD Disk with %+v", stopArg)
 }
 
 func TestSCSI(t *testing.T) {
 	ctx := context.Background()
+	defer testspdk.Finalize()
 	client := connect(t)
-	defer client.Close()
 
 	var err error
 
-	checkControllers := func(t *testing.T, expected GetVHostControllersResponse) {
-		controllers, err := GetVHostControllers(ctx, client)
+	checkControllers := func(t *testing.T, expected spdk.GetVHostControllersResponse) {
+		controllers, err := spdk.GetVHostControllers(ctx, client)
 		require.NoError(t, err, "GetVHostControllers")
 		assert.Equal(t, expected, controllers)
 	}
 
 	controller := "my-scsi-vhost"
-	constructArgs := ConstructVHostSCSIControllerArgs{
+	constructArgs := spdk.ConstructVHostSCSIControllerArgs{
 		Controller: controller,
 	}
-	err = ConstructVHostSCSIController(ctx, client, constructArgs)
+	err = spdk.ConstructVHostSCSIController(ctx, client, constructArgs)
 	require.NoError(t, err, "Construct VHostSCSI controller with %v", constructArgs)
-	defer RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller})
+	defer spdk.RemoveVHostController(ctx, client, spdk.RemoveVHostControllerArgs{Controller: controller})
 
-	expected := GetVHostControllersResponse{
-		Controller{
+	expected := spdk.GetVHostControllersResponse{
+		spdk.Controller{
 			Controller: controller,
 			CPUMask:    "0x1",
-			BackendSpecific: BackendSpecificType{
-				"scsi": SCSIControllerSpecific{},
+			BackendSpecific: spdk.BackendSpecificType{
+				"scsi": spdk.SCSIControllerSpecific{},
 			},
 		},
 	}
 	checkControllers(t, expected)
 
-	bdevArgs := ConstructMallocBDevArgs{ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}}
-	created, err := ConstructMallocBDev(ctx, client, bdevArgs)
+	bdevArgs := spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}}
+	created, err := spdk.ConstructMallocBDev(ctx, client, bdevArgs)
 	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
-	defer DeleteBDev(ctx, client, DeleteBDevArgs{Name: created[0]})
-	created2, err := ConstructMallocBDev(ctx, client, bdevArgs)
+	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: created[0]})
+	created2, err := spdk.ConstructMallocBDev(ctx, client, bdevArgs)
 	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
-	defer DeleteBDev(ctx, client, DeleteBDevArgs{Name: created2[0]})
+	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: created2[0]})
 
-	addLUN := AddVHostSCSILUNArgs{
+	addLUN := spdk.AddVHostSCSILUNArgs{
 		Controller: controller,
 		BDevName:   created[0],
 	}
-	err = AddVHostSCSILUN(ctx, client, addLUN)
+	err = spdk.AddVHostSCSILUN(ctx, client, addLUN)
 	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN)
-	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
-		SCSIControllerTarget{
+	expected[0].BackendSpecific["scsi"] = spdk.SCSIControllerSpecific{
+		spdk.SCSIControllerTarget{
 			TargetName: "Target 0",
-			LUNs: []SCSIControllerLUN{
-				SCSIControllerLUN{
+			LUNs: []spdk.SCSIControllerLUN{
+				spdk.SCSIControllerLUN{
 					BDevName: created[0],
 				},
 			},
@@ -229,28 +231,28 @@ func TestSCSI(t *testing.T) {
 	}
 	checkControllers(t, expected)
 
-	addLUN2 := AddVHostSCSILUNArgs{
+	addLUN2 := spdk.AddVHostSCSILUNArgs{
 		Controller:    controller,
 		SCSITargetNum: 1,
 		BDevName:      created2[0],
 	}
-	err = AddVHostSCSILUN(ctx, client, addLUN2)
+	err = spdk.AddVHostSCSILUN(ctx, client, addLUN2)
 	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN2)
-	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
-		SCSIControllerTarget{
+	expected[0].BackendSpecific["scsi"] = spdk.SCSIControllerSpecific{
+		spdk.SCSIControllerTarget{
 			TargetName: "Target 0",
-			LUNs: []SCSIControllerLUN{
-				SCSIControllerLUN{
+			LUNs: []spdk.SCSIControllerLUN{
+				spdk.SCSIControllerLUN{
 					BDevName: created[0],
 				},
 			},
 		},
-		SCSIControllerTarget{
+		spdk.SCSIControllerTarget{
 			TargetName: "Target 1",
 			ID:         1,
 			SCSIDevNum: 1,
-			LUNs: []SCSIControllerLUN{
-				SCSIControllerLUN{
+			LUNs: []spdk.SCSIControllerLUN{
+				spdk.SCSIControllerLUN{
 					BDevName: created2[0],
 				},
 			},
@@ -259,36 +261,36 @@ func TestSCSI(t *testing.T) {
 	checkControllers(t, expected)
 
 	controller2 := "my-scsi-vhost2"
-	constructArgs2 := ConstructVHostSCSIControllerArgs{
+	constructArgs2 := spdk.ConstructVHostSCSIControllerArgs{
 		Controller: controller2,
 	}
-	err = ConstructVHostSCSIController(ctx, client, constructArgs2)
+	err = spdk.ConstructVHostSCSIController(ctx, client, constructArgs2)
 	require.NoError(t, err, "Construct VHostSCSI controller with %v", constructArgs2)
-	defer RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller2})
+	defer spdk.RemoveVHostController(ctx, client, spdk.RemoveVHostControllerArgs{Controller: controller2})
 
 	expected = append(expected,
-		Controller{
+		spdk.Controller{
 			Controller: controller2,
 			CPUMask:    "0x1",
-			BackendSpecific: BackendSpecificType{
-				"scsi": SCSIControllerSpecific{},
+			BackendSpecific: spdk.BackendSpecificType{
+				"scsi": spdk.SCSIControllerSpecific{},
 			},
 		})
 	checkControllers(t, expected)
 
-	removeArgs := RemoveVHostSCSITargetArgs{
+	removeArgs := spdk.RemoveVHostSCSITargetArgs{
 		Controller:    controller,
 		SCSITargetNum: 0,
 	}
-	err = RemoveVHostSCSITarget(ctx, client, removeArgs)
+	err = spdk.RemoveVHostSCSITarget(ctx, client, removeArgs)
 	require.NoError(t, err, "RemoveVHostSCSITarget %v", removeArgs)
-	expected[0].BackendSpecific["scsi"] = SCSIControllerSpecific{
-		SCSIControllerTarget{
+	expected[0].BackendSpecific["scsi"] = spdk.SCSIControllerSpecific{
+		spdk.SCSIControllerTarget{
 			TargetName: "Target 1",
 			ID:         1,
 			SCSIDevNum: 1,
-			LUNs: []SCSIControllerLUN{
-				SCSIControllerLUN{
+			LUNs: []spdk.SCSIControllerLUN{
+				spdk.SCSIControllerLUN{
 					BDevName: created2[0],
 				},
 			},
@@ -297,11 +299,11 @@ func TestSCSI(t *testing.T) {
 	checkControllers(t, expected)
 
 	// Cannot remove non-empty controller.
-	err = RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller})
+	err = spdk.RemoveVHostController(ctx, client, spdk.RemoveVHostControllerArgs{Controller: controller})
 	require.Error(t, err, "Remove VHost controller %s", controller)
 	checkControllers(t, expected)
 
-	err = RemoveVHostController(ctx, client, RemoveVHostControllerArgs{Controller: controller2})
+	err = spdk.RemoveVHostController(ctx, client, spdk.RemoveVHostControllerArgs{Controller: controller2})
 	require.NoError(t, err, "Remove VHost controller %s", controller2)
 	expected = expected[0:1]
 	checkControllers(t, expected)

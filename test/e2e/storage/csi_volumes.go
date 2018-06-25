@@ -37,6 +37,8 @@ import (
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
 	e2eutils "github.com/intel/oim/test/e2e/utils"
+	"github.com/intel/oim/test/pkg/qemu"
+	"github.com/intel/oim/test/pkg/spdk"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -258,7 +260,6 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 	Describe("Sanity CSI plugin test using OIM CSI driver", func() {
 
 		var (
-			spdkPath                         = os.Getenv("TEST_SPDK_VHOST_SOCKET")
 			clusterRole                      *rbacv1.ClusterRole
 			serviceAccount                   *v1.ServiceAccount
 			registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
@@ -266,21 +267,14 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			tmpDir                           string
 			ctx                              context.Context
 			cancel                           context.CancelFunc
-
-			// This matches how e2e.go configures QEMU.
-			// TODO: refactor to avoid duplication.
-			vhostDev = "/devices/pci0000:00/0000:00:15.0/"
-			vhost    = "e2e-test-vhost"
 		)
 
 		BeforeEach(func() {
-			if spdkPath == "" {
-				Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+			if spdk.SPDK == nil {
+				Skip("No SPDK vhost.")
 			}
 
 			ctx, cancel = context.WithCancel(context.Background())
-
-			// TODO: check that we run with Kubernetes on QEMU.
 			var err error
 
 			// TODO: test binaries instead or in addition?
@@ -317,9 +311,9 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 				oimcontroller.WithRegistry(registryAddress),
 				oimcontroller.WithControllerID(controllerID),
 				oimcontroller.WithControllerAddress(controllerAddress),
-				oimcontroller.WithVHostController(vhost),
-				oimcontroller.WithVHostDev(vhostDev),
-				oimcontroller.WithSPDK(spdkPath),
+				oimcontroller.WithVHostController(spdk.VHost),
+				oimcontroller.WithVHostDev(spdk.VHostDev),
+				oimcontroller.WithSPDK(spdk.SPDKPath),
 			)
 			controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller)
 			err = controllerServer.Start(controllerService)
@@ -375,7 +369,14 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			claim := newClaim(t, ns.GetName(), "")
 			class := newStorageClass(t, ns.GetName(), "")
 			claim.Spec.StorageClassName = &class.ObjectMeta.Name
+			// TODO: check machine state while volume is mounted:
+			// a missing UnmapVolume call in nodeserver.go must be detected
 			testDynamicProvisioning(t, cs, claim, class)
+
+			By("verifying that device is gone")
+			Eventually(func() (string, error) {
+				return qemu.VM.SSH("ls", "-l", "/sys/dev/block")
+			}).ShouldNot(ContainSubstring(spdk.VHostDev))
 		})
 	})
 })

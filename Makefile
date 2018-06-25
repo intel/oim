@@ -47,11 +47,12 @@ TEST_SPDK_VHOST_SOCKET=
 # "clear-kvm".
 TEST_QEMU_IMAGE=
 
-# Disabling parallelism is important, because the QEMU virtual machine and SPDK
-# are shared between different packages.
-# TODO: start app/vhost per test, dynamically choose ssh port for QEMU
+# In principle the tests are ready to run in parallel. But in
+# practice, with current memory sizes for vhost and QEMU and the
+# default HUGEMEM for setup.sh, out-of-memory errors occur.
+# TODO: run vhost with less memory when possible.
 TEST_CMD=go test -v -p 1
-TEST_ARGS=$(IMPORT_PATH)/pkg/...
+TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
 .PHONY: test
 test: all vet run_tests

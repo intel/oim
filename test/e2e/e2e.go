@@ -17,13 +17,11 @@ limitations under the License.
 package e2e
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,8 +45,11 @@ import (
 	"k8s.io/kubernetes/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
 
-	"github.com/intel/oim/pkg/qemu"
-	"github.com/intel/oim/pkg/spdk"
+	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/test/pkg/qemu"
+	"github.com/intel/oim/test/pkg/spdk"
+
+	. "github.com/onsi/ginkgo"
 )
 
 var (
@@ -59,7 +60,27 @@ var (
 func setupProviderConfig(masterNode bool) error {
 	switch framework.TestContext.Provider {
 	case "":
-		glog.Info("The --provider flag is not set.  Treating as a conformance test.  Some tests may not be run.")
+		if masterNode {
+			framework.AddCleanupAction(func() {
+				qemu.Finalize()
+				spdk.Finalize()
+			})
+			logger := oimcommon.WrapWriter(GinkgoWriter)
+			if err := spdk.Init(logger, true); err != nil {
+				return err
+			}
+			if err := qemu.Init(logger); err != nil {
+				return err
+			}
+			if qemu.VM == nil {
+				return errors.New("A QEMU image is required for this test.")
+			}
+		}
+		config, err := qemu.KubeConfig()
+		if err != nil {
+			return err
+		}
+		framework.TestContext.KubeConfig = config
 
 	case "gce", "gke":
 		framework.Logf("Fetching cloud provider for %q\r", framework.TestContext.Provider)
@@ -130,97 +151,6 @@ func setupProviderConfig(masterNode bool) error {
 		}
 		defer config.Close()
 		cloudConfig.Provider, err = azure.NewCloud(config)
-
-	case "local":
-		// Nothing to do.
-
-	default:
-		image := framework.TestContext.Provider
-
-		if masterNode {
-			// Treat provider as the image name to be run under QEMU. We expect
-			// to have start-<image>, <image>.img, <image>-kube.config,
-			// kube-<image> files in the same directory.
-			os.Setenv("TEST_QEMU_IMAGE", image)
-
-			var vm *qemu.VM
-			var spdkClient *spdk.Client
-			vhost := "e2e-test-vhost"
-			cleanup := func() {
-				// We must shut down QEMU first, otherwise
-				// SPDK refuses to remove the controller.
-				if vm != nil {
-					vm.StopQEMU()
-				}
-				if spdkClient != nil {
-					args := spdk.RemoveVHostControllerArgs{
-						Controller: vhost,
-					}
-					spdk.RemoveVHostController(context.Background(), spdkClient, args)
-				}
-			}
-			framework.AddCleanupAction(cleanup)
-
-			// Set up VHost SCSI, if we have SPDK.
-			var vhostPath string
-			spdkPath := os.Getenv("TEST_SPDK_VHOST_SOCKET")
-			if spdkPath != "" {
-				s, err := spdk.New(spdkPath)
-				if err != nil {
-					return err
-				}
-				spdkClient = s
-				args := spdk.ConstructVHostSCSIControllerArgs{
-					Controller: vhost,
-				}
-				err = spdk.ConstructVHostSCSIController(context.Background(), spdkClient, args)
-				if err != nil {
-					return err
-				}
-				vhostPath = filepath.Join(filepath.Dir(spdkPath), vhost)
-				// If we are not running as root, we need to
-				// change permissions on the new socket.
-				if os.Getuid() != 0 {
-					cmd := exec.Command("sudo", "chmod", "a+rw", vhostPath)
-					out, err := cmd.CombinedOutput()
-					if err != nil {
-						return fmt.Errorf("'sudo chmod' on vhost socket %s failed: %s\n%s", vhostPath, err, string(out))
-					}
-				}
-			}
-			opts := []string{}
-			if vhostPath != "" {
-				// Run as explained in http://www.spdk.io/doc/vhost.html#vhost_qemu_config,
-				// with a small memory size because we don't know how much huge pages
-				// were set aside.
-				opts = append(opts,
-					"-object", "memory-backend-file,id=mem,size=1024M,mem-path=/dev/hugepages,share=on",
-					"-numa", "node,memdev=mem",
-					"-m", "1024",
-					"-chardev", "socket,id=vhost0,path="+vhostPath,
-					"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15",
-				)
-			}
-			vm, err := qemu.StartQEMU(opts...)
-			if err != nil {
-				return err
-			}
-			kube := filepath.Join(filepath.Dir(image), "kube-"+filepath.Base(image))
-			cmd := exec.Command(kube)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("Starting Kubernetes with %s failed: %s\n%s", kube, err, out)
-			}
-
-		}
-
-		// Cluster is ready, treat it like a local cluster
-		// (https://github.com/kubernetes/community/blob/master/contributors/devel/e2e-tests.md#bringing-up-a-cluster-for-testing).
-		kubeconf, err := filepath.Abs(filepath.Join(filepath.Dir(image), filepath.Base(image)+"-kube.config"))
-		if err != nil {
-			return err
-		}
-		framework.TestContext.KubeConfig = kubeconf
 	}
 
 	return nil

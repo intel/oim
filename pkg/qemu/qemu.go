@@ -51,12 +51,7 @@ func (err StartError) Error() string {
 // StartQEMU() returns a VM pointer if a virtual machine could be
 // started, and error when starting failed, and nil for both when no
 // image is configured and thus nothing can be started.
-func StartQEMU(qemuOptions ...string) (*VM, error) {
-	image := os.Getenv("TEST_QEMU_IMAGE")
-	if image == "" {
-		return nil, nil
-	}
-
+func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 	var err error
 	var vm VM
 
@@ -66,7 +61,6 @@ func StartQEMU(qemuOptions ...string) (*VM, error) {
 	// when something went wrong during startup. Kernel
 	// messages get collected also via stderr and thus
 	// end up in VM.Stderr.
-	log.Printf("Using TEST_QEMU_IMAGE=%s", image)
 	image, err = filepath.Abs(image)
 	if err != nil {
 		return nil, err

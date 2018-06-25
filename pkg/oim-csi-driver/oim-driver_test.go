@@ -27,6 +27,8 @@ import (
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
 	"github.com/intel/oim/pkg/spec/oim/v0"
+
+	"github.com/intel/oim/test/pkg/spdk"
 )
 
 // SudoMount provides wrappers around several commands used by the k8s
@@ -68,9 +70,12 @@ func (s SudoMount) Close() {
 
 // Runs tests in local SPDK mode.
 func TestSPDK(t *testing.T) {
-	vhost := os.Getenv("TEST_SPDK_VHOST_SOCKET")
-	if vhost == "" {
-		t.Skip("No SPDK vhost, TEST_SPDK_VHOST_SOCKET is empty.")
+	defer spdk.Finalize()
+	if err := spdk.Init(t, false); err != nil {
+		require.NoError(t, err)
+	}
+	if spdk.SPDK == nil {
+		t.Skip("No VHost.")
 	}
 
 	tmp, err := ioutil.TempDir("", "oim-driver")
@@ -78,7 +83,7 @@ func TestSPDK(t *testing.T) {
 	defer os.RemoveAll(tmp)
 
 	endpoint := "unix://" + tmp + "/oim-driver.sock"
-	driver, err := New(WithCSIEndpoint(endpoint), WithVHostEndpoint(vhost))
+	driver, err := New(WithCSIEndpoint(endpoint), WithVHostEndpoint(spdk.SPDKPath))
 	require.NoError(t, err)
 	s, err := driver.Start()
 	defer s.ForceStop()

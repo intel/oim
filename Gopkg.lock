@@ -1227,6 +1227,14 @@
   revision = "67591eb23c48346a480470e462289835d96f70da"
 
 [[projects]]
+  branch = "master"
+  digest = "1:8aef480a0b43ae5abba8c514dc01e6f649bf26898b496bf9efbae7bc44867dd9"
+  name = "github.com/nightlyone/lockfile"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "0ad87eef1443f64d3d8c50da647e2b1552851124"
+
+[[projects]]
   digest = "1:44aed0089693bd52eb5e76a916ebe103cdf406e3d38c4c42a0ca99ee8c27bbc5"
   name = "github.com/onsi/ginkgo"
   packages = [
@@ -3031,6 +3039,7 @@
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/mwitkow/grpc-proxy/proxy",
+    "github.com/nightlyone/lockfile",
     "github.com/onsi/ginkgo",
     "github.com/onsi/ginkgo/config",
     "github.com/onsi/ginkgo/reporters",
