@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -164,9 +165,24 @@ func TestNBDDev(t *testing.T) {
 	assert.NoError(t, err, "get initial list of disks")
 	assert.Equal(t, nbd, spdk.GetNBDDisksResponse{startArg}, "should have one NBD device running")
 
-	size, err := oimcommon.GetBlkSize64(nbdFile)
-	require.NoError(t, err)
-	assert.Equal(t, numBlocks*blockSize, size, "NBD device size")
+	// There's a slight race here between the kernel noticing the new size
+	// and us checking for it.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Timed out waiting for nbd %s to get populated.", nbdDevice)
+		case <-time.After(time.Millisecond):
+			size, err := oimcommon.GetBlkSize64(nbdFile)
+			require.NoError(t, err)
+			if size != 0 {
+				assert.Equal(t, numBlocks*blockSize, size, "NBD device size")
+				break loop
+			}
+		}
+	}
 
 	stopArg := spdk.StopNBDDiskArgs{NBDDevice: nbdDevice}
 	err = spdk.StopNBDDisk(ctx, client, stopArg)
