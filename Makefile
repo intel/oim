@@ -42,6 +42,9 @@ update_dep: test/gobindata_util.go.patch
 
 # Unix domain socket path of a running SPDK vhost.
 TEST_SPDK_VHOST_SOCKET=
+# Alternatively, the path to a spdk/app/vhost binary can be provided.
+# Use "_work/vhost" and that binary will be built automatically in _work.
+TEST_SPDK_VHOST_BINARY=
 
 # Image base name to boot under QEMU before running tests, for example
 # "clear-kvm".
@@ -62,10 +65,11 @@ vet:
 	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
 
 .PHONY: run_tests
-run_tests: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE))
+run_tests: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE)) $(TEST_SPDK_VHOST_BINARY)
 	mkdir -p _work
 	cd _work && \
 	TEST_SPDK_VHOST_SOCKET=$(TEST_SPDK_VHOST_SOCKET) \
+	TEST_SPDK_VHOST_BINARY=$(abspath $(TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(addprefix $$(pwd)/, $(TEST_QEMU_IMAGE)) \
 	    $(TEST_CMD) $(TEST_ARGS)
 
@@ -225,6 +229,12 @@ _work/OVMF.fd:
 _work/id:
 	mkdir -p _work
 	ssh-keygen -N '' -f $@
+
+SPDK_SOURCE = vendor/github.com/spdk/spdk
+_work/vhost:
+	mkdir -p _work
+	cd $(SPDK_SOURCE) && ./configure && make -j
+	cp -a $(SPDK_SOURCE)/app/vhost/vhost $@
 
 # protobuf API handling
 OIM_SPEC := spec.md

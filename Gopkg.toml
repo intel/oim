@@ -24,9 +24,21 @@
 #   go-tests = true
 #   unused-packages = true
 
+required = ["github.com/spdk/spdk/go"]
+
 [prune]
   go-tests = true
   unused-packages = true
+
+  [[prune.project]]
+    name = "github.com/spdk/spdk"
+    go-tests = false
+    unused-packages = false
+
+[[constraint]]
+  name = "github.com/spdk/spdk"
+  branch = "go"
+  source = "github.com/pohly/spdk"
 
 [[constraint]]
   name = "github.com/container-storage-interface/spec"

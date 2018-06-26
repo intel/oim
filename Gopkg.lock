@@ -1533,6 +1533,15 @@
   version = "v1.0.5"
 
 [[projects]]
+  branch = "go"
+  digest = "1:a645237596a4394777daffdce6f7b725797954b8cb0b011ad67e2a1504f612d5"
+  name = "github.com/spdk/spdk"
+  packages = ["go"]
+  pruneopts = ""
+  revision = "12c5a7d2e55abf8573086505f296d81b2ebd828a"
+  source = "github.com/pohly/spdk"
+
+[[projects]]
   digest = "1:37ace7f35375adec11634126944bdc45a673415e2fcc07382d03b75ec76ea94c"
   name = "github.com/spf13/afero"
   packages = [
@@ -3047,6 +3056,7 @@
     "github.com/opentracing/opentracing-go",
     "github.com/opentracing/opentracing-go/log",
     "github.com/pkg/errors",
+    "github.com/spdk/spdk/go",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
     "github.com/uber/jaeger-client-go/config",

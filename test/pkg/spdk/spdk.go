@@ -10,16 +10,21 @@ package spdk
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/nightlyone/lockfile"
+	"github.com/pkg/errors"
 
+	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
+	// . "github.com/onsi/ginkgo"
 )
 
 var (
@@ -39,7 +44,11 @@ var (
 	VHostDev  = fmt.Sprintf("/devices/pci0000:00/0000:00:%x.0/", VHostAddr)
 
 	spdkSock = os.Getenv("TEST_SPDK_VHOST_SOCKET")
+	spdkApp  = os.Getenv("TEST_SPDK_VHOST_BINARY")
 	lock     *lockfile.Lockfile
+	spdkCmd  *exec.Cmd
+	tmpDir   string
+	spdkOut  io.WriteCloser
 )
 
 // Init connects to SPDK and creates a VHost SCSI controller.
@@ -50,8 +59,52 @@ func Init(logger oimcommon.SimpleLogger, controller bool) error {
 		return nil
 	}
 
-	if SPDK != nil || VHostPath != "" {
+	if SPDK != nil || VHostPath != "" || spdkCmd != nil {
 		return errors.New("Finalize not called or failed")
+	}
+
+	if spdkApp != "" {
+		// TODO: suppress logging to syslog
+		if t, err := ioutil.TempDir("", "spdk"); err != nil {
+			return errors.Wrap(err, "SPDK temp directory")
+		} else {
+			tmpDir = t
+		}
+		spdkSock = filepath.Join(tmpDir, "spdk.sock")
+		spdkOut = oimcommon.LogWriter(logger, "spdk: ")
+		{
+			logger.Logf("Starting %s", spdkApp)
+			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock)
+			// Start with its own process group so that we can kill sudo
+			// and its child spdkApp via the process group.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Stdout = spdkOut
+			cmd.Stderr = spdkOut
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			spdkCmd = cmd
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		for {
+			if ctx.Err() != nil {
+				return fmt.Errorf("Timed out waiting for %s", spdkSock)
+			}
+			_, err := os.Stat(spdkSock)
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		{
+			cmd := exec.CommandContext(ctx, "sudo", "chmod", "a+rw", spdkSock)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return errors.Wrapf(err, "chmod %s: %s", spdkSock, out)
+			}
+		}
+
 	}
 
 	// Protect against other processes using the same daemon.
@@ -110,8 +163,7 @@ func Finalize() error {
 			args := spdk.RemoveVHostControllerArgs{
 				Controller: VHost,
 			}
-			err := spdk.RemoveVHostController(context.Background(), SPDK, args)
-			if err != nil {
+			if err := spdk.RemoveVHostController(context.Background(), SPDK, args); err != nil {
 				return err
 			}
 			VHostPath = ""
@@ -119,11 +171,28 @@ func Finalize() error {
 		SPDK.Close()
 		SPDK = nil
 	}
+	if spdkCmd != nil {
+		// Kill the process group to catch both child (sudo) and grandchild (SPDK).
+		timer := time.AfterFunc(10*time.Second, func() {
+			exec.Command("sudo", "--non-interactive", "kill", "-9", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
+		})
+		defer timer.Stop()
+		exec.Command("sudo", "--non-interactive", "kill", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
+		spdkCmd.Wait()
+		spdkCmd = nil
+	}
 	if lock != nil {
-		err := lock.Unlock()
-		if err != nil {
+		if err := lock.Unlock(); err != nil {
 			return err
 		}
+	}
+	if spdkOut != nil {
+		if err := spdkOut.Close(); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(tmpDir); err != nil {
+		return err
 	}
 	return nil
 }
