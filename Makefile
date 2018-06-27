@@ -25,6 +25,11 @@ OIM_CMDS=oim-controller oim-csi-driver oim-registry
 .PHONY: all
 all: $(OIM_CMDS)
 
+# Build all binaries, including tests.
+# Must use the workaround from https://github.com/golang/go/issues/15513
+build: $(OIM_CMDS)
+	go test -run none $(TEST_ALL)
+
 # Run operations only developers should need after making code changes.
 update: update_dep
 
@@ -55,6 +60,7 @@ TEST_QEMU_IMAGE=
 # default HUGEMEM for setup.sh, out-of-memory errors occur.
 # TODO: run vhost with less memory when possible.
 TEST_CMD=go test -v -p 1
+TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
 TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
 .PHONY: test

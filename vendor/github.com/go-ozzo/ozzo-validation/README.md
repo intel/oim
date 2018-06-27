@@ -436,6 +436,7 @@ Below is the whole list of the rules provided by the `is` package:
 * `VariableWidth`: validates if a string contains both full-width and half-width characters
 * `Base64`: validates if a string is encoded in Base64
 * `DataURI`: validates if a string is a valid base64-encoded data URI
+* `E164`: validates if a string is a valid E164 phone number (+19251232233)
 * `CountryCode2`: validates if a string is a valid ISO3166 Alpha 2 country code
 * `CountryCode3`: validates if a string is a valid ISO3166 Alpha 3 country code
 * `DialString`: validates if a string is a valid dial string that can be passed to Dial()
@@ -443,6 +444,8 @@ Below is the whole list of the rules provided by the `is` package:
 * `IP`: validates if a string is a valid IP address (either version 4 or 6)
 * `IPv4`: validates if a string is a valid version 4 IP address
 * `IPv6`: validates if a string is a valid version 6 IP address
+* `Subdomain`: validates if a string is valid subdomain
+* `Domain`: validates if a string is valid domain
 * `DNSName`: validates if a string is valid DNS name
 * `Host`: validates if a string is a valid IP (both v4 and v6) or a valid DNS name
 * `Port`: validates if a string is a valid port number

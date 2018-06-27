@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/influxdata/influxdb/pkg/escape"
 )
@@ -268,8 +270,8 @@ func ParsePointsString(buf string) ([]Point, error) {
 // NOTE: to minimize heap allocations, the returned Tags will refer to subslices of buf.
 // This can have the unintended effect preventing buf from being garbage collected.
 func ParseKey(buf []byte) (string, Tags) {
-	meas, tags := ParseKeyBytes(buf)
-	return string(meas), tags
+	name, tags := ParseKeyBytes(buf)
+	return string(name), tags
 }
 
 func ParseKeyBytes(buf []byte) ([]byte, Tags) {
@@ -277,27 +279,34 @@ func ParseKeyBytes(buf []byte) ([]byte, Tags) {
 	// when just parsing a key
 	state, i, _ := scanMeasurement(buf, 0)
 
+	var name []byte
 	var tags Tags
 	if state == tagKeyState {
 		tags = parseTags(buf)
 		// scanMeasurement returns the location of the comma if there are tags, strip that off
-		return buf[:i-1], tags
+		name = buf[:i-1]
+	} else {
+		name = buf[:i]
 	}
-	return buf[:i], tags
+	return unescapeMeasurement(name), tags
 }
 
 func ParseTags(buf []byte) Tags {
 	return parseTags(buf)
 }
 
-func ParseName(buf []byte) ([]byte, error) {
+func ParseName(buf []byte) []byte {
 	// Ignore the error because scanMeasurement returns "missing fields" which we ignore
 	// when just parsing a key
 	state, i, _ := scanMeasurement(buf, 0)
+	var name []byte
 	if state == tagKeyState {
-		return buf[:i-1], nil
+		name = buf[:i-1]
+	} else {
+		name = buf[:i]
 	}
-	return buf[:i], nil
+
+	return unescapeMeasurement(name)
 }
 
 // ParsePointsWithPrecision is similar to ParsePoints, but allows the
@@ -2384,4 +2393,31 @@ func appendField(b []byte, k string, v interface{}) []byte {
 	}
 
 	return b
+}
+
+// ValidKeyToken returns true if the token used for measurement, tag key, or tag
+// value is a valid unicode string and only contains printable, non-replacement characters.
+func ValidKeyToken(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) || r == unicode.ReplacementChar {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidKeyTokens returns true if the measurement name and all tags are valid.
+func ValidKeyTokens(name string, tags Tags) bool {
+	if !ValidKeyToken(name) {
+		return false
+	}
+	for _, tag := range tags {
+		if !ValidKeyToken(string(tag.Key)) || !ValidKeyToken(string(tag.Value)) {
+			return false
+		}
+	}
+	return true
 }

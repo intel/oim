@@ -102,17 +102,11 @@ func (c *csiAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string
 		glog.V(4).Info(log("attachment [%v] for volume [%v] created successfully", attachID, csiSource.VolumeHandle))
 	}
 
-	// probe for attachment update here
-	// NOTE: any error from waiting for attachment is logged only.  This is because
-	// the primary intent of the enclosing method is to create VolumeAttachment.
-	// DONOT return that error here as it is mitigated in attacher.WaitForAttach.
-	volAttachmentOK := true
 	if _, err := c.waitForVolumeAttachment(csiSource.VolumeHandle, attachID, csiTimeout); err != nil {
-		volAttachmentOK = false
-		glog.Error(log("attacher.Attach attempted to wait for attachment to be ready, but failed with: %v", err))
+		return "", err
 	}
 
-	glog.V(4).Info(log("attacher.Attach finished OK with VolumeAttachment verified=%t: attachment object [%s]", volAttachmentOK, attachID))
+	glog.V(4).Info(log("attacher.Attach finished OK with VolumeAttachment object [%s]", attachID))
 
 	return attachID, nil
 }
@@ -276,11 +270,7 @@ func (c *csiAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMo
 	}
 
 	if c.csiClient == nil {
-		if csiSource.Driver == "" {
-			return fmt.Errorf("attacher.MountDevice failed, driver name is empty")
-		}
-		addr := fmt.Sprintf(csiAddrTemplate, csiSource.Driver)
-		c.csiClient = newCsiDriverClient("unix", addr)
+		c.csiClient = newCsiDriverClient(csiSource.Driver)
 	}
 	csi := c.csiClient
 
@@ -385,6 +375,11 @@ func (c *csiAttacher) Detach(volumeName string, nodeName types.NodeName) error {
 	volID := parts[1]
 	attachID := getAttachmentName(volID, driverName, string(nodeName))
 	if err := c.k8s.StorageV1beta1().VolumeAttachments().Delete(attachID, nil); err != nil {
+		if apierrs.IsNotFound(err) {
+			// object deleted or never existed, done
+			glog.V(4).Info(log("VolumeAttachment object [%v] for volume [%v] not found, object deleted", attachID, volID))
+			return nil
+		}
 		glog.Error(log("detacher.Detach failed to delete VolumeAttachment [%s]: %v", attachID, err))
 		return err
 	}
@@ -474,8 +469,7 @@ func (c *csiAttacher) UnmountDevice(deviceMountPath string) error {
 	}
 
 	if c.csiClient == nil {
-		addr := fmt.Sprintf(csiAddrTemplate, driverName)
-		c.csiClient = newCsiDriverClient("unix", addr)
+		c.csiClient = newCsiDriverClient(driverName)
 	}
 	csi := c.csiClient
 

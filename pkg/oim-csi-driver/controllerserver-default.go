@@ -75,3 +75,18 @@ func (cs *DefaultControllerServer) ControllerGetCapabilities(ctx context.Context
 		Capabilities: cs.Driver.cap,
 	}, nil
 }
+
+func (cs *DefaultControllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+	glog.V(5).Infof("Using default CreateSnapshot")
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (cs *DefaultControllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+	glog.V(5).Infof("Using default DeleteSnapshot")
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (cs *DefaultControllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+	glog.V(5).Infof("Using default ListSnapshot")
+	return nil, status.Error(codes.Unimplemented, "")
+}
