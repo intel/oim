@@ -164,7 +164,7 @@ _work/clear-kvm-original.img:
 	curl -O https://download.clearlinux.org/image/clear-$$version-kvm.img.xz-SHA512SUMS && \
 	curl -O https://download.clearlinux.org/image/clear-$$version-kvm.img.xz-SHA512SUMS.sig && \
 	(echo 'skipping image verification, does not work at the moment (https://github.com/clearlinux/distribution/issues/85)' && true || openssl smime -verify -in clear-$$version-kvm.img.xz-SHA512SUMS.sig -inform der -content clear-$$version-kvm.img.xz-SHA512SUMS -CAfile ../test/ClearLinuxRoot.pem -out /dev/null) && \
-	sha512sum -c clear-$$version-kvm.img.xz-SHA512SUMS && \
+	sed -e 's;/.*/;;' clear-$$version-kvm.img.xz-SHA512SUMS | sha512sum -c && \
 	unxz -c <clear-$$version-kvm.img.xz >clear-kvm-original.img
 
 _work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clear-kvm _work/ssh-clear-kvm _work/id
