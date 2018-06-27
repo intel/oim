@@ -74,7 +74,19 @@ func Init(logger oimcommon.SimpleLogger, controller bool) error {
 		spdkOut = oimcommon.LogWriter(logger, "spdk: ")
 		{
 			logger.Logf("Starting %s", spdkApp)
-			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock)
+			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock,
+				// Use less precious huge pages. 64MB
+				// and 128MB are not enough and cause
+				// out-of-memory errors for various
+				// allocations during startup. With
+				// the default of HUGEMEM=2048 that
+				// means that we can start 8 instances
+				// in parallel, and four in parallel
+				// with a VM of 1GB. If testing fails
+				// when run in parallel, then more
+				// huge pages need to be reserved.
+				"-s", "256",
+			)
 			// Start with its own process group so that we can kill sudo
 			// and its child spdkApp via the process group.
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

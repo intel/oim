@@ -55,11 +55,7 @@ TEST_SPDK_VHOST_BINARY=
 # "clear-kvm".
 TEST_QEMU_IMAGE=
 
-# In principle the tests are ready to run in parallel. But in
-# practice, with current memory sizes for vhost and QEMU and the
-# default HUGEMEM for setup.sh, out-of-memory errors occur.
-# TODO: run vhost with less memory when possible.
-TEST_CMD=go test -v -p 1
+TEST_CMD=go test -v
 TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
 TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
