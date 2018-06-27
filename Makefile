@@ -145,7 +145,7 @@ clean:
 #
 # The resulting cluster has:
 # - a single node with the master taint removed
-# - weave networking
+# - networking managed by kubelet itself
 #
 # Kubernetes does not get started by default because it might
 # not always be needed in the image, depending on the test.
@@ -192,10 +192,10 @@ _work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clea
 	echo "Downloading Kubernetes $(RELEASE)." && \
 	./ssh-clear-kvm	'mkdir -p /opt/bin && cd /opt/bin && for i in kubeadm kubelet kubectl; do curl -L --remote-name-all https://storage.googleapis.com/kubernetes-release/release/$(RELEASE)/bin/linux/amd64/$$i && chmod +x $$i; done' && \
 	echo "Using a mixture of Clear Linux CNI plugins (/usr/libexec/cni/) and plugins downloaded via pods (/opt/cni/bin)" && \
-	./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --runtime-request-timeout=30m --fail-swap-on=false --cni-bin-dir=/opt/cni/bin --allow-privileged=true --feature-gates=CSIPersistentVolume=true,MountPropagation=true\"'; echo 'ExecStart='; grep ^ExecStart= /lib/systemd/system/kubelet.service | sed -e 's;/usr/bin/kubelet;/opt/bin/kubelet;' ) >/etc/systemd/system/kubelet.service.d/clear.conf" && \
+	./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --runtime-request-timeout=30m --fail-swap-on=false --cni-bin-dir=/opt/cni/bin --allow-privileged=true --feature-gates=CSIPersistentVolume=true,MountPropagation=true\"'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; echo 'ExecStart='; grep ^ExecStart= /lib/systemd/system/kubelet.service | sed -e 's;/usr/bin/kubelet;/opt/bin/kubelet;' ) >/etc/systemd/system/kubelet.service.d/oim.conf" && \
 	./ssh-clear-kvm 'mkdir -p /opt/cni/bin/; for i in /usr/libexec/cni/*; do ln -s $$i /opt/cni/bin/; done' && \
 	./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/' && \
-	./ssh-clear-kvm "( echo '[Service]'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/clear.conf" && \
+	./ssh-clear-kvm "( echo '[Service]'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf" && \
 	./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"$$(hostname):5000\"] }' >/etc/docker/daemon.json" && \
 	./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker' && \
 	./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI' && \
@@ -203,7 +203,6 @@ _work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clea
 	./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config' && \
 	./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-' && \
 	./ssh-clear-kvm 'kubectl get pods --all-namespaces' && \
-        ./ssh-clear-kvm 'kubectl apply -f https://cloud.weave.works/k8s/net?k8s-version=$$(kubectl version | base64 | tr -d "\n")' && \
 	echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." && \
 	./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://localhost:16443;' >clear-kvm-kube.config && \
 	( echo "#!/bin/sh -e"; echo "$$(pwd)/ssh-clear-kvm 'systemctl start docker && systemctl start kubelet'"; echo 'cnt=0; while [ $$cnt -lt 10 ]; do'; echo "if $$(pwd)/ssh-clear-kvm kubectl get nodes >/dev/null; then exit 0; fi;"; echo 'cnt=$$(expr $$cnt + 1); sleep 1; done; exit 1' ) >kube-clear-kvm && chmod a+rx kube-clear-kvm && \
