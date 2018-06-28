@@ -97,7 +97,10 @@ func Init(logger oimcommon.SimpleLogger, controller bool) error {
 			}
 			spdkCmd = cmd
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		// TODO: detect premature exits right away.
+		// Starting up can be slow when the number of reserved huge pages is high or
+		// many processes are running.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		for {
 			if ctx.Err() != nil {
