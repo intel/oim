@@ -56,6 +56,8 @@ update_dep: test/gobindata_util.go.patch
 # "_work/clear-kvm.img".
 # TEST_QEMU_IMAGE=
 
+# If Ginkgo is available, then testing can be sped up by using
+# TEST_CMD=ginkgo -p.
 TEST_CMD=go test -v
 TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
 TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(_TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
@@ -88,7 +90,7 @@ run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS)
 	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
 	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
-	    $(TEST_CMD) $(TEST_ARGS)
+	    $(TEST_CMD) $$( go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);../;' )
 
 .PHONY: force_test
 force_test: clean_testcache test
