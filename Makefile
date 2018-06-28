@@ -53,12 +53,12 @@ update_dep: test/gobindata_util.go.patch
 # TEST_SPDK_VHOST_BINARY=
 
 # Image base name to boot under QEMU before running tests, for example
-# "clear-kvm".
+# "_work/clear-kvm.img".
 # TEST_QEMU_IMAGE=
 
 TEST_CMD=go test -v
 TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
-TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
+TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(_TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
 .PHONY: test
 test: all vet run_tests
@@ -67,13 +67,27 @@ test: all vet run_tests
 vet:
 	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
 
+# Determine whether we have QEMU and SPDK.
+_TEST_QEMU_IMAGE=$(if $(TEST_QEMU_IMAGE),$(TEST_QEMU_IMAGE),$(if $(WITH_E2E_TESTS),_work/clear-kvm.img))
+_TEST_SPDK_VHOST_BINARY=$(if $(TEST_SPDK_VHOST_BINARY),$(TEST_SPDK_VHOST_BINARY),$(if $(WITH_E2E_TESTS),_work/vhost))
+
+# Derive filenames of helper files from QEMU image name.
+TEST_QEMU_PREFIX=$(if $(_TEST_QEMU_IMAGE),$(dir $(_TEST_QEMU_IMAGE))$(1)-$(notdir $(basename $(_TEST_QEMU_IMAGE))))
+TEST_QEMU_START=$(call TEST_QEMU_PREFIX,start)
+TEST_QEMU_SSH=$(call TEST_QEMU_PREFIX,ssh)
+TEST_QEMU_KUBE=$(call TEST_QEMU_PREFIX,kube)
+TEST_QEMU_DEPS=$(_TEST_QEMU_IMAGE) $(TEST_QEMU_START) $(TEST_QEMU_SSH) $(TEST_QEMU_KUBE)
+
+# We only need to build and push the latest OIM CSI driver if we actually use it during testing.
+TEST_E2E_DEPS=$(if $(filter $(IMPORT_PATH)/test/e2e, $(TEST_ARGS)), push-oim-csi-driver)
+
 .PHONY: run_tests
-run_tests: $(patsubst %, _work/%.img, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/start-%, $(TEST_QEMU_IMAGE)) $(patsubst %, _work/ssh-%, $(TEST_QEMU_IMAGE)) $(TEST_SPDK_VHOST_BINARY)
+run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS)
 	mkdir -p _work
 	cd _work && \
-	TEST_SPDK_VHOST_SOCKET=$(TEST_SPDK_VHOST_SOCKET) \
-	TEST_SPDK_VHOST_BINARY=$(abspath $(TEST_SPDK_VHOST_BINARY)) \
-	TEST_QEMU_IMAGE=$(addprefix $$(pwd)/, $(TEST_QEMU_IMAGE)) \
+	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
+	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
+	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
 	    $(TEST_CMD) $(TEST_ARGS)
 
 .PHONY: force_test
@@ -164,7 +178,7 @@ _work/clear-kvm-original.img:
 	sed -e 's;/.*/;;' clear-$$version-kvm.img.xz-SHA512SUMS | sha512sum -c && \
 	unxz -c <clear-$$version-kvm.img.xz >clear-kvm-original.img
 
-_work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clear-kvm _work/ssh-clear-kvm _work/id
+_work/clear-kvm.img _work/kube-clear-kvm: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clear-kvm _work/ssh-clear-kvm _work/id
 	set -x && \
 	cp $< $@ && \
 	cd _work && \
