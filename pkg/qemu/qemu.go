@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/digitalocean/go-qemu/qemu"
@@ -65,6 +66,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 	if err != nil {
 		return nil, err
 	}
+	image = strings.TrimSuffix(image, ".img")
 	helperFile := func(prefix string) string {
 		return filepath.Join(filepath.Dir(image), prefix+filepath.Base(image))
 	}

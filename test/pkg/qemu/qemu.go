@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nightlyone/lockfile"
@@ -80,7 +81,7 @@ func Init(logger oimcommon.SimpleLogger) error {
 	}
 	VM = vm
 
-	kube := filepath.Join(filepath.Dir(qemuImage), "kube-"+filepath.Base(qemuImage))
+	kube := filepath.Join(filepath.Dir(qemuImage), "kube-"+strings.TrimSuffix(filepath.Base(qemuImage), ".img"))
 	logger.Logf("Starting Kubernetes with: %s", kube)
 	cmd := exec.Command(kube)
 	out, err := cmd.CombinedOutput()
@@ -96,7 +97,8 @@ func Init(logger oimcommon.SimpleLogger) error {
 func KubeConfig() (string, error) {
 	// Cluster is ready, treat it like a local cluster
 	// (https://github.com/kubernetes/community/blob/master/contributors/devel/e2e-tests.md#bringing-up-a-cluster-for-testing).
-	kubeconf, err := filepath.Abs(filepath.Join(filepath.Dir(qemuImage), filepath.Base(qemuImage)+"-kube.config"))
+	kubeconf, err := filepath.Abs(filepath.Join(filepath.Dir(qemuImage),
+		strings.TrimSuffix(filepath.Base(qemuImage), ".img")+"-kube.config"))
 	if err != nil {
 		return "", err
 	}
