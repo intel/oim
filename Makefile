@@ -195,14 +195,14 @@ _work/clear-kvm.img: _work/clear-kvm-original.img _work/OVMF.fd _work/start-clea
 	./ssh-clear-kvm "( echo '[Service]'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf" && \
 	./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"$$(hostname):5000\"] }' >/etc/docker/daemon.json" && \
 	./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker' && \
-	./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI' && \
+	./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI,KubeletVersion' && \
 	./ssh-clear-kvm 'mkdir -p .kube' && \
 	./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config' && \
 	./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-' && \
 	./ssh-clear-kvm 'kubectl get pods --all-namespaces' && \
 	echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." && \
 	./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://localhost:16443;' >clear-kvm-kube.config && \
-	( echo "#!/bin/sh -e"; echo "$$(pwd)/ssh-clear-kvm 'systemctl start docker && systemctl start kubelet'"; echo 'cnt=0; while [ $$cnt -lt 10 ]; do'; echo "if $$(pwd)/ssh-clear-kvm kubectl get nodes >/dev/null; then exit 0; fi;"; echo 'cnt=$$(expr $$cnt + 1); sleep 1; done; exit 1' ) >kube-clear-kvm && chmod a+rx kube-clear-kvm && \
+	( echo "#!/bin/sh -e"; echo "$$(pwd)/ssh-clear-kvm 'systemctl start docker && systemctl start kubelet'"; echo 'cnt=0; while [ $$cnt -lt 60 ]; do'; echo "if $$(pwd)/ssh-clear-kvm kubectl get nodes >/dev/null 2>/dev/null; then exit 0; fi;"; echo 'cnt=$$(expr $$cnt + 1); sleep 1; done; echo timed out waiting for Kubernetes; exit 1' ) >kube-clear-kvm && chmod a+rx kube-clear-kvm && \
 	./kube-clear-kvm && \
 	echo "shutdown now" >&$${COPROC[1]} && wait
 
