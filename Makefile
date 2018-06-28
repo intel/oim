@@ -46,14 +46,15 @@ update_dep: test/gobindata_util.go.patch
 # or (when invoking go test manually) by setting the corresponding env variables
 
 # Unix domain socket path of a running SPDK vhost.
-TEST_SPDK_VHOST_SOCKET=
+# TEST_SPDK_VHOST_SOCKET=
+
 # Alternatively, the path to a spdk/app/vhost binary can be provided.
 # Use "_work/vhost" and that binary will be built automatically in _work.
-TEST_SPDK_VHOST_BINARY=
+# TEST_SPDK_VHOST_BINARY=
 
 # Image base name to boot under QEMU before running tests, for example
 # "clear-kvm".
-TEST_QEMU_IMAGE=
+# TEST_QEMU_IMAGE=
 
 TEST_CMD=go test -v
 TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
