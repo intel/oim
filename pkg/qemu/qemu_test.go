@@ -19,7 +19,7 @@ import (
 func TestQEMU(t *testing.T) {
 	var err error
 
-	err = testqemu.Init(t)
+	err = testqemu.Init(testqemu.WithLogger(t))
 	defer testqemu.Finalize()
 	require.NoError(t, err)
 	if testqemu.VM == nil {

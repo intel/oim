@@ -71,7 +71,7 @@ func (s SudoMount) Close() {
 // Runs tests in local SPDK mode.
 func TestSPDK(t *testing.T) {
 	defer spdk.Finalize()
-	if err := spdk.Init(t, false); err != nil {
+	if err := spdk.Init(spdk.WithLogger(t)); err != nil {
 		require.NoError(t, err)
 	}
 	if spdk.SPDK == nil {

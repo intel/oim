@@ -135,7 +135,8 @@ var _ = Describe("OIM Controller", func() {
 		BeforeEach(func() {
 			var err error
 
-			err = testspdk.Init(oimcommon.WrapWriter(GinkgoWriter), true)
+			err = testspdk.Init(testspdk.WithWriter(GinkgoWriter),
+				testspdk.WithVHostSCSI())
 			Expect(err).NotTo(HaveOccurred())
 			if testspdk.SPDK == nil {
 				Skip("No SPDK vhost.")
@@ -276,7 +277,7 @@ var _ = Describe("OIM Controller", func() {
 
 		Context("with QEMU", func() {
 			BeforeEach(func() {
-				err := qemu.Init(oimcommon.WrapWriter(GinkgoWriter))
+				err := qemu.Init(qemu.WithWriter(GinkgoWriter))
 				Expect(err).NotTo(HaveOccurred())
 				if qemu.VM == nil {
 					Skip("No QEMU image.")

@@ -24,7 +24,7 @@ import (
 func connect(t *testing.T) *spdk.Client {
 	var err error
 
-	err = testspdk.Init(t, false)
+	err = testspdk.Init(testspdk.WithLogger(t))
 	require.NoError(t, err)
 	if testspdk.SPDK == nil {
 		t.Skip("No SPDK vhost.")

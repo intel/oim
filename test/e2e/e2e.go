@@ -45,7 +45,6 @@ import (
 	"k8s.io/kubernetes/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
 
-	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/test/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
 
@@ -65,11 +64,11 @@ func setupProviderConfig(masterNode bool) error {
 				qemu.Finalize()
 				spdk.Finalize()
 			})
-			logger := oimcommon.WrapWriter(GinkgoWriter)
-			if err := spdk.Init(logger, true); err != nil {
+			if err := spdk.Init(spdk.WithWriter(GinkgoWriter),
+				spdk.WithVHostSCSI()); err != nil {
 				return err
 			}
-			if err := qemu.Init(logger); err != nil {
+			if err := qemu.Init(qemu.WithWriter(GinkgoWriter), qemu.WithKubernetes()); err != nil {
 				return err
 			}
 			if qemu.VM == nil {

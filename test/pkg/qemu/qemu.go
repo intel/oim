@@ -10,6 +10,7 @@ package qemu
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,13 +29,47 @@ var (
 
 	qemuImage = os.Getenv("TEST_QEMU_IMAGE")
 	lock      *lockfile.Lockfile
+
+	o opts
 )
+
+type opts struct {
+	kubernetes bool
+	logger     oimcommon.SimpleLogger
+}
+
+type Option func(*opts)
+
+func WithLogger(logger oimcommon.SimpleLogger) Option {
+	return func(o *opts) {
+		o.logger = logger
+	}
+}
+
+func WithWriter(writer io.Writer) Option {
+	return func(o *opts) {
+		o.logger = oimcommon.WrapWriter(writer)
+	}
+}
+
+func WithKubernetes() Option {
+	return func(o *opts) {
+		o.kubernetes = true
+	}
+}
 
 // Init creates the virtual machine, if possible with VHost SCSI controller.
 // Must be matched by a Finalize call, even after a failure.
-func Init(logger oimcommon.SimpleLogger) error {
+func Init(options ...Option) error {
 	if qemuImage == "" {
 		return nil
+	}
+
+	o = opts{
+		logger: oimcommon.WrapWriter(os.Stdout),
+	}
+	for _, op := range options {
+		op(&o)
 	}
 
 	// Protect against other processes using the same image.
@@ -47,13 +82,13 @@ func Init(logger oimcommon.SimpleLogger) error {
 				break
 			}
 			if !delayed {
-				logger.Logf("Waiting for availability of %s", qemuImage)
+				o.logger.Logf("Waiting for availability of %s", qemuImage)
 				delayed = true
 			}
 			time.Sleep(time.Second)
 		}
 		if delayed {
-			logger.Logf("Got access to %s", qemuImage)
+			o.logger.Logf("Got access to %s", qemuImage)
 		}
 	}
 	if err != nil {
@@ -74,22 +109,27 @@ func Init(logger oimcommon.SimpleLogger) error {
 			"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15",
 		)
 	}
-	logger.Logf("Starting %s with: %v", qemuImage, opts)
+	o.logger.Logf("Starting %s with: %v", qemuImage, opts)
 	vm, err := qemu.StartQEMU(qemuImage, opts...)
 	if err != nil {
-		return err
+		procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
+		return fmt.Errorf("Starting QEMU %s with %s failed: %s\nRunning processes:\n%s",
+			qemuImage, opts, err, procs)
 	}
 	VM = vm
 
+	if !o.kubernetes {
+		return nil
+	}
 	kube := filepath.Join(filepath.Dir(qemuImage), "kube-"+strings.TrimSuffix(filepath.Base(qemuImage), ".img"))
-	logger.Logf("Starting Kubernetes with: %s", kube)
+	o.logger.Logf("Starting Kubernetes with: %s", kube)
 	cmd := exec.Command(kube)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("Starting Kubernetes with %s failed: %s\n%s", kube, err, out)
 	}
 
-	logger.Log("VM and Kubernetes ready.")
+	o.logger.Log("VM and Kubernetes ready.")
 	return nil
 }
 
@@ -111,6 +151,7 @@ func Finalize() error {
 	// We must shut down QEMU first, otherwise
 	// SPDK refuses to remove the controller.
 	if VM != nil {
+		o.logger.Log("Stopping QEMU")
 		VM.StopQEMU()
 		VM = nil
 	}
