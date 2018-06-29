@@ -1217,12 +1217,13 @@
   revision = "7d4729fb36185a7c1719923406c9d40e54fb93c7"
 
 [[projects]]
-  branch = "master"
-  digest = "1:06bde2f1e3ddcdb57b6a3e450320456f5fdd45995bed1bba6a1bca21f75743ed"
+  branch = "gRPC-1.12"
+  digest = "1:4e4c5ccf19e9b0cd2b7ee2b0cfabcbf71736e04022e7dd3168d6c10eef64a694"
   name = "github.com/mwitkow/grpc-proxy"
   packages = ["proxy"]
   pruneopts = "UT"
-  revision = "67591eb23c48346a480470e462289835d96f70da"
+  revision = "273ed59828a10b2c6f6293ca6ee98a338b122c6c"
+  source = "github.com/pohly/grpc-proxy"
 
 [[projects]]
   branch = "master"
@@ -1927,7 +1928,7 @@
   revision = "80063a038e333bbe006c878e4c5ce4c74d055498"
 
 [[projects]]
-  digest = "1:b98b2c28ff1ce0f59080647b83045ee8ca1aef92343d7286592f844bf19aa3c4"
+  digest = "1:fbd63905f816b0726070ce7c69a39c264a304d38dd0b01b2da5772536b28d9fd"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -1939,10 +1940,12 @@
     "credentials",
     "encoding",
     "encoding/proto",
-    "grpclb/grpc_lb_v1/messages",
     "grpclog",
     "health/grpc_health_v1",
     "internal",
+    "internal/backoff",
+    "internal/channelz",
+    "internal/grpcrand",
     "keepalive",
     "metadata",
     "naming",
@@ -1956,8 +1959,8 @@
     "transport",
   ]
   pruneopts = "UT"
-  revision = "61763f5bcf26276d4c255c89e9dcf8f9838a271b"
-  version = "v1.10.1"
+  revision = "168a6198bcb0ef175f7dacec0b8691fc141dc9b8"
+  version = "v1.13.0"
 
 [[projects]]
   digest = "1:abeb38ade3f32a92943e5be54f55ed6d6e3b6602761d74b4aab4c9dd45c18abd"
