@@ -106,6 +106,7 @@ func Init(options ...Option) error {
 		}
 		spdkSock = filepath.Join(tmpDir, "spdk.sock")
 		spdkOut = oimcommon.LogWriter(o.logger, "spdk: ")
+		var done <-chan interface{}
 		{
 			o.logger.Logf("Starting %s", spdkApp)
 			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock,
@@ -126,25 +127,35 @@ func Init(options ...Option) error {
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			cmd.Stdout = spdkOut
 			cmd.Stderr = spdkOut
+			cm, err := oimcommon.AddCmdMonitor(cmd)
+			if err != nil {
+				return errors.Wrap(err, "monitor command")
+			}
 			if err := cmd.Start(); err != nil {
 				return err
 			}
+			done = cm.Watch()
 			spdkCmd = cmd
 		}
-		// TODO: detect premature exits right away.
 		// Starting up can be slow when the number of reserved huge pages is high or
 		// many processes are running.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+	loop:
 		for {
-			if ctx.Err() != nil {
+			select {
+			case <-done:
+				return errors.New("SPDK quit unexpectedly")
+
+			case <-ctx.Done():
 				return fmt.Errorf("Timed out waiting for %s", spdkSock)
+
+			case <-time.After(time.Millisecond):
+				_, err := os.Stat(spdkSock)
+				if err == nil {
+					break loop
+				}
 			}
-			_, err := os.Stat(spdkSock)
-			if err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond)
 		}
 		{
 			cmd := exec.CommandContext(ctx, "sudo", "chmod", "a+rw", spdkSock)
