@@ -187,12 +187,14 @@ _work/clear-kvm.img _work/kube-clear-kvm: _work/clear-kvm-original.img _work/OVM
 	coproc { ./start-clear-kvm clear-kvm.img | tee serial.log ;} && \
 	trap '[ "$$COPROC_PID" ] && kill $$COPROC_PID' EXIT && \
 	echo "Waiting for initial root login, see $$(pwd)/serial.log" && \
-	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "login" ]]; do echo "XXX $$x XXX" >>/tmp/log; done && \
-	echo "root" >&$${COPROC[1]} && \
+	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "login" ]]; do :; done && \
+	echo "Give Clear Linux some time to finish booting." && \
+	sleep 5 && \
 	echo "Changing root password..." && \
-	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "New password" ]]; do echo "YYY $$x XXX" >>/tmp/log; done && \
+	echo "root" >&$${COPROC[1]} && \
+	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "New password" ]]; do :; done && \
 	echo "root$$(cat passwd)" >&$${COPROC[1]} && \
-	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "Retype new password" ]]; do echo "ZZZ $$x XXX" >>/tmp/log; done && \
+	while IFS= read -d : -ru $${COPROC[0]} x && ! [[ "$$x" =~ "Retype new password" ]]; do :; done && \
 	echo "root$$(cat passwd)" >&$${COPROC[1]} && \
 	echo "Reconfiguring and shutting down..." && \
 	IFS= read -d '#' -ru $${COPROC[0]} x && \
