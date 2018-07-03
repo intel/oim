@@ -176,7 +176,7 @@ func (vm *VM) SSH(args ...string) (string, error) {
 // Transfers the content to the virtual machine and creates the file
 // with the chosen mode.
 func (vm *VM) Install(path string, data io.Reader, mode os.FileMode) error {
-	cmd := exec.Command(vm.SSHCmd, fmt.Sprintf("cat > '%s' && chmod %d '%s'", path, mode, path))
+	cmd := exec.Command(vm.SSHCmd, fmt.Sprintf("rm -f '%[1]s' && cat > '%[1]s' && chmod %d '%s'", path, mode, path))
 	cmd.Stdin = data
 	out, err := cmd.CombinedOutput()
 	if err != nil {
