@@ -224,9 +224,12 @@ func Finalize() error {
 			args := spdk.RemoveVHostControllerArgs{
 				Controller: VHost,
 			}
+			// We try to clean up, but that can fail when someone left a disk attached
+			// to the controller ("Trying to remove non-empty controller").
+			// Just log such errors and proceed, as we'll kill the process anyway.
 			o.logger.Logf("Removing VHost SCSI controller %s", VHost)
 			if err := spdk.RemoveVHostController(context.Background(), SPDK, args); err != nil {
-				return err
+				o.logger.Logf("RemoveVHostController: %s", err)
 			}
 			VHostPath = ""
 		}
