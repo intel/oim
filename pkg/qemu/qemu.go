@@ -18,7 +18,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/digitalocean/go-qemu/qemu"
@@ -206,7 +205,6 @@ func (vm *VM) StopQEMU() error {
 
 type forwardPort struct {
 	ssh        *exec.Cmd
-	wg         sync.WaitGroup
 	logWriter  io.Closer
 	terminated <-chan interface{}
 }
@@ -216,16 +214,31 @@ type forwardPort struct {
 // occur while setting up forwarding as well as later, in which case the
 // returned channel will be closed. To stop port forwarding, call the
 // io.Closer.
-func (vm *VM) ForwardPort(logger oimcommon.SimpleLogger, from int, to int) (io.Closer, <-chan interface{}, error) {
+//
+// The to and from specification can be ints (for ports) or strings (for
+// Unix domaain sockets).
+//
+// Optionally a command can be run. If none is given, ssh is invoked with -N.
+func (vm *VM) ForwardPort(logger oimcommon.SimpleLogger, from interface{}, to interface{}, cmd ...string) (io.Closer, <-chan interface{}, error) {
+	fromStr := portToString(from)
+	toStr := portToString(to)
+	args := []string{
+		"-L", fmt.Sprintf("%s:%s", fromStr, toStr),
+	}
+	prefix := fmt.Sprintf("%.8s->%.8s: ", fromStr, toStr)
+	if len(cmd) == 0 {
+		args = append(args, "-N")
+		prefix = prefix + "ssh "
+	} else {
+		args = append(args, cmd...)
+		prefix = filepath.Base(cmd[0]) + " " + prefix
+	}
 	fp := forwardPort{
 		// ssh closes all extra file descriptors, thus defeating our
 		// CmdMonitor. Instead we wait for completion in a goroutine.
-		ssh: exec.Command(vm.SSHCmd,
-			"-L", fmt.Sprintf("localhost:%d:localhost:%d", from, to),
-			"-N",
-		),
+		ssh: exec.Command(vm.SSHCmd, args...),
 	}
-	out := oimcommon.LogWriter(logger, fmt.Sprintf("ssh %d->%d: ", from, to))
+	out := oimcommon.LogWriter(logger, prefix)
 	fp.ssh.Stdout = out
 	fp.ssh.Stderr = out
 	fp.logWriter = out
@@ -238,10 +251,17 @@ func (vm *VM) ForwardPort(logger oimcommon.SimpleLogger, from int, to int) (io.C
 		defer close(terminated)
 		fp.ssh.Wait()
 	}()
-	return fp, terminated, nil
+	return &fp, terminated, nil
 }
 
-func (fp forwardPort) Close() error {
+func portToString(port interface{}) string {
+	if v, ok := port.(int); ok {
+		return fmt.Sprintf("localhost:%d", v)
+	}
+	return fmt.Sprintf("%s", port)
+}
+
+func (fp *forwardPort) Close() error {
 	fp.ssh.Process.Kill()
 	<-fp.terminated
 	fp.logWriter.Close()
