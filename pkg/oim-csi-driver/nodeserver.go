@@ -184,8 +184,11 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		// The actual /dev folder might not have the device,
 		// for example when we run in a Docker container where
 		// /dev was populated at startup time. Therefore we
-		// create a temporary block special file.
-		tmpDir, err := ioutil.TempDir("", dev)
+		// create a temporary block special file. This has
+		// to be under /dev instead of /tmp, because /tmp
+		// might have been mounted with nodev, preventing
+		// the usage of block devices there.
+		tmpDir, err := ioutil.TempDir("/dev", dev)
 		if err != nil {
 			return nil, err
 		}
