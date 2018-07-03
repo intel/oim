@@ -11,7 +11,6 @@ package qemu
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,9 +18,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digitalocean/go-qemu/qemu"
+	"github.com/pkg/errors"
+
+	"github.com/intel/oim/pkg/oim-common"
 )
 
 type VM struct {
@@ -199,4 +202,48 @@ func (vm *VM) StopQEMU() error {
 
 	vm = nil
 	return err
+}
+
+type forwardPort struct {
+	ssh        *exec.Cmd
+	wg         sync.WaitGroup
+	logWriter  io.Closer
+	terminated <-chan interface{}
+}
+
+// ForwardPort activates port forwarding from a listen socket on the
+// current host to another port inside the virtual machine. Errors can
+// occur while setting up forwarding as well as later, in which case the
+// returned channel will be closed. To stop port forwarding, call the
+// io.Closer.
+func (vm *VM) ForwardPort(logger oimcommon.SimpleLogger, from int, to int) (io.Closer, <-chan interface{}, error) {
+	fp := forwardPort{
+		// ssh closes all extra file descriptors, thus defeating our
+		// CmdMonitor. Instead we wait for completion in a goroutine.
+		ssh: exec.Command(vm.SSHCmd,
+			"-L", fmt.Sprintf("localhost:%d:localhost:%d", from, to),
+			"-N",
+		),
+	}
+	out := oimcommon.LogWriter(logger, fmt.Sprintf("ssh %d->%d: ", from, to))
+	fp.ssh.Stdout = out
+	fp.ssh.Stderr = out
+	fp.logWriter = out
+	terminated := make(chan interface{})
+	fp.terminated = terminated
+	if err := fp.ssh.Start(); err != nil {
+		return nil, nil, err
+	}
+	go func() {
+		defer close(terminated)
+		fp.ssh.Wait()
+	}()
+	return fp, terminated, nil
+}
+
+func (fp forwardPort) Close() error {
+	fp.ssh.Process.Kill()
+	<-fp.terminated
+	fp.logWriter.Close()
+	return nil
 }
