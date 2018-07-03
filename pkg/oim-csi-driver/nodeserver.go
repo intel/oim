@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -206,7 +207,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 	diskMounter := &mount.SafeFormatAndMount{Interface: mount.New(""), Exec: mount.NewOsExec()}
 	if err := diskMounter.FormatAndMount(device, targetPath, fsType, options); err != nil {
-		return nil, err
+		// We get a pretty bad error code from FormatAndMount ("exit code 1") :-/
+		return nil, errors.Wrapf(err, "formatting as %s and mounting %s at %s", fsType, device, targetPath)
 	}
 
 	return &csi.NodePublishVolumeResponse{}, nil
