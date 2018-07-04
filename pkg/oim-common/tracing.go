@@ -10,6 +10,7 @@ package oimcommon
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
@@ -20,34 +21,74 @@ import (
 	jaegercfg "github.com/uber/jaeger-client-go/config"
 )
 
+type logIndentKeyType struct{}
+
+var logIndentKey logIndentKeyType
+
+// logIndentIncrement specifies the number of spaces that log messages
+// get indented while handling gRPC calls.
+var logIndentIncrement = 2
+
+// logIndent returns the current indention associated with a context,
+// zero if none.
+func logIndent(ctx context.Context) int {
+	if v := ctx.Value(logIndentKey); v != nil {
+		return v.(int)
+	}
+	return 0
+}
+
+// logSpaces returns a string containing enough spaces for the
+// current indent.
+func logSpaces(ctx context.Context) string {
+	indent := logIndent(ctx)
+	return strings.Repeat(" ", indent)
+}
+
 // LogGRPCServer logs the server-side call information via glog.
 //
 // Warning: at log levels >= 5 the recorded information includes all
 // parameters, which potentially contains sensitive information like
 // the secrets.
 func LogGRPCServer(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	glog.V(3).Infof("GRPC call: %s", info.FullMethod)
-	glog.V(5).Infof("GRPC request: %+v", req)
-	resp, err := handler(ctx, req)
-	if err != nil {
-		glog.Errorf("GRPC error: %v", err)
-	} else {
-		glog.V(5).Infof("GRPC response: %+v", resp)
-	}
+	innerCtx, indent := logGRPCPre(ctx, info.FullMethod, req)
+	resp, err := handler(innerCtx, req)
+	logGRPCPost(indent, info.FullMethod, err, resp)
 	return resp, err
 }
 
 // LogGRPCClient does the same as LogGRPCServer, only on the client side.
+// TODO: indent nested calls
 func LogGRPCClient(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	glog.V(3).Infof("GRPC call: %s", method)
-	glog.V(5).Infof("GRPC request: %+v", req)
-	err := invoker(ctx, method, req, reply, cc, opts...)
-	if err != nil {
-		glog.Errorf("GRPC error: %v", err)
-	} else {
-		glog.V(5).Infof("GRPC response: %+v", reply)
-	}
+	innerCtx, indent := logGRPCPre(ctx, method, req)
+	err := invoker(innerCtx, method, req, reply, cc, opts...)
+	logGRPCPost(indent, method, err, reply)
 	return err
+}
+
+func logGRPCPre(ctx context.Context, method string, req interface{}) (context.Context, int) {
+	// Determine indention level based on context and increment it by
+	// by one for future logging.
+	indent := logIndent(ctx)
+	if glog.V(5) {
+		glog.Infof("%*sGRPC call: %s %s", indent, "", method, req)
+	} else if glog.V(3) {
+		glog.Infof("%*sGRPC call: %s", indent, "", method)
+	}
+	return context.WithValue(ctx, logIndentKey, indent+logIndentIncrement), indent
+}
+
+func logGRPCPost(indent int, method string, err error, reply interface{}) {
+	// We need to include the method name here because
+	// a) the preamble might have been logged quite a while
+	//    ago with more log entries since then
+	// b) logging of the preamble might have been skipped due
+	//    to the lower log level
+	if err != nil {
+		glog.Errorf("%*sGRPC error: %s: %v", indent, "", method, err)
+	} else {
+		glog.V(5).Infof("%*sGRPC response: %s: %+v", indent, "", method, reply)
+	}
 }
 
 // TraceGRPCPayload adds the request and response as tags
@@ -68,7 +109,9 @@ func TraceGRPCPayload(sp opentracing.Span, method string, req, reply interface{}
 // one. This ensures that spans which get recorded (not all do) have
 // the full information.
 func Infof(level glog.Level, ctx context.Context, format string, args ...interface{}) {
-	glog.V(level).Infof(format, args...)
+	if glog.V(level) {
+		glog.InfoDepth(1, fmt.Sprintf(logSpaces(ctx)+format, args...))
+	}
 	sp := opentracing.SpanFromContext(ctx)
 	if sp != nil {
 		sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
@@ -80,7 +123,7 @@ func Infof(level glog.Level, ctx context.Context, format string, args ...interfa
 // Errorf does the same as Infof for error messages, except that
 // it ignores the current log level.
 func Errorf(ctx context.Context, format string, args ...interface{}) {
-	glog.Errorf(format, args...)
+	glog.ErrorDepth(1, fmt.Sprintf(logSpaces(ctx)+format, args...))
 	sp := opentracing.SpanFromContext(ctx)
 	if sp != nil {
 		sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
