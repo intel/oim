@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
@@ -190,6 +192,12 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 			// TODO: detect already existing BDev of the same name (https://github.com/spdk/spdk/issues/319)
 			if _, err := spdk.ConstructMallocBDev(ctx, c.SPDK, args); err != nil {
 				return nil, errors.New(fmt.Sprintf("ConstructMallocBDev failed: %s", err))
+			}
+		} else {
+			// Check that the BDev has the right size.
+			actualSize := bdevs[0].NumBlocks * bdevs[0].BlockSize
+			if actualSize != size {
+				return nil, status.Errorf(codes.AlreadyExists, "Existing BDev %s has wrong size %d", bdevName, actualSize)
 			}
 		}
 	} else {
