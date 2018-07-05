@@ -56,14 +56,10 @@ var (
 )
 
 // setupProviderConfig validates and sets up cloudConfig based on framework.TestContext.Provider.
-func setupProviderConfig(masterNode bool) error {
+func setupProviderConfig(data *[]byte) error {
 	switch framework.TestContext.Provider {
 	case "":
-		if masterNode {
-			framework.AddCleanupAction(func() {
-				qemu.Finalize()
-				spdk.Finalize()
-			})
+		if *data == nil {
 			if err := spdk.Init(spdk.WithWriter(GinkgoWriter),
 				spdk.WithVHostSCSI()); err != nil {
 				return err
@@ -73,6 +69,23 @@ func setupProviderConfig(masterNode bool) error {
 			}
 			if qemu.VM == nil {
 				return errors.New("A QEMU image is required for this test.")
+			}
+			// Tell child nodes about our SPDK path.
+			*data = []byte(spdk.SPDKPath)
+		} else {
+			if framework.TestContext.KubeConfig != "" {
+				// This gets called twice on the master node, once with data and once without.
+				// We don't need to do anything the second time.
+				return nil
+			}
+
+			if err := qemu.SimpleInit(); err != nil {
+				return err
+			}
+			if err := spdk.Init(spdk.WithSPDKSocket(string(*data)),
+				spdk.WithWriter(GinkgoWriter),
+			); err != nil {
+				return err
 			}
 		}
 		config, err := qemu.KubeConfig()
@@ -165,8 +178,9 @@ func setupProviderConfig(masterNode bool) error {
 // accepting the byte array.
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// Run only on Ginkgo node 1
+	var data []byte
 
-	if err := setupProviderConfig(true); err != nil {
+	if err := setupProviderConfig(&data); err != nil {
 		framework.Failf("Failed to setup provider config: %v", err)
 	}
 
@@ -265,13 +279,13 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// Reference common test to make the import valid.
 	// commontest.CurrentSuite = commontest.E2E
 
-	return nil
+	return data
 
 }, func(data []byte) {
 	// Run on all Ginkgo nodes
 
 	if cloudConfig.Provider == nil {
-		if err := setupProviderConfig(false); err != nil {
+		if err := setupProviderConfig(&data); err != nil {
 			framework.Failf("Failed to setup provider config: %v", err)
 		}
 	}
@@ -295,6 +309,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 			framework.Logf("Error gathering metrics: %v", err)
 		}
 	}
+	qemu.Finalize()
+	spdk.Finalize()
 })
 
 func gatherTestSuiteMetrics() error {

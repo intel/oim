@@ -17,15 +17,20 @@ limitations under the License.
 package e2e
 
 import (
+	"log"
 	"testing"
 
 	"k8s.io/kubernetes/test/e2e/framework"
+
+	. "github.com/onsi/ginkgo"
 
 	// test sources
 	_ "github.com/intel/oim/test/e2e/storage"
 )
 
 func init() {
+	log.SetOutput(GinkgoWriter)
+
 	framework.ViperizeFlags()
 }
 

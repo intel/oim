@@ -31,11 +31,9 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 
 	e2eutils "github.com/intel/oim/test/e2e/utils"
-	"github.com/intel/oim/test/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
 
 	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
 )
 
 func csiServiceAccount(
@@ -302,11 +300,6 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			// TODO: check machine state while volume is mounted:
 			// a missing UnmapVolume call in nodeserver.go must be detected
 			testDynamicProvisioning(t, cs, claim, class)
-
-			By("verifying that device is gone")
-			Eventually(func() (string, error) {
-				return qemu.VM.SSH("ls", "-l", "/sys/dev/block")
-			}).ShouldNot(ContainSubstring(spdk.VHostDev))
 		})
 	})
 })
