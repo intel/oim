@@ -32,6 +32,12 @@ import (
 )
 
 func init() {
+	// Show glog output by default, and print all of it.
+	// TODO: get rid of glog and logging to stdout,
+	// because the output is not captured such that it belongs
+	// to the current test.
+	flag.Set("logtostderr", "true")
+	flag.Set("v", "100")
 	log.SetOutput(GinkgoWriter)
 
 	framework.ViperizeFlags()
