@@ -133,6 +133,19 @@ func Init(options ...Option) error {
 	return nil
 }
 
+// SimpleInit is meant to be used in a parallel Ginkgo test suite where some other node
+// called Init. SimpleInit then sets up VM so that running SSH commands work. Finalize
+// must not be called.
+func SimpleInit() error {
+	if qemuImage == "" {
+		return nil
+	}
+
+	var err error
+	VM, err = qemu.UseQEMU(qemuImage)
+	return err
+}
+
 // KubeConfig returns the full path for the Kubernetes cluster.
 func KubeConfig() (string, error) {
 	// Cluster is ready, treat it like a local cluster
@@ -151,7 +164,7 @@ func Finalize() error {
 	// We must shut down QEMU first, otherwise
 	// SPDK refuses to remove the controller.
 	if VM != nil {
-		o.logger.Log("Stopping QEMU")
+		o.logger.Logf("Stopping QEMU %s", VM)
 		VM.StopQEMU()
 		VM = nil
 	}

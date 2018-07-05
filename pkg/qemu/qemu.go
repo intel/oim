@@ -33,6 +33,8 @@ type VM struct {
 	Stderr  bytes.Buffer
 	SSHCmd  string
 	done    <-chan interface{}
+	image   string
+	start   string
 }
 
 type StartError struct {
@@ -51,12 +53,38 @@ func (err StartError) Error() string {
 		err.Stderr)
 }
 
+// UseQEMU sets up a VM instance so that SSH commands can be issued.
+// The machine must be started separately.
+func UseQEMU(image string) (*VM, error) {
+	var err error
+	var vm VM
+	// Here we use the start script provided with the image.
+	// In addition, we disable the serial console and instead
+	// use stdin/out for QMP. That way we immediately detect
+	// when something went wrong during startup. Kernel
+	// messages get collected also via stderr and thus
+	// end up in VM.Stderr.
+	vm.image, err = filepath.Abs(image)
+	if err != nil {
+		return nil, err
+	}
+	vm.image = strings.TrimSuffix(vm.image, ".img")
+	helperFile := func(prefix string) string {
+		return filepath.Join(filepath.Dir(vm.image), prefix+filepath.Base(vm.image))
+	}
+	vm.start = helperFile("start-")
+	vm.SSHCmd = helperFile("ssh-")
+	return &vm, nil
+}
+
 // StartQEMU() returns a VM pointer if a virtual machine could be
 // started, and error when starting failed, and nil for both when no
 // image is configured and thus nothing can be started.
 func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
-	var err error
-	var vm VM
+	vm, err := UseQEMU(image)
+	if err != nil {
+		return nil, err
+	}
 
 	// Here we use the start script provided with the image.
 	// In addition, we disable the serial console and instead
@@ -64,18 +92,8 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 	// when something went wrong during startup. Kernel
 	// messages get collected also via stderr and thus
 	// end up in VM.Stderr.
-	image, err = filepath.Abs(image)
-	if err != nil {
-		return nil, err
-	}
-	image = strings.TrimSuffix(image, ".img")
-	helperFile := func(prefix string) string {
-		return filepath.Join(filepath.Dir(image), prefix+filepath.Base(image))
-	}
-	start := helperFile("start-")
-	vm.SSHCmd = helperFile("ssh-")
 	args := []string{
-		start, image + ".img",
+		vm.start, vm.image + ".img",
 		"-serial", "none",
 		"-chardev", "stdio,id=mon0",
 		"-serial", "file:" + filepath.Join(filepath.Dir(image), "serial.log"),
@@ -143,7 +161,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 	}
 
 	timer.Stop()
-	return &vm, nil
+	return vm, nil
 }
 
 // Running returns true if the virtual machine instance is currently active.
@@ -158,6 +176,20 @@ func (vm *VM) Running() bool {
 	default:
 		return true
 	}
+}
+
+func (vm *VM) String() string {
+	if vm == nil {
+		return "*VM{nil}"
+	}
+	result := vm.image
+	if vm.Running() {
+		result = result + " running"
+	}
+	if vm.Cmd != nil && vm.Cmd.Process != nil {
+		result = fmt.Sprintf("%s %d", result, vm.Cmd.Process.Pid)
+	}
+	return result
 }
 
 // Executes a shell command inside the virtual machine via ssh, using the helper
@@ -185,21 +217,25 @@ func (vm *VM) Install(path string, data io.Reader, mode os.FileMode) error {
 }
 
 // StopQEMU ensures that the virtual machine powers down cleanly and
-// all resources are freed.
+// all resources are freed. Can be called more than once.
 func (vm *VM) StopQEMU() error {
+	var err error
+
 	// Trigger shutdown, ignoring errors.
 	// Give VM some time to power down, then kill it.
-	timer := time.AfterFunc(10*time.Second, func() {
-		log.Printf("Cancelling")
-		vm.Cmd.Process.Kill()
-	})
-	defer timer.Stop()
-	log.Printf("Powering down QEMU")
-	vm.Cmd.Process.Signal(os.Interrupt)
-	log.Printf("Waiting for completion")
-	err := vm.Cmd.Wait()
+	if vm.Cmd != nil && vm.Cmd.Process != nil {
+		timer := time.AfterFunc(10*time.Second, func() {
+			log.Printf("Cancelling")
+			vm.Cmd.Process.Kill()
+		})
+		defer timer.Stop()
+		log.Printf("Powering down QEMU")
+		vm.Cmd.Process.Signal(os.Interrupt)
+		log.Printf("Waiting for completion")
+		err = vm.Cmd.Wait()
+		vm.Cmd = nil
+	}
 
-	vm = nil
 	return err
 }
 
