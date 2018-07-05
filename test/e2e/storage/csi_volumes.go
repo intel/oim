@@ -215,7 +215,7 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 
 	// Create one of these for each of the drivers to be tested
 	// CSI hostPath driver test
-	Describe("Sanity CSI plugin test using hostPath CSI driver", func() {
+	XDescribe("Sanity CSI plugin test using hostPath CSI driver", func() {
 
 		var (
 			clusterRole    *rbacv1.ClusterRole
