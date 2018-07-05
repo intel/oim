@@ -38,6 +38,7 @@ func TestGetBDevs(t *testing.T) {
 	response, err := spdk.GetBDevs(context.Background(), client, spdk.GetBDevsArgs{})
 	assert.NoError(t, err, "Failed to list bdevs: %s", err)
 	assert.Empty(t, response, "Unexpected non-empty bdev list")
+	testspdk.Finalize()
 }
 
 func TestError(t *testing.T) {

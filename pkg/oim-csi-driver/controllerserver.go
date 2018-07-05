@@ -55,7 +55,8 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 func (cs *controllerServer) createVolumeSPDK(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Connect to SPDK.
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	// TODO: log JSON traffic
+	client, err := spdk.New(cs.od.vhostEndpoint, nil)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -165,7 +166,8 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 
 func (cs *controllerServer) deleteVolumeSPDK(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Connect to SPDK.
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	// TODO: log JSON traffic
+	client, err := spdk.New(cs.od.vhostEndpoint, nil)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -237,7 +239,7 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 func (cs *controllerServer) checkVolumeExistsSPDK(ctx context.Context, volumeID string) error {
 	// Connect to SPDK.
 	// TODO: log JSON traffic
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	client, err := spdk.New(cs.od.vhostEndpoint, nil)
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}

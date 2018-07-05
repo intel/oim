@@ -93,7 +93,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	device := ""
 	if ns.od.vhostEndpoint != "" {
 		// Connect to SPDK.
-		client, err := spdk.New(ns.od.vhostEndpoint)
+		// TODO: log JSON traffic
+		client, err := spdk.New(ns.od.vhostEndpoint, nil)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}
@@ -329,7 +330,8 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	if ns.od.vhostEndpoint != "" {
 		// Connect to SPDK.
-		client, err := spdk.New(ns.od.vhostEndpoint)
+		// TODO: log JSON traffic
+		client, err := spdk.New(ns.od.vhostEndpoint, nil)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}

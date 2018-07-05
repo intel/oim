@@ -51,6 +51,8 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+
+	"github.com/intel/oim/pkg/oim-common"
 )
 
 // From SPDK's include/spdk/jsonrpc.h:
@@ -223,10 +225,36 @@ type Client struct {
 	client *rpc.Client
 }
 
-func New(path string) (*Client, error) {
+type logConn struct {
+	net.Conn
+	logger oimcommon.SimpleLogger
+}
+
+func (lc *logConn) Read(b []byte) (int, error) {
+	n, err := lc.Conn.Read(b)
+	if err != nil {
+		lc.logger.Logf("SPDK read error: %s", err)
+	} else {
+		lc.logger.Logf("<-SPDK: %s", string(b[:n]))
+	}
+	return n, err
+}
+func (lc *logConn) Write(b []byte) (int, error) {
+	lc.logger.Logf("->SPDK: %s", string(b))
+	n, err := lc.Conn.Write(b)
+	if err != nil {
+		lc.logger.Logf("SPDK write error: %s", err)
+	}
+	return n, err
+}
+
+func New(path string, logger oimcommon.SimpleLogger) (*Client, error) {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
+	}
+	if logger != nil {
+		conn = &logConn{conn, logger}
 	}
 	client := rpc.NewClientWithCodec(newClientCodec(conn))
 	return &Client{client: client}, nil

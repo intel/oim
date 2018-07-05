@@ -271,6 +271,7 @@ func (op *OIMControlPlane) StartOIMControlPlane() {
 		oimcontroller.WithVHostController(spdk.VHost),
 		oimcontroller.WithVHostDev(spdk.VHostDev),
 		oimcontroller.WithSPDK(spdk.SPDKPath),
+		oimcontroller.WithLogger(oimcommon.WrapWriter(GinkgoWriter)),
 	)
 	Expect(err).NotTo(HaveOccurred())
 	cs, controllerService := oimcontroller.Server(controllerAddress, op.controller)

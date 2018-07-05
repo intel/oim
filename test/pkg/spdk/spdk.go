@@ -103,7 +103,7 @@ func Init(options ...Option) error {
 
 	// Connect to existing SPDK?
 	if o.socket != "" {
-		s, err := spdk.New(o.socket)
+		s, err := spdk.New(o.socket, o.logger)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func Init(options ...Option) error {
 	}
 	lock = &l
 
-	s, err := spdk.New(spdkSock)
+	s, err := spdk.New(spdkSock, o.logger)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -29,9 +28,11 @@ type Controller struct {
 	registryDelay   time.Duration
 	controllerID    string
 	controllerAddr  string
+	spdkPath        string
 	SPDK            *spdk.Client
 	vhostSCSI       string
 	vhostDev        string
+	logger          oimcommon.SimpleLogger
 
 	wg   sync.WaitGroup
 	stop chan<- interface{}
@@ -258,15 +259,7 @@ func WithControllerID(controllerID string) Option {
 
 func WithSPDK(path string) Option {
 	return func(c *Controller) error {
-		if path == "" {
-			c.SPDK = nil
-			return nil
-		}
-		client, err := spdk.New(path)
-		if err != nil {
-			return err
-		}
-		c.SPDK = client
+		c.spdkPath = path
 		return nil
 	}
 }
@@ -285,6 +278,13 @@ func WithVHostDev(dev string) Option {
 	}
 }
 
+func WithLogger(logger oimcommon.SimpleLogger) Option {
+	return func(c *Controller) error {
+		c.logger = logger
+		return nil
+	}
+}
+
 func New(options ...Option) (*Controller, error) {
 	c := Controller{
 		controllerID:  "unset-controller-id",
@@ -295,6 +295,17 @@ func New(options ...Option) (*Controller, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if c.logger == nil {
+		c.logger = oimcommon.DiscardLogger{}
+	}
+
+	if c.spdkPath != "" {
+		client, err := spdk.New(c.spdkPath, c.logger)
+		if err != nil {
+			return nil, err
+		}
+		c.SPDK = client
 	}
 
 	if c.registryAddress != "" && (c.controllerID == "" || c.controllerAddr == "") {
@@ -348,12 +359,12 @@ func (c *Controller) register(ctx context.Context) {
 	// will fail permanently and b) we don't want to keep
 	// a permanent connection from each controller to
 	// the registry.
-	log.Printf("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
+	c.logger.Logf("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
 	// TODO: secure connection
 	opts := oimcommon.ChooseDialOpts(c.registryAddress, grpc.WithInsecure())
 	conn, err := grpc.DialContext(ctx, c.registryAddress, opts...)
 	if err != nil {
-		log.Printf("error connecting to OIM registry: %s", err)
+		c.logger.Logf("error connecting to OIM registry: %s", err)
 	}
 	defer conn.Close()
 	registry := oim.NewRegistryClient(conn)
