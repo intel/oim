@@ -17,7 +17,10 @@ limitations under the License.
 package e2e
 
 import (
+	"flag"
+	"fmt"
 	"log"
+	"os"
 	"testing"
 
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -32,6 +35,12 @@ func init() {
 	log.SetOutput(GinkgoWriter)
 
 	framework.ViperizeFlags()
+	// This check probably should be in the Kubernetes framework itself.
+	args := flag.Args()
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "unhandled extra command line arguments: %v\n", args)
+		os.Exit(1)
+	}
 }
 
 func TestE2E(t *testing.T) {
