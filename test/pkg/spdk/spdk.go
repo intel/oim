@@ -56,6 +56,7 @@ var (
 type opts struct {
 	controller bool
 	logger     oimcommon.SimpleLogger
+	socket     string
 }
 
 type Option func(*opts)
@@ -78,19 +79,42 @@ func WithVHostSCSI() Option {
 	}
 }
 
+// WithSPDKSocket overrides the default env variables and
+// causes Init to connect to an existing daemon, without
+// locking it for exclusive use. This is meant to be used
+// in a parallel Gingko test run where the master node
+// does the normal Init and the rest of the nodes
+// use the socket.
+func WithSPDKSocket(path string) Option {
+	return func(o *opts) {
+		o.socket = path
+	}
+}
+
 // Init connects to SPDK and creates a VHost SCSI controller.
 // Must be matched by a Finalize call, even after a failure.
 func Init(options ...Option) error {
-	// Set up VHost SCSI, if we have SPDK.
-	if spdkSock == "" && spdkApp == "" {
-		return nil
-	}
-
 	o = opts{
 		logger: oimcommon.WrapWriter(os.Stdout),
 	}
 	for _, op := range options {
 		op(&o)
+	}
+
+	// Connect to existing SPDK?
+	if o.socket != "" {
+		s, err := spdk.New(o.socket)
+		if err != nil {
+			return err
+		}
+		SPDK = s
+		SPDKPath = o.socket
+		return nil
+	}
+
+	// Set up VHost SCSI, if we have SPDK.
+	if spdkSock == "" && spdkApp == "" {
+		return nil
 	}
 
 	if SPDK != nil || VHostPath != "" || spdkCmd != nil {
@@ -258,8 +282,10 @@ func Finalize() error {
 			return err
 		}
 	}
-	if err := os.RemoveAll(tmpDir); err != nil {
-		return err
+	if tmpDir != "" {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			return err
+		}
 	}
 	return nil
 }
