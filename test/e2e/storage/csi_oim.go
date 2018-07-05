@@ -8,7 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 package storage
 
 import (
+	"context"
 	"flag"
+	"io/ioutil"
 	"os"
 
 	"k8s.io/api/core/v1"
@@ -16,6 +18,14 @@ import (
 
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+
+	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/oim-controller"
+	"github.com/intel/oim/pkg/oim-registry"
+	"github.com/intel/oim/test/pkg/spdk"
+
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 )
 
 func getHostname() string {
@@ -206,4 +216,89 @@ func csiOIMPod(
 	// Wait for pod to come up
 	framework.ExpectNoError(framework.WaitForPodRunningInNamespace(client, ret))
 	return ret
+}
+
+type OIMControlPlane struct {
+	registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
+	controller                       *oimcontroller.Controller
+	tmpDir                           string
+	ctx                              context.Context
+	cancel                           context.CancelFunc
+
+	controllerID    string
+	registryAddress string
+}
+
+// TODO: test binaries instead or in addition?
+func (op *OIMControlPlane) StartOIMControlPlane() {
+	var err error
+
+	op.ctx, op.cancel = context.WithCancel(context.Background())
+
+	// Spin up registry on the host. We
+	// intentionally use the hostname here instead
+	// of localhost, because then the resulting
+	// address has one external IP address.
+	// The assumptions are that:
+	// - the hostname can be resolved
+	// - the resulting IP address is different
+	//   from the network inside QEMU and thus
+	//   can be reached via the QEMU NAT from inside
+	//   the virtual machine
+	By("starting OIM registry")
+	registry, err := oimregistry.New()
+	Expect(err).NotTo(HaveOccurred())
+	hostname, err := os.Hostname()
+	Expect(err).NotTo(HaveOccurred())
+	rs, registryService := oimregistry.Server("tcp4://"+hostname+":0", registry)
+	op.registryServer = rs
+	err = op.registryServer.Start(registryService)
+	Expect(err).NotTo(HaveOccurred())
+	addr := op.registryServer.Addr()
+	Expect(addr).NotTo(BeNil())
+	// No tcp4:/// prefix. It causes gRPC to block?!
+	op.registryAddress = addr.String()
+
+	By("starting OIM controller")
+	op.controllerID = "oim-e2e-controller"
+	op.tmpDir, err = ioutil.TempDir("", "oim-e2e-test")
+	Expect(err).NotTo(HaveOccurred())
+	controllerAddress := "unix:///" + op.tmpDir + "/controller.sock"
+	op.controller, err = oimcontroller.New(
+		oimcontroller.WithRegistry(op.registryAddress),
+		oimcontroller.WithControllerID(op.controllerID),
+		oimcontroller.WithControllerAddress(controllerAddress),
+		oimcontroller.WithVHostController(spdk.VHost),
+		oimcontroller.WithVHostDev(spdk.VHostDev),
+		oimcontroller.WithSPDK(spdk.SPDKPath),
+	)
+	Expect(err).NotTo(HaveOccurred())
+	cs, controllerService := oimcontroller.Server(controllerAddress, op.controller)
+	op.controllerServer = cs
+	err = op.controllerServer.Start(controllerService)
+	Expect(err).NotTo(HaveOccurred())
+	err = op.controller.Start()
+	Expect(err).NotTo(HaveOccurred())
+}
+
+func (op *OIMControlPlane) StopOIMControlPlane() {
+	By("stopping OIM services")
+
+	if op.cancel != nil {
+		op.cancel()
+	}
+	if op.registryServer != nil {
+		op.registryServer.ForceStop()
+		op.registryServer.Wait()
+	}
+	if op.controllerServer != nil {
+		op.controllerServer.ForceStop()
+		op.controllerServer.Wait()
+	}
+	if op.controller != nil {
+		op.controller.Stop()
+	}
+	if op.tmpDir != "" {
+		os.RemoveAll(op.tmpDir)
+	}
 }

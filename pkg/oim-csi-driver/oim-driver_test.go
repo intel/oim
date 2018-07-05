@@ -69,6 +69,9 @@ func (s SudoMount) Close() {
 }
 
 // Runs tests in local SPDK mode.
+//
+// The corresponding test for non-local mode is in
+// test/e2e/storage/oim-csi.go.
 func TestSPDK(t *testing.T) {
 	defer spdk.Finalize()
 	if err := spdk.Init(spdk.WithLogger(t)); err != nil {

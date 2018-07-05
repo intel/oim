@@ -17,10 +17,7 @@ limitations under the License.
 package storage
 
 import (
-	"context"
-	"io/ioutil"
 	"math/rand"
-	"os"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -33,9 +30,6 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 
-	"github.com/intel/oim/pkg/oim-common"
-	"github.com/intel/oim/pkg/oim-controller"
-	"github.com/intel/oim/pkg/oim-registry"
 	e2eutils "github.com/intel/oim/test/e2e/utils"
 	"github.com/intel/oim/test/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
@@ -260,13 +254,9 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 	Describe("Sanity CSI plugin test using OIM CSI driver", func() {
 
 		var (
-			clusterRole                      *rbacv1.ClusterRole
-			serviceAccount                   *v1.ServiceAccount
-			registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
-			controller                       *oimcontroller.Controller
-			tmpDir                           string
-			ctx                              context.Context
-			cancel                           context.CancelFunc
+			clusterRole    *rbacv1.ClusterRole
+			serviceAccount *v1.ServiceAccount
+			controlPlane   OIMControlPlane
 		)
 
 		BeforeEach(func() {
@@ -274,86 +264,26 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 				Skip("No SPDK vhost.")
 			}
 
-			ctx, cancel = context.WithCancel(context.Background())
-			var err error
+			controlPlane.StartOIMControlPlane()
 
-			// TODO: test binaries instead or in addition?
-
-			By("starting OIM registry")
-			// Spin up registry on the host. We
-			// intentionally use the hostname here instead
-			// of localhost, because then the resulting
-			// address has one external IP address.
-			// The assumptions are that:
-			// - the hostname can be resolved
-			// - the resulting IP address is different
-			//   from the network inside QEMU and thus
-			//   can be reached via the QEMU NAT from inside
-			//   the virtual machine
-			registry, err := oimregistry.New()
-			Expect(err).NotTo(HaveOccurred())
-			hostname, err := os.Hostname()
-			Expect(err).NotTo(HaveOccurred())
-			registryServer, registryService := oimregistry.Server("tcp4://"+hostname+":0", registry)
-			err = registryServer.Start(registryService)
-			Expect(err).NotTo(HaveOccurred())
-			addr := registryServer.Addr()
-			Expect(addr).NotTo(BeNil())
-			// No tcp4:/// prefix. It causes gRPC to block?!
-			registryAddress := addr.String()
-
-			By("starting OIM controller")
-			controllerID := "oim-e2e-controller"
-			tmpDir, err = ioutil.TempDir("", "oim-e2e-test")
-			Expect(err).NotTo(HaveOccurred())
-			controllerAddress := "unix:///" + tmpDir + "/controller.sock"
-			controller, err = oimcontroller.New(
-				oimcontroller.WithRegistry(registryAddress),
-				oimcontroller.WithControllerID(controllerID),
-				oimcontroller.WithControllerAddress(controllerAddress),
-				oimcontroller.WithVHostController(spdk.VHost),
-				oimcontroller.WithVHostDev(spdk.VHostDev),
-				oimcontroller.WithSPDK(spdk.SPDKPath),
-			)
-			controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller)
-			err = controllerServer.Start(controllerService)
-			Expect(err).NotTo(HaveOccurred())
-			err = controller.Start()
-			Expect(err).NotTo(HaveOccurred())
-
-			By("deploying CSI OIM driver")
+			By("deploying CSI OIM pods")
 			clusterRole = csiClusterRole(cs, config, false)
 			serviceAccount = csiServiceAccount(cs, config, false)
 			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
-			csiOIMPod(cs, config, false, f, serviceAccount, registryAddress, controllerID)
-			e2eutils.CopyAllLogs(ctx, cs, ns.Name, "csi-pod", GinkgoWriter)
-			e2eutils.WatchPods(ctx, cs, GinkgoWriter)
+			csiOIMPod(cs, config, false, f, serviceAccount, controlPlane.registryAddress, controlPlane.controllerID)
+			e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, "csi-pod", GinkgoWriter)
+			e2eutils.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
 		})
 
 		AfterEach(func() {
-			cancel()
 
-			By("uninstalling CSI OIM driver")
+			By("uninstalling CSI OIM pods")
 			csiOIMPod(cs, config, true, f, serviceAccount, "", "")
 			csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
 			serviceAccount = csiServiceAccount(cs, config, true)
 			clusterRole = csiClusterRole(cs, config, true)
 
-			By("stopping OIM services")
-			if registryServer != nil {
-				registryServer.ForceStop()
-				registryServer.Wait()
-			}
-			if controllerServer != nil {
-				controllerServer.ForceStop()
-				controllerServer.Wait()
-			}
-			if controller != nil {
-				controller.Stop()
-			}
-			if tmpDir != "" {
-				os.RemoveAll(tmpDir)
-			}
+			controlPlane.StopOIMControlPlane()
 		})
 
 		It("should provision storage", func() {
