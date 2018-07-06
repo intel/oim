@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/intel/oim/test/e2e/framework/metrics"
 	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -37,16 +38,12 @@ import (
 	"k8s.io/client-go/discovery"
 	cacheddiscovery "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	scaleclient "k8s.io/client-go/scale"
-	"k8s.io/client-go/tools/clientcmd"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	"k8s.io/kubernetes/pkg/kubemark"
-	"github.com/intel/oim/test/e2e/framework/metrics"
 	testutils "k8s.io/kubernetes/test/utils"
 
 	. "github.com/onsi/ginkgo"
@@ -186,26 +183,6 @@ func (f *Framework) BeforeEach() {
 		restMapper.Reset()
 		resolver := scaleclient.NewDiscoveryScaleKindResolver(cachedDiscoClient)
 		f.ScalesGetter = scaleclient.New(restClient, restMapper, dynamic.LegacyAPIPathResolverFunc, resolver)
-
-		if ProviderIs("kubemark") && TestContext.KubemarkExternalKubeConfig != "" && TestContext.CloudConfig.KubemarkController == nil {
-			externalConfig, err := clientcmd.BuildConfigFromFlags("", TestContext.KubemarkExternalKubeConfig)
-			externalConfig.QPS = f.Options.ClientQPS
-			externalConfig.Burst = f.Options.ClientBurst
-			Expect(err).NotTo(HaveOccurred())
-			externalClient, err := clientset.NewForConfig(externalConfig)
-			Expect(err).NotTo(HaveOccurred())
-			f.KubemarkExternalClusterClientSet = externalClient
-			f.kubemarkControllerCloseChannel = make(chan struct{})
-			externalInformerFactory := informers.NewSharedInformerFactory(externalClient, 0)
-			kubemarkInformerFactory := informers.NewSharedInformerFactory(f.ClientSet, 0)
-			kubemarkNodeInformer := kubemarkInformerFactory.Core().V1().Nodes()
-			go kubemarkNodeInformer.Informer().Run(f.kubemarkControllerCloseChannel)
-			TestContext.CloudConfig.KubemarkController, err = kubemark.NewKubemarkController(f.KubemarkExternalClusterClientSet, externalInformerFactory, f.ClientSet, kubemarkNodeInformer)
-			Expect(err).NotTo(HaveOccurred())
-			externalInformerFactory.Start(f.kubemarkControllerCloseChannel)
-			Expect(TestContext.CloudConfig.KubemarkController.WaitForCacheSync(f.kubemarkControllerCloseChannel)).To(BeTrue())
-			go TestContext.CloudConfig.KubemarkController.Run(f.kubemarkControllerCloseChannel)
-		}
 	}
 
 	if !f.SkipNamespaceCreation {
@@ -375,10 +352,6 @@ func (f *Framework) AfterEach() {
 			(*MetricsForE2E)(&received).computeClusterAutoscalerMetricsDelta(f.clusterAutoscalerMetricsBeforeTest)
 			f.TestSummaries = append(f.TestSummaries, (*MetricsForE2E)(&received))
 		}
-	}
-
-	if TestContext.CloudConfig.KubemarkController != nil {
-		close(f.kubemarkControllerCloseChannel)
 	}
 
 	PrintSummaries(f.TestSummaries, f.BaseName)

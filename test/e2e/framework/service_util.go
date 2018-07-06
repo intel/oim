@@ -40,8 +40,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	azurecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/azure"
-	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
@@ -1369,23 +1367,7 @@ func VerifyServeHostnameServiceDown(c clientset.Interface, host string, serviceI
 }
 
 func CleanupServiceResources(c clientset.Interface, loadBalancerName, region, zone string) {
-	if TestContext.Provider == "gce" || TestContext.Provider == "gke" {
-		CleanupServiceGCEResources(c, loadBalancerName, region, zone)
-	}
-
 	// TODO: we need to add this function with other cloud providers, if there is a need.
-}
-
-func CleanupServiceGCEResources(c clientset.Interface, loadBalancerName, region, zone string) {
-	if pollErr := wait.Poll(5*time.Second, LoadBalancerCleanupTimeout, func() (bool, error) {
-		if err := CleanupGCEResources(c, loadBalancerName, region, zone); err != nil {
-			Logf("Still waiting for glbc to cleanup: %v", err)
-			return false, nil
-		}
-		return true, nil
-	}); pollErr != nil {
-		Failf("Failed to cleanup service GCE resources.")
-	}
 }
 
 func DescribeSvc(ns string) {
@@ -1425,20 +1407,6 @@ func EnableAndDisableInternalLB() (enable func(svc *v1.Service), disable func(sv
 	disable = func(svc *v1.Service) {}
 
 	switch TestContext.Provider {
-	case "gce", "gke":
-		enable = func(svc *v1.Service) {
-			svc.ObjectMeta.Annotations = map[string]string{gcecloud.ServiceAnnotationLoadBalancerType: string(gcecloud.LBTypeInternal)}
-		}
-		disable = func(svc *v1.Service) {
-			delete(svc.ObjectMeta.Annotations, gcecloud.ServiceAnnotationLoadBalancerType)
-		}
-	case "azure":
-		enable = func(svc *v1.Service) {
-			svc.ObjectMeta.Annotations = map[string]string{azurecloud.ServiceAnnotationLoadBalancerInternal: "true"}
-		}
-		disable = func(svc *v1.Service) {
-			svc.ObjectMeta.Annotations = map[string]string{azurecloud.ServiceAnnotationLoadBalancerInternal: "false"}
-		}
 	}
 
 	return

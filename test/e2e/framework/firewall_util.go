@@ -18,17 +18,11 @@ package framework
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
-	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/kubernetes/pkg/cloudprovider"
-	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 
 	. "github.com/onsi/gomega"
 	compute "google.golang.org/api/compute/v1"
@@ -46,90 +40,6 @@ const (
 // This should match the formatting of makeFirewallName() in pkg/cloudprovider/providers/gce/gce_loadbalancer.go
 func MakeFirewallNameForLBService(name string) string {
 	return fmt.Sprintf("k8s-fw-%s", name)
-}
-
-// ConstructFirewallForLBService returns the expected GCE firewall rule for a loadbalancer type service
-func ConstructFirewallForLBService(svc *v1.Service, nodeTag string) *compute.Firewall {
-	if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
-		Failf("can not construct firewall rule for non-loadbalancer type service")
-	}
-	fw := compute.Firewall{}
-	fw.Name = MakeFirewallNameForLBService(cloudprovider.GetLoadBalancerName(svc))
-	fw.TargetTags = []string{nodeTag}
-	if svc.Spec.LoadBalancerSourceRanges == nil {
-		fw.SourceRanges = []string{"0.0.0.0/0"}
-	} else {
-		fw.SourceRanges = svc.Spec.LoadBalancerSourceRanges
-	}
-	for _, sp := range svc.Spec.Ports {
-		fw.Allowed = append(fw.Allowed, &compute.FirewallAllowed{
-			IPProtocol: strings.ToLower(string(sp.Protocol)),
-			Ports:      []string{strconv.Itoa(int(sp.Port))},
-		})
-	}
-	return &fw
-}
-
-func MakeHealthCheckFirewallNameForLBService(clusterID, name string, isNodesHealthCheck bool) string {
-	return gcecloud.MakeHealthCheckFirewallName(clusterID, name, isNodesHealthCheck)
-}
-
-// ConstructHealthCheckFirewallForLBService returns the expected GCE firewall rule for a loadbalancer type service
-func ConstructHealthCheckFirewallForLBService(clusterID string, svc *v1.Service, nodeTag string, isNodesHealthCheck bool) *compute.Firewall {
-	if svc.Spec.Type != v1.ServiceTypeLoadBalancer {
-		Failf("can not construct firewall rule for non-loadbalancer type service")
-	}
-	fw := compute.Firewall{}
-	fw.Name = MakeHealthCheckFirewallNameForLBService(clusterID, cloudprovider.GetLoadBalancerName(svc), isNodesHealthCheck)
-	fw.TargetTags = []string{nodeTag}
-	fw.SourceRanges = gcecloud.LoadBalancerSrcRanges()
-	healthCheckPort := gcecloud.GetNodesHealthCheckPort()
-	if !isNodesHealthCheck {
-		healthCheckPort = svc.Spec.HealthCheckNodePort
-	}
-	fw.Allowed = []*compute.FirewallAllowed{
-		{
-			IPProtocol: "tcp",
-			Ports:      []string{fmt.Sprintf("%d", healthCheckPort)},
-		},
-	}
-	return &fw
-}
-
-// GetInstanceTags gets tags from GCE instance with given name.
-func GetInstanceTags(cloudConfig CloudConfig, instanceName string) *compute.Tags {
-	gceCloud := cloudConfig.Provider.(*gcecloud.GCECloud)
-	res, err := gceCloud.ComputeServices().GA.Instances.Get(cloudConfig.ProjectID, cloudConfig.Zone,
-		instanceName).Do()
-	if err != nil {
-		Failf("Failed to get instance tags for %v: %v", instanceName, err)
-	}
-	return res.Tags
-}
-
-// SetInstanceTags sets tags on GCE instance with given name.
-func SetInstanceTags(cloudConfig CloudConfig, instanceName, zone string, tags []string) []string {
-	gceCloud := cloudConfig.Provider.(*gcecloud.GCECloud)
-	// Re-get instance everytime because we need the latest fingerprint for updating metadata
-	resTags := GetInstanceTags(cloudConfig, instanceName)
-	_, err := gceCloud.ComputeServices().GA.Instances.SetTags(
-		cloudConfig.ProjectID, zone, instanceName,
-		&compute.Tags{Fingerprint: resTags.Fingerprint, Items: tags}).Do()
-	if err != nil {
-		Failf("failed to set instance tags: %v", err)
-	}
-	Logf("Sent request to set tags %v on instance: %v", tags, instanceName)
-	return resTags.Items
-}
-
-// GetNodeTags gets k8s node tag from one of the nodes
-func GetNodeTags(c clientset.Interface, cloudConfig CloudConfig) []string {
-	nodes := GetReadySchedulableNodesOrDie(c)
-	if len(nodes.Items) == 0 {
-		Logf("GetNodeTags: Found 0 node.")
-		return []string{}
-	}
-	return GetInstanceTags(cloudConfig, nodes.Items[0].Name).Items
 }
 
 // GetInstancePrefix returns the INSTANCE_PREFIX env we set for e2e cluster.
@@ -434,25 +344,4 @@ func VerifyFirewallRule(res, exp *compute.Firewall, network string, portsSubset 
 		return fmt.Errorf("incorrect target tags %v, expected %v: %v", res.TargetTags, exp.TargetTags, err)
 	}
 	return nil
-}
-
-func WaitForFirewallRule(gceCloud *gcecloud.GCECloud, fwName string, exist bool, timeout time.Duration) (*compute.Firewall, error) {
-	Logf("Waiting up to %v for firewall %v exist=%v", timeout, fwName, exist)
-	var fw *compute.Firewall
-	var err error
-
-	condition := func() (bool, error) {
-		fw, err = gceCloud.GetFirewall(fwName)
-		if err != nil && exist ||
-			err == nil && !exist ||
-			err != nil && !exist && !IsGoogleAPIHTTPErrorCode(err, http.StatusNotFound) {
-			return false, nil
-		}
-		return true, nil
-	}
-
-	if err := wait.PollImmediate(5*time.Second, timeout, condition); err != nil {
-		return nil, fmt.Errorf("error waiting for firewall %v exist=%v", fwName, exist)
-	}
-	return fw, nil
 }
