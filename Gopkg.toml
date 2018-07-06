@@ -46,6 +46,8 @@ required = ["github.com/spdk/spdk/go"]
 [[override]]
   name = "github.com/kubernetes-csi/csi-test"
   branch = "master"
+  # Needed for Ginkgo integration and "sanity" volume renaming.
+  source = "github.com/pohly/csi-test"
 
 [[constraint]]
   branch = "master"
