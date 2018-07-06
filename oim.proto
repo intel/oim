@@ -53,6 +53,11 @@ service Controller {
     // in-memory BDev for testing.
     rpc ProvisionMallocBDev(ProvisionMallocBDevRequest)
         returns (ProvisionMallocBDevReply) {}
+
+    // Checks that the BDev exists. Returns
+    // gRPC NOT_FOUND status if not.
+    rpc CheckMallocBDev(CheckMallocBDevRequest)
+        returns (CheckMallocBDevReply) {}
 }
 
 message MapVolumeRequest {
@@ -114,5 +119,14 @@ message ProvisionMallocBDevRequest {
 }
 
 message ProvisionMallocBDevReply {
+    // Intentionally empty.
+}
+
+message CheckMallocBDevRequest {
+    // The name of an existing BDev.
+    string bdev_name = 1;
+}
+
+message CheckMallocBDevReply {
     // Intentionally empty.
 }

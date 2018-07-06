@@ -151,6 +151,11 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
 
+	if err := cs.Driver.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
+		oimcommon.Infof(3, ctx, "invalid delete volume req: %v", req)
+		return nil, err
+	}
+
 	if cs.od.vhostEndpoint != "" {
 		return cs.deleteVolumeSPDK(ctx, req)
 	} else {
@@ -166,10 +171,6 @@ func (cs *controllerServer) deleteVolumeSPDK(ctx context.Context, req *csi.Delet
 	}
 	defer client.Close()
 
-	if err := cs.Driver.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
-		oimcommon.Infof(3, ctx, "invalid delete volume req: %v", req)
-		return nil, err
-	}
 	// We must not error out when the BDev does not exist (might have been deleted already).
 	// TODO: proper detection of "bdev not found" (https://github.com/spdk/spdk/issues/319).
 	volumeID := req.VolumeId
@@ -214,10 +215,55 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 		return nil, status.Error(codes.InvalidArgument, "Volume capabilities missing in request")
 	}
 
+	// Check that volume exists.
+	var err error
+	if cs.od.vhostEndpoint != "" {
+		err = cs.checkVolumeExistsSPDK(ctx, req.GetVolumeId())
+	} else {
+		err = cs.checkVolumeExistsOIM(ctx, req.GetVolumeId())
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	for _, cap := range req.VolumeCapabilities {
 		if cap.GetAccessMode().GetMode() != csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER {
 			return &csi.ValidateVolumeCapabilitiesResponse{Supported: false, Message: ""}, nil
 		}
 	}
 	return &csi.ValidateVolumeCapabilitiesResponse{Supported: true, Message: ""}, nil
+}
+
+func (cs *controllerServer) checkVolumeExistsSPDK(ctx context.Context, volumeID string) error {
+	// Connect to SPDK.
+	// TODO: log JSON traffic
+	client, err := spdk.New(cs.od.vhostEndpoint)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
+	}
+	defer client.Close()
+
+	bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: volumeID})
+	if err == nil && len(bdevs) == 1 {
+		return nil
+	} else {
+		// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
+		return status.Error(codes.NotFound, "")
+	}
+}
+
+func (cs *controllerServer) checkVolumeExistsOIM(ctx context.Context, volumeID string) error {
+	// Connect to OIM controller through OIM registry.
+	opts := oimcommon.ChooseDialOpts(cs.od.oimRegistryAddress)
+	conn, err := grpc.Dial(cs.od.oimRegistryAddress, opts...)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", cs.od.oimRegistryAddress, err))
+	}
+	defer conn.Close()
+	controllerClient := oim.NewControllerClient(conn)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", cs.od.oimControllerID)
+	_, err = controllerClient.CheckMallocBDev(ctx, &oim.CheckMallocBDevRequest{
+		BdevName: volumeID,
+	})
+	return err
 }

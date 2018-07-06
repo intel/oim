@@ -208,6 +208,21 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 	return &oim.ProvisionMallocBDevReply{}, nil
 }
 
+func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDevRequest) (*oim.CheckMallocBDevReply, error) {
+	bdevName := in.GetBdevName()
+	if bdevName == "" {
+		return nil, errors.New("empty BDev name")
+	}
+
+	bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
+	if err == nil && len(bdevs) == 1 {
+		return &oim.CheckMallocBDevReply{}, nil
+	} else {
+		// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
+		return nil, status.Error(codes.NotFound, "")
+	}
+}
+
 type Option func(c *Controller) error
 
 func WithRegistry(address string) Option {

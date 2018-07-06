@@ -28,6 +28,7 @@ type MockController struct {
 	MapVolumes           []oim.MapVolumeRequest
 	UnmapVolumes         []oim.UnmapVolumeRequest
 	ProvisionMallocBDevs []oim.ProvisionMallocBDevRequest
+	CheckMallocBDevs     []oim.CheckMallocBDevRequest
 }
 
 func (m *MockController) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
@@ -43,6 +44,11 @@ func (m *MockController) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeReq
 func (m *MockController) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionMallocBDevRequest) (*oim.ProvisionMallocBDevReply, error) {
 	m.ProvisionMallocBDevs = append(m.ProvisionMallocBDevs, *in)
 	return &oim.ProvisionMallocBDevReply{}, nil
+}
+
+func (m *MockController) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDevRequest) (*oim.CheckMallocBDevReply, error) {
+	m.CheckMallocBDevs = append(m.CheckMallocBDevs, *in)
+	return &oim.CheckMallocBDevReply{}, nil
 }
 
 var _ = Describe("OIM Registry", func() {

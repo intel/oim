@@ -123,6 +123,10 @@ func (m *MockController) ProvisionMallocBDev(ctx context.Context, in *oim.Provis
 	return &oim.ProvisionMallocBDevReply{}, nil
 }
 
+func (m *MockController) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDevRequest) (*oim.CheckMallocBDevReply, error) {
+	return &oim.CheckMallocBDevReply{}, nil
+}
+
 // Runs tests with OIM registry and a mock controller.
 // This can only be used to test the communication paths, but not
 // the actual operation.
