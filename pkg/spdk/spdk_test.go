@@ -59,11 +59,11 @@ func TestMallocBDev(t *testing.T) {
 	var created spdk.ConstructBDevResponse
 	cleanup := func(when string) {
 		t.Logf("Cleaning up at %s: %+v", when, created)
-		for _, bdev := range created {
-			err := spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: bdev})
-			require.NoError(t, err, "Failed to delete bdev %s: %s", bdev)
+		if created != "" {
+			err := spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: string(created)})
+			require.NoError(t, err, "Failed to delete bdev %s: %s", created)
+			created = ""
 		}
-		created = spdk.ConstructBDevResponse{}
 	}
 	defer cleanup("deferred cleanup")
 
@@ -80,17 +80,12 @@ func TestMallocBDev(t *testing.T) {
 			continue
 		}
 		t.Logf("Created %+v", created)
-		if created == nil || len(created) != 1 {
-			t.Errorf("Should have received exactly one Malloc* bdev name: %+v", created)
-			continue
-		}
-		name := created[0]
 		if arg.Name != "" {
-			assert.Equal(t, arg.Name, name, "choosen name")
+			assert.Equal(t, arg.Name, string(created), "choosen name")
 		}
-		bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: name})
-		t.Logf("bdev %s attributes: %+v", name, bdevs)
-		if !assert.NoError(t, err, "Failed to retrieve bdev %s attributes", name) {
+		bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: string(created)})
+		t.Logf("bdev %s attributes: %+v", created, bdevs)
+		if !assert.NoError(t, err, "Failed to retrieve bdev %s attributes", created) {
 			continue
 		}
 		if len(bdevs) != 1 {
@@ -99,7 +94,7 @@ func TestMallocBDev(t *testing.T) {
 		}
 		bdev := bdevs[0]
 		expected := spdk.BDev{
-			Name:        name,
+			Name:        string(created),
 			ProductName: "Malloc disk",
 			BlockSize:   arg.BlockSize,
 			NumBlocks:   arg.NumBlocks,
@@ -224,14 +219,14 @@ func TestSCSI(t *testing.T) {
 	bdevArgs := spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: 2048, BlockSize: 512}}
 	created, err := spdk.ConstructMallocBDev(ctx, client, bdevArgs)
 	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
-	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: created[0]})
+	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: string(created)})
 	created2, err := spdk.ConstructMallocBDev(ctx, client, bdevArgs)
 	require.NoError(t, err, "Construct Malloc BDev with %v", bdevArgs)
-	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: created2[0]})
+	defer spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: string(created2)})
 
 	addLUN := spdk.AddVHostSCSILUNArgs{
 		Controller: controller,
-		BDevName:   created[0],
+		BDevName:   string(created),
 	}
 	err = spdk.AddVHostSCSILUN(ctx, client, addLUN)
 	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN)
@@ -240,7 +235,7 @@ func TestSCSI(t *testing.T) {
 			TargetName: "Target 0",
 			LUNs: []spdk.SCSIControllerLUN{
 				spdk.SCSIControllerLUN{
-					BDevName: created[0],
+					BDevName: string(created),
 				},
 			},
 		},
@@ -250,7 +245,7 @@ func TestSCSI(t *testing.T) {
 	addLUN2 := spdk.AddVHostSCSILUNArgs{
 		Controller:    controller,
 		SCSITargetNum: 1,
-		BDevName:      created2[0],
+		BDevName:      string(created2),
 	}
 	err = spdk.AddVHostSCSILUN(ctx, client, addLUN2)
 	require.NoError(t, err, "AddVHostSCSILUN %v", addLUN2)
@@ -259,7 +254,7 @@ func TestSCSI(t *testing.T) {
 			TargetName: "Target 0",
 			LUNs: []spdk.SCSIControllerLUN{
 				spdk.SCSIControllerLUN{
-					BDevName: created[0],
+					BDevName: string(created),
 				},
 			},
 		},
@@ -269,7 +264,7 @@ func TestSCSI(t *testing.T) {
 			SCSIDevNum: 1,
 			LUNs: []spdk.SCSIControllerLUN{
 				spdk.SCSIControllerLUN{
-					BDevName: created2[0],
+					BDevName: string(created2),
 				},
 			},
 		},
@@ -307,7 +302,7 @@ func TestSCSI(t *testing.T) {
 			SCSIDevNum: 1,
 			LUNs: []spdk.SCSIControllerLUN{
 				spdk.SCSIControllerLUN{
-					BDevName: created2[0],
+					BDevName: string(created2),
 				},
 			},
 		},

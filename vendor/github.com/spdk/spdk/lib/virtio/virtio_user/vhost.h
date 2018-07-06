@@ -43,6 +43,14 @@
 
 #define VHOST_USER_MAX_CONFIG_SIZE 256
 
+#ifndef VHOST_USER_PROTOCOL_F_MQ
+#define VHOST_USER_PROTOCOL_F_MQ	0
+#endif
+
+#ifndef VHOST_USER_PROTOCOL_F_CONFIG
+#define VHOST_USER_PROTOCOL_F_CONFIG	9
+#endif
+
 enum vhost_user_request {
 	VHOST_USER_NONE = 0,
 	VHOST_USER_GET_FEATURES = 1,
@@ -71,16 +79,15 @@ enum vhost_user_request {
 struct virtio_user_backend_ops;
 
 struct virtio_user_dev {
-	/* for vhost_user backend */
 	int		vhostfd;
 
-	/* for both vhost_user and vhost_kernel */
 	int		callfds[SPDK_VIRTIO_MAX_VIRTQUEUES];
 	int		kickfds[SPDK_VIRTIO_MAX_VIRTQUEUES];
 	uint32_t	queue_size;
 
 	uint8_t		status;
 	char		path[PATH_MAX];
+	uint64_t	protocol_features;
 	struct vring	vrings[SPDK_VIRTIO_MAX_VIRTQUEUES];
 	struct virtio_user_backend_ops *ops;
 };
@@ -101,6 +108,5 @@ struct vhost_user_config {
 };
 
 extern struct virtio_user_backend_ops ops_user;
-extern struct virtio_user_backend_ops ops_kernel;
 
 #endif

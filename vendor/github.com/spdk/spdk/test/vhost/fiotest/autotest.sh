@@ -119,68 +119,13 @@ for vm_conf in ${vms[@]}; do
 					notice "Creating vhost block controller naa.$disk.${conf[0]} with device $disk"
 					$rpc_py construct_vhost_blk_controller naa.$disk.${conf[0]} $disk
 				else
-					notice "Trying to remove nonexistent controller"
-					if $rpc_py remove_vhost_controller unk0 > /dev/null; then
-						error "Removing nonexistent controller succeeded, but it shouldn't"
-					fi
 					notice "Creating controller naa.$disk.${conf[0]}"
 					$rpc_py construct_vhost_scsi_controller naa.$disk.${conf[0]}
 
-					notice "Adding initial device (0) to naa.$disk.${conf[0]}"
-					$rpc_py add_vhost_scsi_lun naa.$disk.${conf[0]} 0 $disk
-
-					notice "Trying to remove nonexistent device on existing controller"
-					if $rpc_py remove_vhost_scsi_target naa.$disk.${conf[0]} 1 > /dev/null; then
-						error "Removing nonexistent device (1) from controller naa.$disk.${conf[0]} succeeded, but it shouldn't"
-					fi
-
-					notice "Trying to remove existing device from a controller"
-					$rpc_py remove_vhost_scsi_target naa.$disk.${conf[0]} 0
-
-					notice "Trying to remove a just-deleted device from a controller again"
-					if $rpc_py remove_vhost_scsi_target naa.$disk.${conf[0]} 0 > /dev/null; then
-						error "Removing device 0 from controller naa.$disk.${conf[0]} succeeded, but it shouldn't"
-					fi
-
-					notice "Re-adding device 0 to naa.$disk.${conf[0]}"
+					notice "Adding device (0) to naa.$disk.${conf[0]}"
 					$rpc_py add_vhost_scsi_lun naa.$disk.${conf[0]} 0 $disk
 				fi
 			done
-
-			notice "Trying to create scsi controller with incorrect cpumask"
-			if $rpc_py construct_vhost_scsi_controller vhost.invalid.cpumask --cpumask 0x2; then
-				error "Creating scsi controller with incorrect cpumask succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to remove device from nonexistent scsi controller"
-			if $rpc_py remove_vhost_scsi_target vhost.nonexistent.name 0; then
-				error "Removing device from nonexistent scsi controller succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to add device to nonexistent scsi controller"
-			if $rpc_py add_vhost_scsi_lun vhost.nonexistent.name 0 Malloc0; then
-				error "Adding device to nonexistent scsi controller succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to create scsi controller with incorrect name"
-			if $rpc_py construct_vhost_scsi_controller .; then
-				error "Creating scsi controller with incorrect name succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to create block controller with incorrect cpumask"
-			if $rpc_py construct_vhost_blk_controller vhost.invalid.cpumask  Malloc0 --cpumask 0x2; then
-				error "Creating block controller with incorrect cpumask succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to remove nonexistent block controller"
-			if $rpc_py remove_vhost_controller vhost.nonexistent.name; then
-				error "Removing nonexistent block controller succeeded, but it shouldn't"
-			fi
-
-			notice "Trying to create block controller with incorrect name"
-			if $rpc_py construct_vhost_blk_controller . Malloc0; then
-				error "Creating block controller with incorrect name succeeded, but it shouldn't"
-			fi
 		done <<< "${conf[2]}"
 		unset IFS;
 		$rpc_py get_vhost_controllers
@@ -232,7 +177,7 @@ for vm_num in $used_vms; do
 
 	qemu_mask_param="VM_${vm_num}_qemu_mask"
 
-	host_name="VM-$vm_num-${!qemu_mask_param}"
+	host_name="VM-$vm_num"
 	notice "Setting up hostname: $host_name"
 	vm_ssh $vm_num "hostname $host_name"
 	vm_start_fio_server $fio_bin $readonly $vm_num

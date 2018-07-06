@@ -39,7 +39,7 @@
 #include "spdk/conf.h"
 #include "spdk/env.h"
 #include "spdk/fd.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/json.h"
 #include "spdk/util.h"
 #include "spdk/string.h"
@@ -174,8 +174,7 @@ bdev_aio_writev(struct file_disk *fdisk, struct spdk_io_channel *ch,
 }
 
 static void
-bdev_aio_flush(struct file_disk *fdisk, struct bdev_aio_task *aio_task,
-	       uint64_t offset, uint64_t nbytes)
+bdev_aio_flush(struct file_disk *fdisk, struct bdev_aio_task *aio_task)
 {
 	int rc = fsync(fdisk->fd);
 
@@ -329,9 +328,7 @@ static int _bdev_aio_submit_request(struct spdk_io_channel *ch, struct spdk_bdev
 		return 0;
 	case SPDK_BDEV_IO_TYPE_FLUSH:
 		bdev_aio_flush((struct file_disk *)bdev_io->bdev->ctxt,
-			       (struct bdev_aio_task *)bdev_io->driver_ctx,
-			       bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
-			       bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
+			       (struct bdev_aio_task *)bdev_io->driver_ctx);
 		return 0;
 
 	case SPDK_BDEV_IO_TYPE_RESET:
@@ -548,6 +545,17 @@ error_return:
 	bdev_aio_close(fdisk);
 	aio_free_disk(fdisk);
 	return NULL;
+}
+
+void
+delete_aio_disk(struct spdk_bdev *bdev, spdk_delete_aio_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || bdev->module != &aio_if) {
+		cb_fn(cb_arg, -ENODEV);
+		return;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
 static int

@@ -43,6 +43,8 @@
 #include "spdk/queue.h"
 #include "spdk/util.h"
 
+#define SPDK_NVMF_MAX_SGL_ENTRIES	16
+
 enum spdk_nvmf_subsystem_state {
 	SPDK_NVMF_SUBSYSTEM_INACTIVE = 0,
 	SPDK_NVMF_SUBSYSTEM_ACTIVATING,
@@ -60,6 +62,8 @@ enum spdk_nvmf_qpair_state {
 	SPDK_NVMF_QPAIR_DEACTIVATING,
 };
 
+typedef void (*spdk_nvmf_state_change_done)(void *cb_arg, int status);
+
 struct spdk_nvmf_tgt {
 	struct spdk_nvmf_tgt_opts		opts;
 
@@ -71,6 +75,9 @@ struct spdk_nvmf_tgt {
 	struct spdk_nvmf_discovery_log_page	*discovery_log_page;
 	size_t					discovery_log_page_size;
 	TAILQ_HEAD(, spdk_nvmf_transport)	transports;
+
+	spdk_nvmf_tgt_destroy_done_fn		*destroy_cb_fn;
+	void					*destroy_cb_arg;
 };
 
 struct spdk_nvmf_host {
@@ -108,6 +115,9 @@ struct spdk_nvmf_poll_group {
 	/* Array of poll groups indexed by subsystem id (sid) */
 	struct spdk_nvmf_subsystem_poll_group		*sgroups;
 	uint32_t					num_sgroups;
+
+	/* All of the queue pairs that belong to this poll group */
+	TAILQ_HEAD(, spdk_nvmf_qpair)			qpairs;
 };
 
 typedef enum _spdk_nvmf_request_exec_status {
@@ -138,6 +148,8 @@ struct spdk_nvmf_request {
 	void				*data;
 	union nvmf_h2c_msg		*cmd;
 	union nvmf_c2h_msg		*rsp;
+	struct iovec			iov[SPDK_NVMF_MAX_SGL_ENTRIES];
+	uint32_t			iovcnt;
 
 	TAILQ_ENTRY(spdk_nvmf_request)	link;
 };
@@ -151,6 +163,8 @@ struct spdk_nvmf_ns {
 
 struct spdk_nvmf_qpair {
 	enum spdk_nvmf_qpair_state		state;
+	spdk_nvmf_state_change_done		state_cb;
+	void					*state_cb_arg;
 
 	struct spdk_nvmf_transport		*transport;
 	struct spdk_nvmf_ctrlr			*ctrlr;
@@ -193,9 +207,11 @@ struct spdk_nvmf_ctrlr {
 	struct spdk_nvmf_ctrlr_feat feat;
 
 	struct spdk_nvmf_qpair *admin_qpair;
-	TAILQ_HEAD(, spdk_nvmf_qpair) qpairs;
-	int num_qpairs;
-	int max_qpairs_allowed;
+
+	/* Mutex to protect the qpair mask */
+	pthread_mutex_t		mtx;
+	struct spdk_bit_array	*qpair_mask;
+
 	struct spdk_nvmf_request *aer_req;
 	union spdk_nvme_async_event_completion notice_event;
 	uint8_t hostid[16];
@@ -257,7 +273,6 @@ void spdk_nvmf_get_discovery_log_page(struct spdk_nvmf_tgt *tgt,
 				      void *buffer, uint64_t offset,
 				      uint32_t length);
 
-struct spdk_nvmf_qpair *spdk_nvmf_ctrlr_get_qpair(struct spdk_nvmf_ctrlr *ctrlr, uint16_t qid);
 void spdk_nvmf_ctrlr_destruct(struct spdk_nvmf_ctrlr *ctrlr);
 int spdk_nvmf_ctrlr_process_fabrics_cmd(struct spdk_nvmf_request *req);
 int spdk_nvmf_ctrlr_process_admin_cmd(struct spdk_nvmf_request *req);
@@ -292,18 +307,5 @@ spdk_nvmf_qpair_is_admin_queue(struct spdk_nvmf_qpair *qpair)
 {
 	return qpair->qid == 0;
 }
-
-#define OBJECT_NVMF_IO				0x30
-
-#define TRACE_GROUP_NVMF			0x3
-#define TRACE_NVMF_IO_START			SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x0)
-#define TRACE_RDMA_READ_START			SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x1)
-#define TRACE_RDMA_WRITE_START			SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x2)
-#define TRACE_RDMA_READ_COMPLETE		SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x3)
-#define TRACE_RDMA_WRITE_COMPLETE		SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x4)
-#define TRACE_NVMF_LIB_READ_START		SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x5)
-#define TRACE_NVMF_LIB_WRITE_START		SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x6)
-#define TRACE_NVMF_LIB_COMPLETE			SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x7)
-#define TRACE_NVMF_IO_COMPLETE			SPDK_TPOINT_ID(TRACE_GROUP_NVMF, 0x8)
 
 #endif /* __NVMF_INTERNAL_H__ */

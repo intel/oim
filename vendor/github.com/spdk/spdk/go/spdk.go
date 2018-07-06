@@ -43,7 +43,7 @@
 //  unused-packages = true
 //
 //  [[prune.project]]
-//    name = "github.com/spdk/spdk/go"
+//    name = "github.com/spdk/spdk"
 //    go-tests = false
 //    unused-packages = false
 

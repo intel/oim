@@ -58,9 +58,7 @@ else
 DPDK_CONFIG := $(DPDK_CONFIG)-gcc
 endif
 
-ifeq ($(CONFIG_FIO_PLUGIN),y)
 DPDK_CFLAGS = -fPIC
-endif
 
 ifeq ($(CONFIG_DEBUG),y)
 DPDK_CFLAGS += -O0 -g

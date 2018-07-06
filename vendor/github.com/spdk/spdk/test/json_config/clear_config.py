@@ -47,12 +47,12 @@ def delete_subbdevs(args, bdev, rpc_bdevs):
 
 def get_bdev_destroy_method(bdev):
     destroy_method_map = {'construct_nvme_bdev': "delete_bdev",
-                          'construct_pmem_bdev': "delete_bdev",
-                          'construct_rbd_bdev': "delete_bdev",
-                          'construct_malloc_bdev': "delete_bdev",
-                          'construct_null_bdev': "delete_bdev",
-                          'construct_aio_bdev': "delete_bdev",
-                          'construct_error_bdev': "delete_bdev",
+                          'construct_malloc_bdev': "delete_malloc_bdev",
+                          'construct_null_bdev': "delete_null_bdev",
+                          'construct_rbd_bdev': "delete_rbd_bdev",
+                          'construct_pmem_bdev': "delete_pmem_bdev",
+                          'construct_aio_bdev': "delete_aio_bdev",
+                          'construct_error_bdev': "delete_error_bdev",
                           'construct_split_vbdev': "destruct_split_vbdev",
                           'construct_virtio_dev': {
                               'blk': "delete_bdev",
@@ -114,7 +114,16 @@ def clear_interface_subsystem(args, interface_config):
 
 
 def clear_vhost_subsystem(args, vhost_config):
-    pass
+    for vhost in reversed(vhost_config):
+        if 'method' in vhost:
+            method = vhost['method']
+            if method in ['add_vhost_scsi_lun']:
+                args.client.call("remove_vhost_scsi_target",
+                                 {"ctrlr": vhost['params']['ctrlr'],
+                                  "scsi_target_num": vhost['params']['scsi_target_num']})
+            elif method in ['construct_vhost_scsi_controller', 'construct_vhost_blk_controller',
+                            'construct_vhost_nvme_controller']:
+                args.client.call("remove_vhost_controller", {'ctrlr': vhost['params']['ctrlr']})
 
 
 def call_test_cmd(func):
@@ -137,7 +146,7 @@ if __name__ == "__main__":
 
     @call_test_cmd
     def clear_config(args):
-        for subsystem_item in args.client.call('get_subsystems'):
+        for subsystem_item in reversed(args.client.call('get_subsystems')):
             args.subsystem = subsystem_item['subsystem']
             clear_subsystem(args)
 

@@ -1,4 +1,4 @@
-# Logical Volumes Introduction {#logical_volumes}
+# Logical Volumes {#logical_volumes}
 
 The Logical Volumes library is a flexible storage space management system. It provides creating and managing virtual block devices with variable size. The SPDK Logical Volume library is built on top of @ref blob.
 
@@ -28,13 +28,38 @@ A logical volume block device translates generic SPDK block device I/O (spdk_bde
 Size of the new bdev will be rounded up to nearest multiple of cluster_size.
 By default lvol bdevs claim part of lvol store equal to their set size. When thin provision option is enabled, no space is taken from lvol store until data is written to lvol bdev.
 
+## Thin provisioning {#lvol_thin_provisioning}
+
+Thin provisioned lvols rely on dynamic cluster allocation (e.g. when the first write operation on a cluster is performed), only space required to store data is used and unallocated clusters are obtained from underlying device (e.g. zeroes_dev).
+
+Sample write operations of thin provisioned blob are shown on the diagram below:
+
+![Writing clusters to the thin provisioned blob](lvol_thin_provisioning_write.svg)
+
+Sample read operations and the structure of thin provisioned blob are shown on the diagram below:
+
+![Reading clusters from thin provisioned blob](lvol_thin_provisioning.svg)
+
 ## Snapshots and clone {#lvol_snapshots}
 
 Logical volumes support snapshots and clones functionality. User may at any given time create snapshot of existing logical volume to save a backup of current volume state.
 When creating snapshot original volume becomes thin provisioned and saves only incremental differences from its underlying snapshot. This means that every read from unallocated cluster is actually a read from the snapshot and
 every write to unallocated cluster triggers new cluster allocation and data copy from corresponding cluster in snapshot to the new cluster in logical volume before the actual write occurs.
+
+The read operation is performed as shown in the diagram below:
+![Reading cluster from clone](lvol_clone_snapshot_read.svg)
+
+The write operation is performed as shown in the diagram below:
+![Writing cluster to the clone](lvol_clone_snapshot_write.svg)
+
 User may also create clone of existing snapshot that will be thin provisioned and it will behave in the same way as logical volume from which snapshot is created.
 There is no limit of clones and snapshots that may be created as long as there is enough space on logical volume store. Snapshots are read only. Clones may be created only from snapshots.
+
+## Inflation {#lvol_inflation}
+
+Blobs can be inflated to copy data from backing devices (e.g. snapshots) and allocate all remaining clusters. As a result of this operation all dependencies for the blob are removed.
+
+![Removing backing blob and bdevs relations using inflate call](lvol_inflate_clone_snapshot.svg)
 
 # Configuring Logical Volumes
 
@@ -106,6 +131,10 @@ rename_lvol_bdev [-h] old_name new_name
     -h, --help  show help
 resize_lvol_bdev [-h] name size
     Resize existing lvol bdev
+    optional arguments:
+    -h, --help  show help
+inflate_lvol_bdev [-h] name
+    Inflate lvol bdev
     optional arguments:
     -h, --help  show help
 ```

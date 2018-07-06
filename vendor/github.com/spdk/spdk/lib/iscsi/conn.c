@@ -37,7 +37,7 @@
 #include "spdk/endian.h"
 #include "spdk/env.h"
 #include "spdk/event.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/queue.h"
 #include "spdk/trace.h"
 #include "spdk/net.h"
@@ -56,7 +56,6 @@
 	memset(&(conn)->portal, 0, sizeof(*(conn)) -	\
 		offsetof(struct spdk_iscsi_conn, portal));
 
-#define SPDK_MAX_POLLERS_PER_CORE	4096
 static int g_connections_per_lcore;
 static uint32_t *g_num_connections;
 
@@ -360,11 +359,10 @@ spdk_iscsi_conn_free_pdu(struct spdk_iscsi_conn *conn, struct spdk_iscsi_pdu *pd
 
 static int spdk_iscsi_conn_free_tasks(struct spdk_iscsi_conn *conn)
 {
-	struct spdk_iscsi_pdu *pdu;
-	struct spdk_iscsi_task *iscsi_task;
+	struct spdk_iscsi_pdu *pdu, *tmp_pdu;
+	struct spdk_iscsi_task *iscsi_task, *tmp_iscsi_task;
 
-	while (!TAILQ_EMPTY(&conn->write_pdu_list)) {
-		pdu = TAILQ_FIRST(&conn->write_pdu_list);
+	TAILQ_FOREACH_SAFE(pdu, &conn->write_pdu_list, tailq, tmp_pdu) {
 		TAILQ_REMOVE(&conn->write_pdu_list, pdu, tailq);
 		if (pdu->task) {
 			spdk_iscsi_task_put(pdu->task);
@@ -372,8 +370,7 @@ static int spdk_iscsi_conn_free_tasks(struct spdk_iscsi_conn *conn)
 		spdk_put_pdu(pdu);
 	}
 
-	while (!TAILQ_EMPTY(&conn->snack_pdu_list)) {
-		pdu = TAILQ_FIRST(&conn->snack_pdu_list);
+	TAILQ_FOREACH_SAFE(pdu, &conn->snack_pdu_list, tailq, tmp_pdu) {
 		TAILQ_REMOVE(&conn->snack_pdu_list, pdu, tailq);
 		if (pdu->task) {
 			spdk_iscsi_task_put(pdu->task);
@@ -381,8 +378,7 @@ static int spdk_iscsi_conn_free_tasks(struct spdk_iscsi_conn *conn)
 		spdk_put_pdu(pdu);
 	}
 
-	while (!TAILQ_EMPTY(&conn->queued_datain_tasks)) {
-		iscsi_task = TAILQ_FIRST(&conn->queued_datain_tasks);
+	TAILQ_FOREACH_SAFE(iscsi_task, &conn->queued_datain_tasks, link, tmp_iscsi_task) {
 		TAILQ_REMOVE(&conn->queued_datain_tasks, iscsi_task, link);
 		pdu = iscsi_task->pdu;
 		spdk_iscsi_task_put(iscsi_task);
@@ -394,12 +390,10 @@ static int spdk_iscsi_conn_free_tasks(struct spdk_iscsi_conn *conn)
 	}
 
 	return 0;
-
 }
 
 static void spdk_iscsi_conn_free(struct spdk_iscsi_conn *conn)
 {
-
 	if (conn == NULL) {
 		return;
 	}
@@ -463,7 +457,6 @@ static void spdk_iscsi_remove_conn(struct spdk_iscsi_conn *conn)
 			      "cleanup last conn free sess\n");
 		spdk_free_sess(sess);
 	}
-
 
 	SPDK_DEBUGLOG(SPDK_LOG_ISCSI, "cleanup free conn\n");
 	spdk_iscsi_conn_free(conn);
@@ -733,30 +726,26 @@ spdk_iscsi_conn_read_data(struct spdk_iscsi_conn *conn, int bytes,
 
 	if (ret > 0) {
 		spdk_trace_record(TRACE_READ_FROM_SOCKET_DONE, conn->id, ret, 0, 0);
+		return ret;
 	}
 
 	if (ret < 0) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			return 0;
-		} else {
-			/* For connect reset issue, do not output error log */
-			if (errno == ECONNRESET) {
-				SPDK_DEBUGLOG(SPDK_LOG_ISCSI, "spdk_sock_recv() failed, errno %d: %s\n",
-					      errno, spdk_strerror(errno));
-			} else {
-				SPDK_ERRLOG("spdk_sock_recv() failed, errno %d: %s\n",
-					    errno, spdk_strerror(errno));
-			}
 		}
-		return SPDK_ISCSI_CONNECTION_FATAL;
+
+		/* For connect reset issue, do not output error log */
+		if (errno == ECONNRESET) {
+			SPDK_DEBUGLOG(SPDK_LOG_ISCSI, "spdk_sock_recv() failed, errno %d: %s\n",
+				      errno, spdk_strerror(errno));
+		} else {
+			SPDK_ERRLOG("spdk_sock_recv() failed, errno %d: %s\n",
+				    errno, spdk_strerror(errno));
+		}
 	}
 
 	/* connection closed */
-	if (ret == 0) {
-		return SPDK_ISCSI_CONNECTION_FATAL;
-	}
-
-	return ret;
+	return SPDK_ISCSI_CONNECTION_FATAL;
 }
 
 void
@@ -772,15 +761,14 @@ static void
 process_completed_read_subtask_list(struct spdk_iscsi_conn *conn,
 				    struct spdk_iscsi_task *primary)
 {
-	struct spdk_iscsi_task *tmp;
+	struct spdk_iscsi_task *subtask, *tmp;
 
-	while (!TAILQ_EMPTY(&primary->subtask_list)) {
-		tmp = TAILQ_FIRST(&primary->subtask_list);
-		if (tmp->scsi.offset == primary->bytes_completed) {
-			TAILQ_REMOVE(&primary->subtask_list, tmp, subtask_link);
-			primary->bytes_completed += tmp->scsi.length;
-			spdk_iscsi_task_response(conn, tmp);
-			spdk_iscsi_task_put(tmp);
+	TAILQ_FOREACH_SAFE(subtask, &primary->subtask_list, subtask_link, tmp) {
+		if (subtask->scsi.offset == primary->bytes_completed) {
+			TAILQ_REMOVE(&primary->subtask_list, subtask, subtask_link);
+			primary->bytes_completed += subtask->scsi.length;
+			spdk_iscsi_task_response(conn, subtask);
+			spdk_iscsi_task_put(subtask);
 		} else {
 			break;
 		}
@@ -793,14 +781,10 @@ process_read_task_completion(struct spdk_iscsi_conn *conn,
 			     struct spdk_iscsi_task *primary)
 {
 	struct spdk_iscsi_task *tmp;
-	bool flag = false;
 
 	if (task->scsi.status != SPDK_SCSI_STATUS_GOOD) {
 		TAILQ_FOREACH(tmp, &primary->subtask_list, subtask_link) {
-			memcpy(tmp->scsi.sense_data, task->scsi.sense_data,
-			       task->scsi.sense_data_len);
-			tmp->scsi.sense_data_len = task->scsi.sense_data_len;
-			tmp->scsi.status = task->scsi.status;
+			spdk_scsi_task_copy_status(&tmp->scsi, &task->scsi);
 		}
 	}
 
@@ -809,13 +793,11 @@ process_read_task_completion(struct spdk_iscsi_conn *conn,
 		TAILQ_FOREACH(tmp, &primary->subtask_list, subtask_link) {
 			if (task->scsi.offset < tmp->scsi.offset) {
 				TAILQ_INSERT_BEFORE(tmp, task, subtask_link);
-				flag = true;
-				break;
+				return;
 			}
 		}
-		if (!flag) {
-			TAILQ_INSERT_TAIL(&primary->subtask_list, task, subtask_link);
-		}
+
+		TAILQ_INSERT_TAIL(&primary->subtask_list, task, subtask_link);
 		return;
 	}
 
@@ -848,10 +830,7 @@ spdk_iscsi_task_cpl(struct spdk_scsi_task *scsi_task)
 		primary->bytes_completed += task->scsi.length;
 		if ((task != primary) &&
 		    (task->scsi.status != SPDK_SCSI_STATUS_GOOD)) {
-			memcpy(primary->scsi.sense_data, task->scsi.sense_data,
-			       task->scsi.sense_data_len);
-			primary->scsi.sense_data_len = task->scsi.sense_data_len;
-			primary->scsi.status = task->scsi.status;
+			spdk_scsi_task_copy_status(&primary->scsi, &task->scsi);
 		}
 
 		if (primary->bytes_completed == primary->scsi.transfer_len) {

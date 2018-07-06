@@ -459,6 +459,8 @@ static int
 spdk_rpc_get_vhost_controllers_cb(struct spdk_vhost_dev *vdev, void *arg)
 {
 	struct rpc_get_vhost_ctrlrs *ctx = arg;
+	uint32_t delay_base_us, iops_threshold;
+
 
 	if (vdev == NULL) {
 		spdk_json_write_array_end(ctx->w);
@@ -467,22 +469,20 @@ spdk_rpc_get_vhost_controllers_cb(struct spdk_vhost_dev *vdev, void *arg)
 		return 0;
 	}
 
-	spdk_json_write_object_begin(ctx->w);
-
-	spdk_json_write_name(ctx->w, "ctrlr");
-	spdk_json_write_string(ctx->w, spdk_vhost_dev_get_name(vdev));
-
-	spdk_json_write_name(ctx->w, "cpumask");
-	spdk_json_write_string_fmt(ctx->w, "0x%s", spdk_cpuset_fmt(vdev->cpumask));
-
-	spdk_json_write_name(ctx->w, "backend_specific");
+	spdk_vhost_get_coalescing(vdev, &delay_base_us, &iops_threshold);
 
 	spdk_json_write_object_begin(ctx->w);
+
+	spdk_json_write_named_string(ctx->w, "ctrlr", spdk_vhost_dev_get_name(vdev));
+	spdk_json_write_named_string_fmt(ctx->w, "cpumask", "0x%s", spdk_cpuset_fmt(vdev->cpumask));
+	spdk_json_write_named_uint32(ctx->w, "delay_base_us", delay_base_us);
+	spdk_json_write_named_uint32(ctx->w, "iops_threshold", iops_threshold);
+
+	spdk_json_write_named_object_begin(ctx->w, "backend_specific");
 	spdk_vhost_dump_info_json(vdev, ctx->w);
 	spdk_json_write_object_end(ctx->w);
 
-	spdk_json_write_object_end(ctx->w); // ctrl
-
+	spdk_json_write_object_end(ctx->w);
 	return 0;
 }
 

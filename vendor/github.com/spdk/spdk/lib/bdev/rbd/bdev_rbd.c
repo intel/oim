@@ -42,7 +42,7 @@
 #include "spdk/conf.h"
 #include "spdk/env.h"
 #include "spdk/bdev.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/json.h"
 #include "spdk/string.h"
 #include "spdk/util.h"
@@ -53,6 +53,8 @@
 #define SPDK_RBD_QUEUE_DEPTH 128
 
 static int bdev_rbd_count = 0;
+
+#define BDEV_RBD_POLL_US 50
 
 struct bdev_rbd {
 	struct spdk_bdev disk;
@@ -155,6 +157,7 @@ bdev_rbd_init(const char *rbd_pool_name, const char *rbd_name, rbd_image_info_t 
 		goto err;
 	}
 
+	rados_ioctx_destroy(io_ctx);
 	return 0;
 err:
 	rados_ioctx_destroy(io_ctx);
@@ -511,7 +514,7 @@ bdev_rbd_create_cb(void *io_device, void *ctx_buf)
 		goto err;
 	}
 
-	ch->poller = spdk_poller_register(bdev_rbd_io_poll, ch, 0);
+	ch->poller = spdk_poller_register(bdev_rbd_io_poll, ch, BDEV_RBD_POLL_US);
 
 	return 0;
 
@@ -653,6 +656,17 @@ spdk_bdev_rbd_create(const char *name, const char *pool_name, const char *rbd_na
 	}
 
 	return &rbd->disk;
+}
+
+void
+spdk_bdev_rbd_delete(struct spdk_bdev *bdev, spdk_delete_rbd_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || bdev->module != &rbd_if) {
+		cb_fn(cb_arg, -ENODEV);
+		return;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
 static int

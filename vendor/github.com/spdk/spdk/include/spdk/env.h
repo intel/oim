@@ -58,6 +58,14 @@ extern "C" {
  */
 #define SPDK_MALLOC_SHARE  0x02
 
+#define SPDK_MAX_MEMZONE_NAME_LEN 32
+#define SPDK_MAX_MEMPOOL_NAME_LEN 29
+
+/**
+ * Memzone flags
+ */
+#define SPDK_MEMZONE_NO_IOVA_CONTIG 0x00100000 /**< no iova contiguity */
+
 struct spdk_pci_device;
 
 /**
@@ -251,6 +259,22 @@ void spdk_dma_free(void *buf);
 void *spdk_memzone_reserve(const char *name, size_t len, int socket_id, unsigned flags);
 
 /**
+ * Reserve a named, process shared memory zone with the given size, socket_id,
+ * flags and alignment.
+ *
+ * \param name Name to set for this memory zone.
+ * \param len Length in bytes.
+ * \param socket_id Socket ID to allocate memory on, or SPDK_ENV_SOCKET_ID_ANY
+ * for any socket.
+ * \param flags Flags to set for this memory zone.
+ * \param align Alignment for resulting memzone. Must be a power of 2.
+ *
+ * \return a pointer to the allocated memory address on success, or NULL on failure.
+ */
+void *spdk_memzone_reserve_aligned(const char *name, size_t len, int socket_id,
+				   unsigned flags, unsigned align);
+
+/**
  * Lookup the memory zone identified by the given name.
  *
  * \param name Name of the memory zone.
@@ -370,7 +394,7 @@ void spdk_mempool_put(struct spdk_mempool *mp, void *ele);
  * \param ele_arr Array of the elements to put.
  * \param count Count of elements to put.
  */
-void spdk_mempool_put_bulk(struct spdk_mempool *mp, void *const *ele_arr, size_t count);
+void spdk_mempool_put_bulk(struct spdk_mempool *mp, void **ele_arr, size_t count);
 
 /**
  * Get the number of entries in the memory pool.
@@ -1007,10 +1031,12 @@ int spdk_mem_map_clear_translation(struct spdk_mem_map *map, uint64_t vaddr, uin
  *
  * \param map Memory map.
  * \param vaddr Virtual address.
+ * \param size Size of memory region.
  *
- * \return the translation of 2MB hugepage mapping.
+ * \return the translation of vaddr stored in the map, or default_translation
+ * as specified in spdk_mem_map_alloc() if vaddr is not present in the map.
  */
-uint64_t spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr);
+uint64_t spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t size);
 
 /**
  * Register the specified memory region for address translation.
@@ -1031,7 +1057,7 @@ int spdk_mem_register(void *vaddr, size_t len);
  * are completed or cancelled before calling this function.
  *
  * \param vaddr Virtual address to unregister.
- * \param leng Length in bytes of the vaddr.
+ * \param len Length in bytes of the vaddr.
  *
  * \return 0 on success, negative errno on failure.
  */

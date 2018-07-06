@@ -41,11 +41,10 @@
 #include "spdk/string.h"
 #include "spdk/util.h"
 
-#define ACCEPT_TIMEOUT_US		10000 /* 10ms */
-
 #define SPDK_NVMF_MAX_NAMESPACES (1 << 14)
 
-struct spdk_nvmf_tgt_conf g_spdk_nvmf_tgt_conf;
+struct spdk_nvmf_tgt_opts *g_spdk_nvmf_tgt_opts = NULL;
+struct spdk_nvmf_tgt_conf *g_spdk_nvmf_tgt_conf = NULL;
 
 static int
 spdk_add_nvmf_discovery_subsystem(void)
@@ -65,14 +64,14 @@ spdk_add_nvmf_discovery_subsystem(void)
 }
 
 static void
-spdk_nvmf_read_config_file_params(struct spdk_conf_section *sp,
-				  struct spdk_nvmf_tgt_opts *opts)
+spdk_nvmf_read_config_file_tgt_opts(struct spdk_conf_section *sp,
+				    struct spdk_nvmf_tgt_opts *opts)
 {
 	int max_queue_depth;
 	int max_queues_per_sess;
 	int in_capsule_data_size;
 	int max_io_size;
-	int acceptor_poll_rate;
+	int io_unit_size;
 
 	max_queue_depth = spdk_conf_section_get_intval(sp, "MaxQueueDepth");
 	if (max_queue_depth >= 0) {
@@ -94,28 +93,94 @@ spdk_nvmf_read_config_file_params(struct spdk_conf_section *sp,
 		opts->max_io_size = max_io_size;
 	}
 
+	io_unit_size = spdk_conf_section_get_intval(sp, "IOUnitSize");
+	if (io_unit_size >= 0) {
+		opts->io_unit_size = io_unit_size;
+	}
+}
+
+static void
+spdk_nvmf_read_config_file_tgt_conf(struct spdk_conf_section *sp,
+				    struct spdk_nvmf_tgt_conf *conf)
+{
+	int acceptor_poll_rate;
+
 	acceptor_poll_rate = spdk_conf_section_get_intval(sp, "AcceptorPollRate");
 	if (acceptor_poll_rate >= 0) {
-		g_spdk_nvmf_tgt_conf.acceptor_poll_rate = acceptor_poll_rate;
+		conf->acceptor_poll_rate = acceptor_poll_rate;
 	}
+}
+
+static struct spdk_nvmf_tgt_opts *
+spdk_nvmf_parse_tgt_opts(void)
+{
+	struct spdk_nvmf_tgt_opts *opts;
+	struct spdk_conf_section *sp;
+
+	opts = calloc(1, sizeof(*opts));
+	if (!opts) {
+		SPDK_ERRLOG("calloc() failed for target options\n");
+		return NULL;
+	}
+
+	spdk_nvmf_tgt_opts_init(opts);
+
+	sp = spdk_conf_find_section(NULL, "Nvmf");
+	if (sp != NULL) {
+		spdk_nvmf_read_config_file_tgt_opts(sp, opts);
+	}
+
+	return opts;
+}
+
+static struct spdk_nvmf_tgt_conf *
+spdk_nvmf_parse_tgt_conf(void)
+{
+	struct spdk_nvmf_tgt_conf *conf;
+	struct spdk_conf_section *sp;
+
+	conf = calloc(1, sizeof(*conf));
+	if (!conf) {
+		SPDK_ERRLOG("calloc() failed for target conf\n");
+		return NULL;
+	}
+
+	conf->acceptor_poll_rate = ACCEPT_TIMEOUT_US;
+
+	sp = spdk_conf_find_section(NULL, "Nvmf");
+	if (sp != NULL) {
+		spdk_nvmf_read_config_file_tgt_conf(sp, conf);
+	}
+
+	return conf;
 }
 
 static int
 spdk_nvmf_parse_nvmf_tgt(void)
 {
-	struct spdk_conf_section *sp;
-	struct spdk_nvmf_tgt_opts opts;
 	int rc;
 
-	spdk_nvmf_tgt_opts_init(&opts);
-	g_spdk_nvmf_tgt_conf.acceptor_poll_rate = ACCEPT_TIMEOUT_US;
-
-	sp = spdk_conf_find_section(NULL, "Nvmf");
-	if (sp != NULL) {
-		spdk_nvmf_read_config_file_params(sp, &opts);
+	if (!g_spdk_nvmf_tgt_opts) {
+		g_spdk_nvmf_tgt_opts = spdk_nvmf_parse_tgt_opts();
+		if (!g_spdk_nvmf_tgt_opts) {
+			SPDK_ERRLOG("spdk_nvmf_parse_tgt_opts() failed\n");
+			return -1;
+		}
 	}
 
-	g_spdk_nvmf_tgt = spdk_nvmf_tgt_create(&opts);
+	if (!g_spdk_nvmf_tgt_conf) {
+		g_spdk_nvmf_tgt_conf = spdk_nvmf_parse_tgt_conf();
+		if (!g_spdk_nvmf_tgt_conf) {
+			SPDK_ERRLOG("spdk_nvmf_parse_tgt_conf() failed\n");
+			return -1;
+		}
+	}
+
+	g_spdk_nvmf_tgt = spdk_nvmf_tgt_create(g_spdk_nvmf_tgt_opts);
+
+	free(g_spdk_nvmf_tgt_opts);
+	g_spdk_nvmf_tgt_opts = NULL;
+
 	if (!g_spdk_nvmf_tgt) {
 		SPDK_ERRLOG("spdk_nvmf_tgt_create() failed\n");
 		return -1;
@@ -214,6 +279,7 @@ spdk_nvmf_parse_subsystem(struct spdk_conf_section *sp)
 		struct spdk_nvmf_ns_opts ns_opts;
 		struct spdk_bdev *bdev;
 		const char *bdev_name;
+		const char *uuid_str;
 		char *nsid_str;
 
 		bdev_name = spdk_conf_section_get_nmval(sp, "Namespace", i, 0);
@@ -244,6 +310,16 @@ spdk_nvmf_parse_subsystem(struct spdk_conf_section *sp)
 			}
 
 			ns_opts.nsid = (uint32_t)nsid_ul;
+		}
+
+		uuid_str = spdk_conf_section_get_nmval(sp, "Namespace", i, 2);
+		if (uuid_str) {
+			if (spdk_uuid_parse(&ns_opts.uuid, uuid_str)) {
+				SPDK_ERRLOG("Invalid UUID %s\n", uuid_str);
+				spdk_nvmf_subsystem_destroy(subsystem);
+				subsystem = NULL;
+				goto done;
+			}
 		}
 
 		if (spdk_nvmf_subsystem_add_ns(subsystem, bdev, &ns_opts, sizeof(ns_opts)) == 0) {

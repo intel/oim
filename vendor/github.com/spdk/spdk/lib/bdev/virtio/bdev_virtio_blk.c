@@ -37,7 +37,7 @@
 #include "spdk/conf.h"
 #include "spdk/endian.h"
 #include "spdk/env.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/string.h"
 #include "spdk/util.h"
 #include "spdk/json.h"
@@ -79,7 +79,9 @@ struct bdev_virtio_blk_io_channel {
 	(1ULL << VIRTIO_BLK_F_BLK_SIZE		|	\
 	 1ULL << VIRTIO_BLK_F_TOPOLOGY		|	\
 	 1ULL << VIRTIO_BLK_F_MQ		|	\
-	 1ULL << VIRTIO_BLK_F_RO)
+	 1ULL << VIRTIO_BLK_F_RO		|	\
+	 1ULL << VIRTIO_RING_F_EVENT_IDX	|	\
+	 1ULL << VHOST_USER_F_PROTOCOL_FEATURES)
 
 static int bdev_virtio_initialize(void);
 static int bdev_virtio_blk_get_ctx_size(void);
@@ -350,8 +352,13 @@ virtio_blk_dev_init(struct virtio_blk_dev *bvdev, uint16_t max_queues)
 	int rc;
 
 	if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_BLK_SIZE)) {
-		virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, blk_size),
-					   &block_size, sizeof(block_size));
+		rc = virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, blk_size),
+						&block_size, sizeof(block_size));
+		if (rc) {
+			SPDK_ERRLOG("%s: config read failed: %s\n", vdev->name, spdk_strerror(-rc));
+			return rc;
+		}
+
 		if (block_size == 0 || block_size % 512 != 0) {
 			SPDK_ERRLOG("%s: invalid block size (%"PRIu32"). Must be "
 				    "a multiple of 512.\n", vdev->name, block_size);
@@ -361,8 +368,12 @@ virtio_blk_dev_init(struct virtio_blk_dev *bvdev, uint16_t max_queues)
 		block_size = 512;
 	}
 
-	virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, capacity),
-				   &capacity, sizeof(capacity));
+	rc = virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, capacity),
+					&capacity, sizeof(capacity));
+	if (rc) {
+		SPDK_ERRLOG("%s: config read failed: %s\n", vdev->name, spdk_strerror(-rc));
+		return rc;
+	}
 
 	/* `capacity` is a number of 512-byte sectors. */
 	num_blocks = capacity * 512 / block_size;
@@ -379,8 +390,12 @@ virtio_blk_dev_init(struct virtio_blk_dev *bvdev, uint16_t max_queues)
 	}
 
 	if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
-		virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
-					   &host_max_queues, sizeof(host_max_queues));
+		rc = virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+						&host_max_queues, sizeof(host_max_queues));
+		if (rc) {
+			SPDK_ERRLOG("%s: config read failed: %s\n", vdev->name, spdk_strerror(-rc));
+			return rc;
+		}
 	} else {
 		host_max_queues = 1;
 	}
@@ -476,8 +491,14 @@ virtio_pci_blk_dev_create(const char *name, struct virtio_pci_ctx *pci_ctx)
 
 	/* TODO: add a way to limit usable virtqueues */
 	if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
-		virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
-					   &num_queues, sizeof(num_queues));
+		rc = virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+						&num_queues, sizeof(num_queues));
+		if (rc) {
+			SPDK_ERRLOG("%s: config read failed: %s\n", vdev->name, spdk_strerror(-rc));
+			virtio_dev_destruct(vdev);
+			free(bvdev);
+			return NULL;
+		}
 	} else {
 		num_queues = 1;
 	}

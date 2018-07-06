@@ -2,12 +2,58 @@
 
 ## v18.07: (Upcoming Release)
 
+### Log
+
+The debug log component flag has been renamed from `-t` to `-L` to prevent confusion
+with tracepoints and to allow the option to be added to tools that already use `-t`
+to mean something else.
+
+### NVMe Driver
+
+New API function spdk_nvme_qpair_add_cmd_error_injection() and
+spdk_nvme_qpair_remove_cmd_error_injection() have been added for NVMe error emulation,
+users can set specified command with specified error status for error emulation.
+
+### Build System
+
+The build system now generates a combined shared library (libspdk.so) that may be used
+in place of the individual static libraries (libspdk_*.a).
+The combined library includes all components of SPDK and is intended to make linking
+against SPDK easier.
+The static libraries are also still provided for users that prefer to link only the
+minimal set of components required.
+
+### RPC
+
+The `start_nbd_disk` RPC method now returns the path to the kernel NBD device node
+rather than always returning `true`.
+
 ### Bdev
 
 The spdk_bdev_get_io_stat() function now returns cumulative totals instead of resetting
 on each call. This allows multiple callers to query I/O statistics without conflicting
 with each other. Existing users will need to adjust their code to record the previous
 I/O statistics to calculate the delta between calls.
+
+A new public header file bdev_module.h has been introduced to facilitate the development
+of new bdev modules. This header includes an interface for the spdk_bdev_part and
+spdk_bdev_part_base objects to enable the creation of multiple virtual bdevs on top of a
+single base bdev.
+
+### Env
+
+The spdk_mem_map_translate() function now takes a size parameter to indicate the size of
+the memory region.  This can be used by environment implementations to validate the
+requested translation.
+
+The I/O Channel implementation has been moved to its own library - lib/thread. The
+public API that was previously in spdk/io_channel.h is now in spdk/thread.h The
+file spdk/io_channel.h remains and includes spdk/thread.h.
+
+### NVMe Over Fabrics
+
+The spdk_nvmf_tgt_destroy() function is now asynchronous and takes a callback
+as a parameter.
 
 ### git pre-commit and pre-push hooks
 
@@ -19,6 +65,12 @@ Results are recorded in the `make.log` file.
 
 To enable type: 'git config core.hooksPath .githooks'. To override after configuration use
 the `git --no-verify` flag.
+
+### IOAT
+
+IOAT for copy engine is disabled by default. It can be enabled by specifying the Enable
+option with "Yes" in `[Ioat]` section of the configuration file. The Disable option is
+now deprecated and will be removed in a future release.
 
 ## v18.04: Logical Volume Snapshot/Clone, iSCSI Initiator, Bdev QoS, VPP Userspace TCP/IP
 

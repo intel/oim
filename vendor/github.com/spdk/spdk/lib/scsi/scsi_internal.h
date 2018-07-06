@@ -88,19 +88,14 @@ struct spdk_scsi_lun {
 	/** I/O channel for the bdev associated with this LUN. */
 	struct spdk_io_channel *io_channel;
 
-	/** Thread ID for the thread that allocated the I/O channel for this
-	 *   LUN.  All I/O to this LUN must be performed from this thread.
-	 */
-	pthread_t thread_id;
-
 	/**  The reference number for this LUN, thus we can correctly free the io_channel */
 	uint32_t ref;
 
 	/** Poller to release the resource of the lun when it is hot removed */
-	struct spdk_poller *hotplug_poller;
+	struct spdk_poller *hotremove_poller;
 
 	/** The LUN is removed */
-	bool				removed;
+	bool removed;
 
 	/** Callback to be fired when LUN removal is first triggered. */
 	void (*hotremove_cb)(const struct spdk_scsi_lun *lun, void *arg);
@@ -132,8 +127,6 @@ void spdk_scsi_lun_execute_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task
 int spdk_scsi_lun_task_mgmt_execute(struct spdk_scsi_task *task, enum spdk_scsi_task_func func);
 void spdk_scsi_lun_complete_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
 void spdk_scsi_lun_complete_mgmt_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
-int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun);
-void spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun);
 bool spdk_scsi_lun_has_pending_tasks(const struct spdk_scsi_lun *lun);
 
 struct spdk_scsi_dev *spdk_scsi_dev_get_list(void);

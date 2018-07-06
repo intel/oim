@@ -86,8 +86,6 @@ spdk_lun_ut_cpl_task(struct spdk_scsi_task *task)
 static void
 spdk_lun_ut_free_task(struct spdk_scsi_task *task)
 {
-	/* This should never get called since we never call spdk_scsi_task_put(). */
-	SPDK_CU_ASSERT_FATAL(0);
 }
 
 static void
@@ -125,11 +123,10 @@ spdk_dma_free(void *buf)
 	free(buf);
 }
 
-int
+void
 spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
 {
 	CU_ASSERT(0);
-	return -1;
 }
 
 int
@@ -442,7 +439,7 @@ lun_append_task_null_lun_task_cdb_spc_inquiry(void)
 
 	CU_ASSERT_EQUAL(task.status, SPDK_SCSI_STATUS_GOOD);
 
-	spdk_scsi_task_free_data(&task);
+	spdk_scsi_task_put(&task);
 
 	/* spdk_scsi_task_process_null_lun() does not call cpl_fn */
 	CU_ASSERT_EQUAL(g_task_count, 1);
@@ -466,6 +463,8 @@ lun_append_task_null_lun_alloc_len_lt_4096(void)
 	spdk_scsi_task_process_null_lun(&task);
 
 	CU_ASSERT_EQUAL(task.status, SPDK_SCSI_STATUS_GOOD);
+
+	spdk_scsi_task_put(&task);
 
 	/* spdk_scsi_task_process_null_lun() does not call cpl_fn */
 	CU_ASSERT_EQUAL(g_task_count, 1);

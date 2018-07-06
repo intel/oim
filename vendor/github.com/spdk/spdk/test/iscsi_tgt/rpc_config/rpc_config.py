@@ -10,12 +10,13 @@ import json
 import random
 from subprocess import check_call, call, check_output, Popen, PIPE, CalledProcessError
 
-if (len(sys.argv) == 7):
+if (len(sys.argv) == 8):
     target_ip = sys.argv[2]
     initiator_ip = sys.argv[3]
     port = sys.argv[4]
     netmask = sys.argv[5]
     namespace = sys.argv[6]
+    test_type = sys.argv[7]
 
 ns_cmd = 'ip netns exec ' + namespace
 other_ip = '127.0.0.6'
@@ -431,7 +432,7 @@ def verify_add_delete_ip_address(rpc_py):
                "add ip {} to nic {} failed.".format(faked_ip, x["name"]))
         try:
             check_call(ping_cmd.split())
-        except:
+        except BaseException:
             verify(False, 1,
                    "ping ip {} for {} was failed(adding was successful)".format
                    (faked_ip, x["name"]))

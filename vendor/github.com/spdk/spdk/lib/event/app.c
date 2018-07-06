@@ -63,6 +63,8 @@ static struct spdk_event *g_shutdown_event = NULL;
 static int g_init_lcore;
 static bool g_delay_subsystem_init = false;
 static bool g_shutdown_sig_received = false;
+static char *g_executable_name;
+static struct spdk_app_opts g_default_opts;
 
 int
 spdk_app_get_shm_id(void)
@@ -417,6 +419,7 @@ spdk_app_setup_env(struct spdk_app_opts *opts)
 	env_opts.mem_channel = opts->mem_channel;
 	env_opts.master_core = opts->master_core;
 	env_opts.mem_size = opts->mem_size;
+	env_opts.hugepage_single_segments = opts->hugepage_single_segments;
 	env_opts.no_pci = opts->no_pci;
 	env_opts.num_pci_addr = opts->num_pci_addr;
 	env_opts.pci_blacklist = opts->pci_blacklist;
@@ -478,6 +481,11 @@ spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
 
 	if (!opts) {
 		SPDK_ERRLOG("opts should not be NULL\n");
+		return 1;
+	}
+
+	if (!start_fn) {
+		SPDK_ERRLOG("start_fn should not be NULL\n");
 		return 1;
 	}
 
@@ -613,11 +621,11 @@ spdk_app_stop(int rc)
 }
 
 static void
-usage(char *executable_name, struct spdk_app_opts *default_opts, void (*app_usage)(void))
+usage(void (*app_usage)(void))
 {
-	printf("%s [options]\n", executable_name);
+	printf("%s [options]\n", g_executable_name);
 	printf("options:\n");
-	printf(" -c config  config file (default %s)\n", default_opts->config_file);
+	printf(" -c config  config file (default %s)\n", g_default_opts.config_file);
 	printf(" -d         disable coredump file enabling\n");
 	printf(" -e mask    tracepoint group mask for spdk trace buffers (default 0x0)\n");
 	printf(" -g         force creating just one hugetlbfs file\n");
@@ -629,8 +637,8 @@ usage(char *executable_name, struct spdk_app_opts *default_opts, void (*app_usag
 	printf(" -q         disable notice level logging to stderr\n");
 	printf(" -r         RPC listen address (default %s)\n", SPDK_DEFAULT_RPC_ADDR);
 	printf(" -s size    memory size in MB for DPDK (default: ");
-	if (default_opts->mem_size > 0) {
-		printf("%dMB)\n", default_opts->mem_size);
+	if (g_default_opts.mem_size > 0) {
+		printf("%dMB)\n", g_default_opts.mem_size);
 	} else {
 		printf("all hugepage memory)\n");
 	}
@@ -638,8 +646,10 @@ usage(char *executable_name, struct spdk_app_opts *default_opts, void (*app_usag
 	printf(" -w         wait for RPCs to initialize subsystems\n");
 	printf(" -B addr    pci addr to blacklist\n");
 	printf(" -W addr    pci addr to whitelist (-B and -W cannot be used at the same time)\n");
-	spdk_tracelog_usage(stdout, "-t");
-	app_usage();
+	spdk_tracelog_usage(stdout, "-L");
+	if (app_usage) {
+		app_usage();
+	}
 }
 
 spdk_app_parse_args_rvals_t
@@ -648,11 +658,10 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 		    void (*app_usage)(void))
 {
 	int ch, rc;
-	struct spdk_app_opts default_opts;
 	char *getopt_str;
 	spdk_app_parse_args_rvals_t rval = SPDK_APP_PARSE_ARGS_SUCCESS;
 
-	memcpy(&default_opts, opts, sizeof(default_opts));
+	memcpy(&g_default_opts, opts, sizeof(g_default_opts));
 
 	if (opts->config_file && access(opts->config_file, F_OK) != 0) {
 		opts->config_file = NULL;
@@ -664,6 +673,8 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 		rval = SPDK_APP_PARSE_ARGS_FAIL;
 		goto parse_early_fail;
 	}
+
+	g_executable_name = argv[0];
 
 	while ((ch = getopt(argc, argv, getopt_str)) != -1) {
 		switch (ch) {
@@ -680,7 +691,7 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			opts->hugepage_single_segments = true;
 			break;
 		case 'h':
-			usage(argv[0], &default_opts, app_usage);
+			usage(app_usage);
 			rval = SPDK_APP_PARSE_ARGS_HELP;
 			goto parse_done;
 		case 'i':
@@ -720,7 +731,7 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			rc = spdk_parse_capacity(optarg, &mem_size_mb, &mem_size_has_prefix);
 			if (rc != 0) {
 				fprintf(stderr, "invalid memory pool size `-s %s`\n", optarg);
-				usage(argv[0], &default_opts, app_usage);
+				usage(app_usage);
 				rval = SPDK_APP_PARSE_ARGS_FAIL;
 				goto parse_done;
 			}
@@ -734,7 +745,7 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 
 			if (mem_size_mb > INT_MAX) {
 				fprintf(stderr, "invalid memory pool size `-s %s`\n", optarg);
-				usage(argv[0], &default_opts, app_usage);
+				usage(app_usage);
 				rval = SPDK_APP_PARSE_ARGS_FAIL;
 				goto parse_done;
 			}
@@ -742,24 +753,6 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			opts->mem_size = (int) mem_size_mb;
 			break;
 		}
-		case 't':
-			rc = spdk_log_set_trace_flag(optarg);
-			if (rc < 0) {
-				fprintf(stderr, "unknown flag\n");
-				usage(argv[0], &default_opts, app_usage);
-				rval = SPDK_APP_PARSE_ARGS_FAIL;
-				goto parse_done;
-			}
-			opts->print_level = SPDK_LOG_DEBUG;
-#ifndef DEBUG
-			fprintf(stderr, "%s must be built with CONFIG_DEBUG=y for -t flag\n",
-				argv[0]);
-			usage(argv[0], &default_opts, app_usage);
-			rval = SPDK_APP_PARSE_ARGS_FAIL;
-			goto parse_done;
-#else
-			break;
-#endif
 		case 'u':
 			opts->no_pci = true;
 			break;
@@ -770,7 +763,7 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			if (opts->pci_whitelist) {
 				free(opts->pci_whitelist);
 				fprintf(stderr, "-B and -W cannot be used at the same time\n");
-				usage(argv[0], &default_opts, app_usage);
+				usage(app_usage);
 				rval = SPDK_APP_PARSE_ARGS_FAIL;
 				goto parse_done;
 			}
@@ -782,11 +775,29 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 				goto parse_done;
 			}
 			break;
+		case 'L':
+#ifndef DEBUG
+			fprintf(stderr, "%s must be built with CONFIG_DEBUG=y for -L flag\n",
+				argv[0]);
+			usage(app_usage);
+			rval = SPDK_APP_PARSE_ARGS_FAIL;
+			goto parse_done;
+#else
+			rc = spdk_log_set_trace_flag(optarg);
+			if (rc < 0) {
+				fprintf(stderr, "unknown flag\n");
+				usage(app_usage);
+				rval = SPDK_APP_PARSE_ARGS_FAIL;
+				goto parse_done;
+			}
+			opts->print_level = SPDK_LOG_DEBUG;
+			break;
+#endif
 		case 'W':
 			if (opts->pci_blacklist) {
 				free(opts->pci_blacklist);
 				fprintf(stderr, "-B and -W cannot be used at the same time\n");
-				usage(argv[0], &default_opts, app_usage);
+				usage(app_usage);
 				rval = SPDK_APP_PARSE_ARGS_FAIL;
 				goto parse_done;
 			}
@@ -804,7 +815,7 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			 * in argv that is NOT in the getopt_str,
 			 * getopt() will return a '?' indicating failure.
 			 */
-			usage(argv[0], &default_opts, app_usage);
+			usage(app_usage);
 			rval = SPDK_APP_PARSE_ARGS_FAIL;
 			goto parse_done;
 		default:
@@ -824,6 +835,17 @@ parse_done:
 
 parse_early_fail:
 	return rval;
+}
+
+void
+spdk_app_usage(void)
+{
+	if (g_executable_name == NULL) {
+		fprintf(stderr, "%s not valid before calling spdk_app_parse_args()\n", __func__);
+		return;
+	}
+
+	usage(NULL);
 }
 
 static void

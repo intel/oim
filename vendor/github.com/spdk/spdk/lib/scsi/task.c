@@ -37,6 +37,9 @@
 #include "spdk/env.h"
 #include "spdk/util.h"
 
+static void
+spdk_scsi_task_free_data(struct spdk_scsi_task *task);
+
 void
 spdk_scsi_task_put(struct spdk_scsi_task *task)
 {
@@ -81,7 +84,7 @@ spdk_scsi_task_construct(struct spdk_scsi_task *task,
 	task->iovcnt = 1;
 }
 
-void
+static void
 spdk_scsi_task_free_data(struct spdk_scsi_task *task)
 {
 	if (task->alloc_len != 0) {
@@ -93,7 +96,7 @@ spdk_scsi_task_free_data(struct spdk_scsi_task *task)
 	task->iov.iov_len = 0;
 }
 
-void *
+static void *
 spdk_scsi_task_alloc_data(struct spdk_scsi_task *task, uint32_t alloc_len)
 {
 	assert(task->alloc_len == 0);
@@ -241,4 +244,13 @@ spdk_scsi_task_set_status(struct spdk_scsi_task *task, int sc, int sk,
 		spdk_scsi_task_build_sense_data(task, sk, asc, ascq);
 	}
 	task->status = sc;
+}
+
+void
+spdk_scsi_task_copy_status(struct spdk_scsi_task *dst,
+			   struct spdk_scsi_task *src)
+{
+	memcpy(dst->sense_data, src->sense_data, src->sense_data_len);
+	dst->sense_data_len = src->sense_data_len;
+	dst->status = src->status;
 }

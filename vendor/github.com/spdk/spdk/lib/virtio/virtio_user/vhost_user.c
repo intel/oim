@@ -226,6 +226,14 @@ get_hugepage_file_info(struct hugepage_file_info huges[], int max)
 			SPDK_ERRLOG("Exceed maximum of %d\n", max);
 			goto error;
 		}
+
+		if (idx > 0 &&
+		    strncmp(tmp, huges[idx - 1].path, PATH_MAX) == 0 &&
+		    v_start == huges[idx - 1].addr + huges[idx - 1].size) {
+			huges[idx - 1].size += (v_end - v_start);
+			continue;
+		}
+
 		huges[idx].addr = v_start;
 		huges[idx].size = v_end - v_start;
 		snprintf(huges[idx].path, PATH_MAX, "%s", tmp);
@@ -306,12 +314,14 @@ vhost_user_sock(struct virtio_user_dev *dev,
 
 	switch (req) {
 	case VHOST_USER_GET_FEATURES:
+	case VHOST_USER_GET_PROTOCOL_FEATURES:
 	case VHOST_USER_GET_QUEUE_NUM:
 		need_reply = 1;
 		break;
 
 	case VHOST_USER_SET_FEATURES:
 	case VHOST_USER_SET_LOG_BASE:
+	case VHOST_USER_SET_PROTOCOL_FEATURES:
 		msg.payload.u64 = *((__u64 *)arg);
 		msg.size = sizeof(msg.payload.u64);
 		break;
@@ -406,6 +416,7 @@ vhost_user_sock(struct virtio_user_dev *dev,
 
 		switch (req) {
 		case VHOST_USER_GET_FEATURES:
+		case VHOST_USER_GET_PROTOCOL_FEATURES:
 		case VHOST_USER_GET_QUEUE_NUM:
 			if (msg.size != sizeof(msg.payload.u64)) {
 				SPDK_WARNLOG("Received bad msg size\n");

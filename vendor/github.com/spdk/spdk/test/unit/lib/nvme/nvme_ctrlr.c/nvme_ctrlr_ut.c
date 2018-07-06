@@ -47,6 +47,8 @@ struct spdk_trace_flag SPDK_LOG_NVME = {
 #include "nvme/nvme_ctrlr.c"
 #include "nvme/nvme_quirks.c"
 
+pid_t g_spdk_nvme_pid;
+
 struct nvme_driver _g_nvme_driver = {
 	.lock = PTHREAD_MUTEX_INITIALIZER,
 };
@@ -177,6 +179,12 @@ nvme_transport_qpair_reset(struct spdk_nvme_qpair *qpair)
 	return 0;
 }
 
+int
+nvme_driver_init(void)
+{
+	return 0;
+}
+
 int nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 		    struct spdk_nvme_ctrlr *ctrlr,
 		    enum spdk_nvme_qprio qprio,
@@ -231,10 +239,8 @@ nvme_qpair_submit_request(struct spdk_nvme_qpair *qpair, struct nvme_request *re
 	CU_ASSERT(req->cmd.opc == SPDK_NVME_OPC_ASYNC_EVENT_REQUEST);
 
 	/*
-	 * Free the request here so it does not leak.
 	 * For the purposes of this unit test, we don't need to bother emulating request submission.
 	 */
-	free(req);
 
 	return 0;
 }
@@ -412,58 +418,19 @@ nvme_ns_construct(struct spdk_nvme_ns *ns, uint32_t id,
 	return 0;
 }
 
-struct nvme_request *
-nvme_allocate_request(struct spdk_nvme_qpair *qpair,
-		      const struct nvme_payload *payload, uint32_t payload_size,
-		      spdk_nvme_cmd_cb cb_fn,
-		      void *cb_arg)
-{
-	struct nvme_request *req = NULL;
-	req = calloc(1, sizeof(*req));
-
-	if (req != NULL) {
-		memset(req, 0, offsetof(struct nvme_request, children));
-
-		req->payload = *payload;
-		req->payload_size = payload_size;
-
-		req->cb_fn = cb_fn;
-		req->cb_arg = cb_arg;
-		req->qpair = qpair;
-		req->pid = getpid();
-	}
-
-	return req;
-}
-
-struct nvme_request *
-nvme_allocate_request_contig(struct spdk_nvme_qpair *qpair, void *buffer, uint32_t payload_size,
-			     spdk_nvme_cmd_cb cb_fn, void *cb_arg)
-{
-	struct nvme_payload payload;
-
-	payload.type = NVME_PAYLOAD_TYPE_CONTIG;
-	payload.u.contig = buffer;
-
-	return nvme_allocate_request(qpair, &payload, payload_size, cb_fn, cb_arg);
-}
-
-struct nvme_request *
-nvme_allocate_request_null(struct spdk_nvme_qpair *qpair, spdk_nvme_cmd_cb cb_fn, void *cb_arg)
-{
-	return nvme_allocate_request_contig(qpair, NULL, 0, cb_fn, cb_arg);
-}
-
-void
-nvme_free_request(struct nvme_request *req)
-{
-	free(req);
-}
+#define DECLARE_AND_CONSTRUCT_CTRLR()	\
+	struct spdk_nvme_ctrlr	ctrlr = {};	\
+	struct spdk_nvme_qpair	adminq = {};	\
+	struct nvme_request	req;		\
+						\
+	STAILQ_INIT(&adminq.free_req);		\
+	STAILQ_INSERT_HEAD(&adminq.free_req, &req, stailq);	\
+	ctrlr.adminq = &adminq;
 
 static void
 test_nvme_ctrlr_init_en_1_rdy_0(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -517,7 +484,7 @@ test_nvme_ctrlr_init_en_1_rdy_0(void)
 static void
 test_nvme_ctrlr_init_en_1_rdy_1(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -564,7 +531,7 @@ test_nvme_ctrlr_init_en_1_rdy_1(void)
 static void
 test_nvme_ctrlr_init_en_0_rdy_0_ams_rr(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -732,7 +699,7 @@ test_nvme_ctrlr_init_en_0_rdy_0_ams_rr(void)
 static void
 test_nvme_ctrlr_init_en_0_rdy_0_ams_wrr(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -901,7 +868,7 @@ test_nvme_ctrlr_init_en_0_rdy_0_ams_wrr(void)
 static void
 test_nvme_ctrlr_init_en_0_rdy_0_ams_vs(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -1071,7 +1038,7 @@ test_nvme_ctrlr_init_en_0_rdy_0_ams_vs(void)
 static void
 test_nvme_ctrlr_init_en_0_rdy_0(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 
@@ -1110,7 +1077,7 @@ test_nvme_ctrlr_init_en_0_rdy_0(void)
 static void
 test_nvme_ctrlr_init_en_0_rdy_1(void)
 {
-	struct spdk_nvme_ctrlr	ctrlr = {};
+	DECLARE_AND_CONSTRUCT_CTRLR();
 
 	memset(&g_ut_nvme_regs, 0, sizeof(g_ut_nvme_regs));
 

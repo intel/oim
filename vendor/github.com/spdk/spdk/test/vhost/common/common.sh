@@ -123,6 +123,7 @@ function spdk_vhost_run()
 			--conf-path=*) local vhost_conf_path="${param#*=}" ;;
 			--json-path=*) local vhost_json_path="${param#*=}" ;;
 			--memory=*) local memory=${param#*=} ;;
+			--no-pci*) local no_pci="-u" ;;
 			*)
 				error "Invalid parameter '$param'"
 				return 1
@@ -158,11 +159,11 @@ function spdk_vhost_run()
 		return 1
 	fi
 
-	local cmd="$vhost_app -m $reactor_mask -p $master_core -s $memory -r $vhost_dir/rpc.sock"
+	local cmd="$vhost_app -m $reactor_mask -p $master_core -s $memory -r $vhost_dir/rpc.sock $no_pci"
 	if [[ -n "$vhost_conf_path" ]]; then
 		cp $vhost_conf_template $vhost_conf_file
 		$SPDK_BUILD_DIR/scripts/gen_nvme.sh >> $vhost_conf_file
-		cmd="$vhost_app -m $reactor_mask -p $master_core -c $vhost_conf_file -s $memory -r $vhost_dir/rpc.sock"
+		cmd="$vhost_app -m $reactor_mask -p $master_core -c $vhost_conf_file -s $memory -r $vhost_dir/rpc.sock $no_pci"
 	fi
 
 	notice "Loging to:   $vhost_log_file"
@@ -176,7 +177,8 @@ function spdk_vhost_run()
 
 	notice "waiting for app to run..."
 	waitforlisten "$vhost_pid" "$vhost_dir/rpc.sock"
-	if [[ -z "$vhost_conf_path" ]]; then
+	#do not generate nvmes if pci access is disabled
+	if [[ -z "$vhost_conf_path" ]] && [[ -z "$no_pci" ]]; then
 		$SPDK_BUILD_DIR/scripts/gen_nvme.sh "--json" | $SPDK_BUILD_DIR/scripts/rpc.py\
 		 -s $vhost_dir/rpc.sock load_subsystem_config
 	fi
@@ -633,7 +635,7 @@ function vm_setup()
 	local task_mask=${!qemu_mask_param}
 
 	notice "TASK MASK: $task_mask"
-	local cmd="taskset -a $task_mask $QEMU_PREFIX/bin/qemu-system-x86_64 ${eol}"
+	local cmd="taskset -a -c $task_mask $QEMU_PREFIX/bin/qemu-system-x86_64 ${eol}"
 	local vm_socket_offset=$(( 10000 + 100 * vm_num ))
 
 	local ssh_socket=$(( vm_socket_offset + 0 ))
@@ -646,9 +648,20 @@ function vm_setup()
 	local cpu_num=0
 
 	set +x
-	for ((cpu=0; cpu<$(nproc --all); cpu++))
-	do
-		(($task_mask&1<<$cpu)) && ((cpu_num++)) || :
+	# cpu list for taskset can be comma separated or range
+	# or both at the same time, so first split on commas
+	cpu_list=$(echo $task_mask | tr "," "\n")
+	queue_number=0
+	for c in $cpu_list; do
+		# if range is detected - count how many cpus
+		if [[ $c =~ [0-9]+-[0-9]+ ]]; then
+			val=$(($c-1))
+			val=${val#-}
+		else
+			val=1
+		fi
+		cpu_num=$((cpu_num+val))
+		queue_number=$((queue_number+val))
 	done
 
 	if [ -z $queue_number ]; then
@@ -723,7 +736,7 @@ function vm_setup()
 			spdk_vhost_blk)
 				notice "using socket $vhost_dir/naa.$disk.$vm_num"
 				cmd+="-chardev socket,id=char_$disk,path=$vhost_dir/naa.$disk.$vm_num ${eol}"
-				cmd+="-device vhost-user-blk-pci,num-queues=$queue_number,chardev=char_$disk,config-ro=$read_only ${eol}"
+				cmd+="-device vhost-user-blk-pci,num-queues=$queue_number,chardev=char_$disk ${eol}"
 				;;
 			kernel_vhost)
 				if [[ -z $disk ]]; then
@@ -734,7 +747,7 @@ function vm_setup()
 					return 1
 				fi
 				notice "Using kernel vhost disk wwn=$disk"
-				cmd+=" -device vhost-scsi-pci,wwpn=$disk ${eol}"
+				cmd+=" -device vhost-scsi-pci,wwpn=$disk,num_queues=$queue_number ${eol}"
 				;;
 			*)
 				error "unknown mode '$disk_type', use: virtio, spdk_vhost_scsi, spdk_vhost_blk or kernel_vhost"
@@ -997,6 +1010,7 @@ function run_fio()
 				mkdir -p $out
 				;;
 			--local) run_server_mode=false ;;
+			--json) json="--json" ;;
 		*)
 			error "Invalid argument '$arg'"
 			return 1
@@ -1042,7 +1056,7 @@ function run_fio()
 
 	python $SPDK_BUILD_DIR/test/vhost/common/run_fio.py --job-file=/root/$job_fname \
 		$([[ ! -z "$fio_bin" ]] && echo "--fio-bin=$fio_bin") \
-		--out=$out ${fio_disks%,}
+		--out=$out $json ${fio_disks%,}
 }
 
 # Shutdown or kill any running VM and SPDK APP.

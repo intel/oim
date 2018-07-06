@@ -15,40 +15,18 @@
 
 A vhost target provides a local storage service as a process running on a local machine.
 It is capable of exposing virtualized block devices to QEMU instances or other arbitrary
-processes. These processes communicate with the vhost target using the
-[virtio protocol](https://wiki.libvirt.org/page/Virtio), a standardized protocol for
-paravirtualized devices.
+processes.
+
+The following diagram presents how QEMU-based VM communicates with SPDK Vhost-SCSI device.
+
+![QEMU/SPDK vhost data flow](img/qemu_vhost_data_flow.svg)
+
+The diagram, and the vhost protocol itself is described in @ref vhost_processing doc.
 
 SPDK provides an accelerated vhost target by applying the same user space and polling
-techniques as other components in SPDK.  Since SPDK is polling for virtio submissions,
-it can signal the virtio driver to skip notifications on submission.  This avoids VMEXITs on I/O
-submission and can significantly reduce CPU usage in the guest VM on heavy I/O workloads.
-
-The following diagram presents how QEMU-based VM communicates with an SPDK vhost device.
-
-    +-------QEMU-VM--------+             +---------------SPDK-vhost-------------+
-    |                      |             |                                      |
-    |  +----------------+  |             |  +--------------------------------+  |
-    |  |                |  |             |  |                                |  |
-    |  |  Virtio-SCSI   |  |  eventfd    |  |               +-------------+  |  |
-    |  |  Linux driver  |  |  interrupt  |  |  Virtio-SCSI  |             |  |  |
-    |  |                |  <----------------+  device       |  NVMe disk  |  |  |
-    |  +--------^-------+  |             |  |               |             |  |  |
-    |           |          |             |  |               +-------^-----+  |  |
-    +----------------------+             |  |                       |        |  |
-                |                        |  +----------^---------------------+  |
-                |                        |             |            |           |
-                |                        +--------------------------------------+
-                |                                      |            |
-                |                              polling |            | DMA
-                |                                      |            |
-    +-----------v----Shared hugepage memory------------+------------------------+
-    |                                                               |           |
-    |  +----------------------------------+-------------------------v--------+  |
-    +  |            Virtqueues            |              Buffers             |  |
-    |  +----------------------------------+----------------------------------+  |
-    |                                                                           |
-    +---------------------------------------------------------------------------+
+techniques as other components in SPDK.  Since SPDK is polling for vhost submissions,
+it can signal the VM to skip notifications on submission.  This avoids VMEXITs on I/O
+submission and can significantly reduce CPU usage in the VM on heavy I/O workloads.
 
 # Prerequisites {#vhost_prereqs}
 
@@ -125,7 +103,7 @@ For vhost-blk, bdevs are exposed directly as block devices in the guest OS and a
 not associated at all with SCSI.
 
 SPDK supports several different types of storage backends, including NVMe,
-Linux AIO, malloc ramdisk and Ceph RBD.  Refer to @ref bdev_getting_started for
+Linux AIO, malloc ramdisk and Ceph RBD.  Refer to @ref bdev for
 additional information on configuring SPDK storage backends.
 
 This guide will use a malloc bdev (ramdisk) named Malloc0. The following RPC
@@ -135,7 +113,7 @@ will create a 64MB malloc bdev with 512-byte block size.
 scripts/rpc.py construct_malloc_bdev 64 512 -b Malloc0
 ~~~
 
-## Create a virtio device {#vhost_vdev_create}
+## Create a vhost device {#vhost_vdev_create}
 
 ### Vhost-SCSI
 
@@ -163,7 +141,7 @@ scripts/rpc.py add_vhost_scsi_lun vhost.0 0 Malloc0
 To remove a bdev from a vhost-scsi controller use the following RPC:
 
 ~~~{.sh}
-scripts/rpc.py remove_vhost_scsi_dev vhost.0 0
+scripts/rpc.py remove_vhost_scsi_target vhost.0 0
 ~~~
 
 ### Vhost-BLK
@@ -401,7 +379,7 @@ Just like hot-attach, the hot-detach is done by simply removing bdev from a cont
 when QEMU VM is already started.
 
 ~~~{.sh}
-scripts/rpc.py remove_vhost_scsi_dev vhost.0 0
+scripts/rpc.py remove_vhost_scsi_target vhost.0 0
 ~~~
 
 Removing an entire bdev will hot-detach it from a controller as well.

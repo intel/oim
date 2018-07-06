@@ -40,12 +40,6 @@
 
 SPDK_LOG_REGISTER_COMPONENT("nvmf", SPDK_LOG_NVMF)
 
-struct spdk_nvmf_qpair *
-spdk_nvmf_ctrlr_get_qpair(struct spdk_nvmf_ctrlr *ctrlr, uint16_t qid)
-{
-	return NULL;
-}
-
 int
 spdk_nvmf_request_complete(struct spdk_nvmf_request *req)
 {
@@ -122,9 +116,26 @@ spdk_bdev_write_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch, 
 }
 
 int
+spdk_bdev_writev_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			struct iovec *iov, int iovcnt,
+			uint64_t offset_blocks, uint64_t num_blocks,
+			spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+	return 0;
+}
+
+int
 spdk_bdev_read_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch, void *buf,
 		      uint64_t offset_blocks, uint64_t num_blocks,
 		      spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+	return 0;
+}
+
+int spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			   struct iovec *iov, int iovcnt,
+			   uint64_t offset_blocks, uint64_t num_blocks,
+			   spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	return 0;
 }
@@ -147,9 +158,8 @@ spdk_bdev_nvme_io_passthru(struct spdk_bdev_desc *desc,
 	return 0;
 }
 
-int spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
+void spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
 {
-	return -1;
 }
 
 const char *spdk_nvmf_subsystem_get_nqn(struct spdk_nvmf_subsystem *subsystem)

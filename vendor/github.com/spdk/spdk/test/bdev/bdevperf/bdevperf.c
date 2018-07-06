@@ -41,7 +41,7 @@
 #include "spdk/event.h"
 #include "spdk/log.h"
 #include "spdk/util.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/string.h"
 
 struct bdevperf_task {
@@ -49,7 +49,9 @@ struct bdevperf_task {
 	struct io_target		*target;
 	void				*buf;
 	uint64_t			offset_blocks;
+	enum spdk_bdev_io_type		io_type;
 	TAILQ_ENTRY(bdevperf_task)	link;
+	struct spdk_bdev_io_wait_entry	bdev_io_wait;
 };
 
 static int g_io_size = 0;
@@ -59,6 +61,7 @@ static int g_is_random;
 static bool g_verify = false;
 static bool g_reset = false;
 static bool g_unmap = false;
+static bool g_flush = false;
 static int g_queue_depth;
 static uint64_t g_time_in_usec;
 static int g_show_performance_real_time = 0;
@@ -291,7 +294,7 @@ bdevperf_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 			printf("task offset: %lu on target bdev=%s fails\n",
 			       task->offset_blocks, target->name);
 		}
-	} else if (g_verify || g_reset || g_unmap) {
+	} else if (g_verify || g_reset) {
 		spdk_bdev_io_get_iovec(bdev_io, &iovs, &iovcnt);
 		assert(iovcnt == 1);
 		assert(iovs != NULL);
@@ -328,88 +331,44 @@ bdevperf_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 }
 
 static void
-bdevperf_unmap_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+bdevperf_verify_submit_read(void *cb_arg)
 {
 	struct io_target	*target;
 	struct bdevperf_task	*task = cb_arg;
-	int rc;
+	int			rc;
 
 	target = task->target;
-
-	/* Set the expected buffer to 0. */
-	memset(task->buf, 0, g_io_size);
 
 	/* Read the data back in */
 	rc = spdk_bdev_read_blocks(target->bdev_desc, target->ch, NULL, task->offset_blocks,
 				   target->io_size_blocks, bdevperf_complete, task);
-	if (rc) {
+	if (rc == -ENOMEM) {
+		task->bdev_io_wait.bdev = target->bdev;
+		task->bdev_io_wait.cb_fn = bdevperf_verify_submit_read;
+		task->bdev_io_wait.cb_arg = task;
+		spdk_bdev_queue_io_wait(target->bdev, target->ch, &task->bdev_io_wait);
+	} else if (rc != 0) {
 		printf("Failed to submit read: %d\n", rc);
 		target->is_draining = true;
 		g_run_failed = true;
-		return;
 	}
-
-	spdk_bdev_free_io(bdev_io);
-
 }
 
 static void
 bdevperf_verify_write_complete(struct spdk_bdev_io *bdev_io, bool success,
 			       void *cb_arg)
 {
-	struct io_target	*target;
-	struct bdevperf_task	*task = cb_arg;
-	int			rc;
-
-	target = task->target;
-
-	if (g_unmap) {
-		rc = spdk_bdev_unmap_blocks(target->bdev_desc, target->ch, task->offset_blocks,
-					    target->io_size_blocks, bdevperf_unmap_complete, task);
-		if (rc) {
-			printf("Failed to submit unmap: %d\n", rc);
-			target->is_draining = true;
-			g_run_failed = true;
-			return;
-		}
-	} else {
-		/* Read the data back in */
-		rc = spdk_bdev_read_blocks(target->bdev_desc, target->ch, NULL, task->offset_blocks,
-					   target->io_size_blocks, bdevperf_complete, task);
-		if (rc) {
-			printf("Failed to submit read: %d\n", rc);
-			target->is_draining = true;
-			g_run_failed = true;
-			return;
-		}
-	}
-
 	spdk_bdev_free_io(bdev_io);
+	bdevperf_verify_submit_read(cb_arg);
 }
 
 static __thread unsigned int seed = 0;
 
 static void
-bdevperf_submit_single(struct io_target *target, struct bdevperf_task *task)
+bdevperf_prep_task(struct bdevperf_task *task)
 {
-	struct spdk_bdev_desc	*desc;
-	struct spdk_io_channel	*ch;
-	uint64_t		offset_in_ios;
-	void			*rbuf;
-	int			rc;
-
-	desc = target->bdev_desc;
-	ch = target->ch;
-
-	if (!task) {
-		if (!TAILQ_EMPTY(&target->task_list)) {
-			task = TAILQ_FIRST(&target->task_list);
-			TAILQ_REMOVE(&target->task_list, task, link);
-		} else {
-			printf("Task allocation failed\n");
-			abort();
-		}
-	}
+	struct io_target *target = task->target;
+	uint64_t offset_in_ios;
 
 	if (g_is_random) {
 		offset_in_ios = rand_r(&seed) % target->size_in_ios;
@@ -421,43 +380,95 @@ bdevperf_submit_single(struct io_target *target, struct bdevperf_task *task)
 	}
 
 	task->offset_blocks = offset_in_ios * target->io_size_blocks;
-	if (g_verify || g_reset || g_unmap) {
+	if (g_verify || g_reset) {
 		memset(task->buf, rand_r(&seed) % 256, g_io_size);
 		task->iov.iov_base = task->buf;
 		task->iov.iov_len = g_io_size;
-		rc = spdk_bdev_writev_blocks(desc, ch, &task->iov, 1, task->offset_blocks,
-					     target->io_size_blocks, bdevperf_verify_write_complete, task);
-		if (rc) {
-			printf("Failed to submit writev: %d\n", rc);
-			target->is_draining = true;
-			g_run_failed = true;
-			return;
-		}
+		task->io_type = SPDK_BDEV_IO_TYPE_WRITE;
+	} else if (g_flush) {
+		task->io_type = SPDK_BDEV_IO_TYPE_FLUSH;
+	} else if (g_unmap) {
+		task->io_type = SPDK_BDEV_IO_TYPE_UNMAP;
 	} else if ((g_rw_percentage == 100) ||
 		   (g_rw_percentage != 0 && ((rand_r(&seed) % 100) < g_rw_percentage))) {
-		rbuf = g_zcopy ? NULL : task->buf;
-		rc = spdk_bdev_read_blocks(desc, ch, rbuf, task->offset_blocks,
-					   target->io_size_blocks, bdevperf_complete, task);
-		if (rc) {
-			printf("Failed to submit read: %d\n", rc);
-			target->is_draining = true;
-			g_run_failed = true;
-			return;
-		}
+		task->io_type = SPDK_BDEV_IO_TYPE_READ;
 	} else {
 		task->iov.iov_base = task->buf;
 		task->iov.iov_len = g_io_size;
+		task->io_type = SPDK_BDEV_IO_TYPE_WRITE;
+	}
+}
+
+static void
+bdevperf_submit_task(void *arg)
+{
+	struct bdevperf_task	*task = arg;
+	struct io_target	*target = task->target;
+	struct spdk_bdev_desc	*desc;
+	struct spdk_io_channel	*ch;
+	spdk_bdev_io_completion_cb cb_fn;
+	void			*rbuf;
+	int			rc;
+
+	desc = target->bdev_desc;
+	ch = target->ch;
+
+	switch (task->io_type) {
+	case SPDK_BDEV_IO_TYPE_WRITE:
+		cb_fn = (g_verify || g_reset) ? bdevperf_verify_write_complete : bdevperf_complete;
 		rc = spdk_bdev_writev_blocks(desc, ch, &task->iov, 1, task->offset_blocks,
-					     target->io_size_blocks, bdevperf_complete, task);
-		if (rc) {
-			printf("Failed to submit writev: %d\n", rc);
-			target->is_draining = true;
-			g_run_failed = true;
-			return;
-		}
+					     target->io_size_blocks, cb_fn, task);
+		break;
+	case SPDK_BDEV_IO_TYPE_FLUSH:
+		rc = spdk_bdev_flush_blocks(desc, ch, task->offset_blocks,
+					    target->io_size_blocks, bdevperf_complete, task);
+		break;
+	case SPDK_BDEV_IO_TYPE_UNMAP:
+		rc = spdk_bdev_unmap_blocks(desc, ch, task->offset_blocks,
+					    target->io_size_blocks, bdevperf_complete, task);
+		break;
+	case SPDK_BDEV_IO_TYPE_READ:
+		rbuf = g_zcopy ? NULL : task->buf;
+		rc = spdk_bdev_read_blocks(desc, ch, rbuf, task->offset_blocks,
+					   target->io_size_blocks, bdevperf_complete, task);
+		break;
+	default:
+		assert(false);
+		rc = -EINVAL;
+		break;
+	}
+
+	if (rc == -ENOMEM) {
+		task->bdev_io_wait.bdev = target->bdev;
+		task->bdev_io_wait.cb_fn = bdevperf_submit_task;
+		task->bdev_io_wait.cb_arg = task;
+		spdk_bdev_queue_io_wait(target->bdev, ch, &task->bdev_io_wait);
+		return;
+	} else if (rc != 0) {
+		printf("Failed to submit bdev_io: %d\n", rc);
+		target->is_draining = true;
+		g_run_failed = true;
+		return;
 	}
 
 	target->current_queue_depth++;
+}
+
+static void
+bdevperf_submit_single(struct io_target *target, struct bdevperf_task *task)
+{
+	if (!task) {
+		if (!TAILQ_EMPTY(&target->task_list)) {
+			task = TAILQ_FIRST(&target->task_list);
+			TAILQ_REMOVE(&target->task_list, task, link);
+		} else {
+			printf("Task allocation failed\n");
+			abort();
+		}
+	}
+
+	bdevperf_prep_task(task);
+	bdevperf_submit_task(task);
 }
 
 static void
@@ -574,7 +585,7 @@ static void usage(char *program_name)
 	printf("\t[-q io depth]\n");
 	printf("\t[-s io size in bytes]\n");
 	printf("\t[-w io pattern type, must be one of\n");
-	printf("\t\t(read, write, randread, randwrite, rw, randrw, verify, reset)]\n");
+	printf("\t\t(read, write, randread, randwrite, rw, randrw, verify, reset, unmap, flush)]\n");
 	printf("\t[-M rwmixread (100 for reads, 0 for writes)]\n");
 	printf("\t[-t time in seconds]\n");
 	printf("\t[-P Number of moving average period]\n");
@@ -582,6 +593,7 @@ static void usage(char *program_name)
 	printf("\t\t(Formula: M = 2 / (n + 1), EMA[i+1] = IO/s * M + (1 - M) * EMA[i])\n");
 	printf("\t\t(only valid with -S)\n");
 	printf("\t[-S Show performance result in real time in seconds]\n");
+	spdk_tracelog_usage(stdout, "-L");
 }
 
 /*
@@ -729,6 +741,12 @@ bdevperf_run(void *arg1, void *arg2)
 
 	bdevperf_construct_targets();
 
+	if (g_target_count == 0) {
+		fprintf(stderr, "No valid bdevs found.\n");
+		spdk_app_stop(1);
+		return;
+	}
+
 	rc = bdevperf_construct_targets_tasks();
 	if (rc) {
 		blockdev_heads_destroy();
@@ -805,6 +823,7 @@ main(int argc, char **argv)
 	int time_in_sec;
 	uint64_t show_performance_period_in_usec = 0;
 	int rc;
+	bool debug_mode = false;
 
 	/* default value */
 	config_file = NULL;
@@ -815,7 +834,7 @@ main(int argc, char **argv)
 	mix_specified = false;
 	core_mask = NULL;
 
-	while ((op = getopt(argc, argv, "c:d:m:q:s:t:w:M:P:S:")) != -1) {
+	while ((op = getopt(argc, argv, "c:d:m:q:s:t:w:L:M:P:S:")) != -1) {
 		switch (op) {
 		case 'c':
 			config_file = optarg;
@@ -838,6 +857,22 @@ main(int argc, char **argv)
 		case 'w':
 			workload_type = optarg;
 			break;
+		case 'L':
+#ifndef DEBUG
+			fprintf(stderr, "%s must be built with CONFIG_DEBUG=y for -L flag\n",
+				argv[0]);
+			usage(argv[0]);
+			exit(1);
+#else
+			rc = spdk_log_set_trace_flag(optarg);
+			if (rc < 0) {
+				fprintf(stderr, "unknown flag\n");
+				usage(argv[0]);
+			}
+
+			debug_mode = true;
+			break;
+#endif
 		case 'M':
 			g_rw_percentage = atoi(optarg);
 			mix_specified = true;
@@ -893,10 +928,11 @@ main(int argc, char **argv)
 	    strcmp(workload_type, "randrw") &&
 	    strcmp(workload_type, "verify") &&
 	    strcmp(workload_type, "reset") &&
-	    strcmp(workload_type, "unmap")) {
+	    strcmp(workload_type, "unmap") &&
+	    strcmp(workload_type, "flush")) {
 		fprintf(stderr,
 			"io pattern type must be one of\n"
-			"(read, write, randread, randwrite, rw, randrw, verify, reset, unmap)\n");
+			"(read, write, randread, randwrite, rw, randrw, verify, reset, unmap, flush)\n");
 		exit(1);
 	}
 
@@ -910,9 +946,16 @@ main(int argc, char **argv)
 		g_rw_percentage = 0;
 	}
 
+	if (!strcmp(workload_type, "unmap")) {
+		g_unmap = true;
+	}
+
+	if (!strcmp(workload_type, "flush")) {
+		g_flush = true;
+	}
+
 	if (!strcmp(workload_type, "verify") ||
-	    !strcmp(workload_type, "reset") ||
-	    !strcmp(workload_type, "unmap")) {
+	    !strcmp(workload_type, "reset")) {
 		g_rw_percentage = 50;
 		if (g_io_size > SPDK_BDEV_LARGE_BUF_MAX_SIZE) {
 			fprintf(stderr, "Unable to exceed max I/O size of %d for verify. (%d provided).\n",
@@ -927,9 +970,6 @@ main(int argc, char **argv)
 		if (!strcmp(workload_type, "reset")) {
 			g_reset = true;
 		}
-		if (!strcmp(workload_type, "unmap")) {
-			g_unmap = true;
-		}
 	}
 
 	if (!strcmp(workload_type, "read") ||
@@ -938,7 +978,8 @@ main(int argc, char **argv)
 	    !strcmp(workload_type, "randwrite") ||
 	    !strcmp(workload_type, "verify") ||
 	    !strcmp(workload_type, "reset") ||
-	    !strcmp(workload_type, "unmap")) {
+	    !strcmp(workload_type, "unmap") ||
+	    !strcmp(workload_type, "flush")) {
 		if (mix_specified) {
 			fprintf(stderr, "Ignoring -M option... Please use -M option"
 				" only when using rw or randrw.\n");
@@ -974,6 +1015,9 @@ main(int argc, char **argv)
 	}
 
 	bdevtest_init(config_file, core_mask, &opts);
+	if (debug_mode) {
+		opts.print_level = SPDK_LOG_DEBUG;
+	}
 	opts.rpc_addr = NULL;
 	if (g_mem_size) {
 		opts.mem_size = g_mem_size;
@@ -992,13 +1036,14 @@ main(int argc, char **argv)
 	}
 
 	if (g_time_in_usec) {
-		performance_dump(g_time_in_usec, 0);
+		if (!g_run_failed) {
+			performance_dump(g_time_in_usec, 0);
+		}
 	} else {
 		printf("Test time less than one microsecond, no performance data will be shown\n");
 	}
 
 	blockdev_heads_destroy();
 	spdk_app_fini();
-	printf("done.\n");
 	return g_run_failed;
 }

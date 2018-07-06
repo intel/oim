@@ -37,8 +37,7 @@ required = ["github.com/spdk/spdk/go"]
 
 [[constraint]]
   name = "github.com/spdk/spdk"
-  branch = "go"
-  source = "github.com/pohly/spdk"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/container-storage-interface/spec"

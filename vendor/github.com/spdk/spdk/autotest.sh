@@ -94,6 +94,9 @@ timing_enter lib
 
 if [ $SPDK_TEST_BLOCKDEV -eq 1 ]; then
 	run_test test/bdev/blockdev.sh
+	if [ $(uname -s) = Linux ]; then
+		run_test test/bdev/bdevjson/json_config.sh
+	fi
 fi
 
 if [ $SPDK_TEST_EVENT -eq 1 ]; then
@@ -120,7 +123,7 @@ fi
 timing_exit lib
 
 if [ $SPDK_TEST_ISCSI -eq 1 ]; then
-	run_test ./test/iscsi_tgt/iscsi_tgt.sh
+	run_test ./test/iscsi_tgt/iscsi_tgt.sh posix
 fi
 
 if [ $SPDK_TEST_BLOBFS -eq 1 ]; then
@@ -137,6 +140,10 @@ if [ $SPDK_TEST_VHOST -eq 1 ]; then
 	timing_enter negative
 	run_test ./test/vhost/spdk_vhost.sh --negative
 	timing_exit negative
+
+	timing_enter vhost_json_config
+	run_test ./test/vhost/json_config/json_config.sh
+	timing_exit vhost_json_config
 
 	if [ $RUN_NIGHTLY -eq 1 ]; then
 		timing_enter integrity_blk
@@ -167,9 +174,9 @@ if [ $SPDK_TEST_VHOST -eq 1 ]; then
 		run_test ./test/vhost/spdk_vhost.sh --migration
 		timing_exit vhost_migration
 
-		timing_enter readonly
-		run_test ./test/vhost/spdk_vhost.sh --readonly
-		timing_exit readonly
+		# timing_enter readonly
+		# run_test ./test/vhost/spdk_vhost.sh --readonly
+		# timing_exit readonly
 	fi
 
 	timing_enter integrity_lvol_scsi
@@ -196,11 +203,13 @@ fi
 
 if [ $SPDK_TEST_VHOST_INIT -eq 1 ]; then
 	run_test ./test/vhost/initiator/blockdev.sh
+	run_test ./test/vhost/initiator/json_config.sh
 	report_test_completion "vhost_initiator"
 fi
 
 if [ $SPDK_TEST_PMDK -eq 1 ]; then
 	run_test ./test/pmem/pmem.sh -x
+	run_test ./test/pmem/json_config/json_config.sh
 fi
 
 timing_enter cleanup

@@ -63,7 +63,7 @@ type ConstructBDevArgs struct {
 	UUID      string `json:"uuid,omitempty"`
 }
 
-type ConstructBDevResponse []string
+type ConstructBDevResponse string
 
 type ConstructMallocBDevArgs struct {
 	ConstructBDevArgs

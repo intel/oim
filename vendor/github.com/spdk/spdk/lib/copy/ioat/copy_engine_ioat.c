@@ -31,6 +31,8 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "copy_engine_ioat.h"
+
 #include "spdk/stdinc.h"
 
 #include "spdk_internal/copy_engine.h"
@@ -39,12 +41,10 @@
 #include "spdk/env.h"
 #include "spdk/conf.h"
 #include "spdk/event.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/ioat.h"
 
-#define IOAT_MAX_CHANNELS		64
-
-static bool g_ioat_disable = false;
+static bool g_ioat_enable = false;
 
 struct ioat_probe_ctx {
 	int num_whitelist_devices;
@@ -278,36 +278,103 @@ attach_cb(void *cb_ctx, struct spdk_pci_device *pci_dev, struct spdk_ioat_chan *
 	TAILQ_INSERT_TAIL(&g_devices, dev, tailq);
 }
 
-static int
-copy_engine_ioat_init(void)
+void
+copy_engine_ioat_enable_probe(void)
 {
-	struct spdk_conf_section *sp = spdk_conf_find_section(NULL, "Ioat");
-	const char *pci_bdf;
-	int i;
+	g_ioat_enable = true;
+}
 
-	if (sp != NULL) {
-		if (spdk_conf_section_get_boolval(sp, "Disable", false)) {
-			g_ioat_disable = true;
-			/* Disable Ioat */
-		}
+static int
+copy_engine_ioat_add_whitelist_device(const char *pci_bdf)
+{
+	if (pci_bdf == NULL) {
+		return -1;
+	}
 
-		/* Init the whitelist */
-		for (i = 0; i < IOAT_MAX_CHANNELS; i++) {
-			pci_bdf = spdk_conf_section_get_nmval(sp, "Whitelist", i, 0);
-			if (!pci_bdf) {
-				break;
-			}
+	if (g_probe_ctx.num_whitelist_devices >= IOAT_MAX_CHANNELS) {
+		SPDK_ERRLOG("Ioat whitelist is full (max size is %d)\n",
+			    IOAT_MAX_CHANNELS);
+		return -1;
+	}
 
-			if (spdk_pci_addr_parse(&g_probe_ctx.whitelist[g_probe_ctx.num_whitelist_devices],
-						pci_bdf) < 0) {
-				SPDK_ERRLOG("Invalid Ioat Whitelist address %s\n", pci_bdf);
-				return -1;
-			}
-			g_probe_ctx.num_whitelist_devices++;
+	if (spdk_pci_addr_parse(&g_probe_ctx.whitelist[g_probe_ctx.num_whitelist_devices],
+				pci_bdf) < 0) {
+		SPDK_ERRLOG("Invalid address %s\n", pci_bdf);
+		return -1;
+	}
+
+	g_probe_ctx.num_whitelist_devices++;
+
+	return 0;
+}
+
+int
+copy_engine_ioat_add_whitelist_devices(const char *pci_bdfs[], size_t num_pci_bdfs)
+{
+	size_t i;
+
+	for (i = 0; i < num_pci_bdfs; i++) {
+		if (copy_engine_ioat_add_whitelist_device(pci_bdfs[i]) < 0) {
+			return -1;
 		}
 	}
 
-	if (g_ioat_disable) {
+	return 0;
+}
+
+static int
+copy_engine_ioat_read_config_file_params(struct spdk_conf_section *sp)
+{
+	int i;
+	char *val, *pci_bdf;
+
+	if (spdk_conf_section_get_boolval(sp, "Enable", false)) {
+		g_ioat_enable = true;
+		/* Enable Ioat */
+	}
+
+	val = spdk_conf_section_get_val(sp, "Disable");
+	if (val != NULL) {
+		SPDK_WARNLOG("\"Disable\" option is deprecated and will be removed in a future release.\n");
+		SPDK_WARNLOG("IOAT is now disabled by default. It may be enabled by \"Enable Yes\"\n");
+
+		if (g_ioat_enable && (strcasecmp(val, "Yes") == 0)) {
+			SPDK_ERRLOG("\"Enable Yes\" and \"Disable Yes\" cannot be set at the same time\n");
+			return -1;
+		}
+	}
+
+	/* Init the whitelist */
+	for (i = 0; ; i++) {
+		pci_bdf = spdk_conf_section_get_nmval(sp, "Whitelist", i, 0);
+		if (!pci_bdf) {
+			break;
+		}
+
+		if (copy_engine_ioat_add_whitelist_device(pci_bdf) < 0) {
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int
+copy_engine_ioat_init(void)
+{
+	struct spdk_conf_section *sp;
+	int rc;
+
+	sp = spdk_conf_find_section(NULL, "Ioat");
+	if (sp != NULL) {
+		rc = copy_engine_ioat_read_config_file_params(sp);
+		if (rc != 0) {
+			SPDK_ERRLOG("copy_engine_ioat_read_config_file_params() failed\n");
+			return rc;
+		}
+	}
+
+	if (!g_ioat_enable) {
 		return 0;
 	}
 
@@ -329,8 +396,8 @@ copy_engine_ioat_init(void)
 "  # Users may use the whitelist to initialize specified devices, IDS\n" \
 "  #  uses BUS:DEVICE.FUNCTION to identify each Ioat channel.\n"
 
-#define COPY_ENGINE_IOAT_DISABLE_TMPL \
-"  Disable %s\n"
+#define COPY_ENGINE_IOAT_ENABLE_TMPL \
+"  Enable %s\n"
 
 #define COPY_ENGINE_IOAT_WHITELIST_TMPL \
 "  Whitelist %.4" PRIx16 ":%.2" PRIx8 ":%.2" PRIx8 ".%" PRIx8 "\n"
@@ -342,7 +409,7 @@ copy_engine_ioat_config_text(FILE *fp)
 	struct spdk_pci_addr *dev;
 
 	fprintf(fp, COPY_ENGINE_IOAT_HEADER_TMPL);
-	fprintf(fp, COPY_ENGINE_IOAT_DISABLE_TMPL, g_ioat_disable ? "Yes" : "No");
+	fprintf(fp, COPY_ENGINE_IOAT_ENABLE_TMPL, g_ioat_enable ? "Yes" : "No");
 
 	for (i = 0; i < g_probe_ctx.num_whitelist_devices; i++) {
 		dev = &g_probe_ctx.whitelist[i];

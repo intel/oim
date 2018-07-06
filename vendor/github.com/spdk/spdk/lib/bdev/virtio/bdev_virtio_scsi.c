@@ -37,7 +37,7 @@
 #include "spdk/conf.h"
 #include "spdk/endian.h"
 #include "spdk/env.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/scsi_spec.h"
 #include "spdk/string.h"
 #include "spdk/util.h"
@@ -192,7 +192,9 @@ static bool g_bdev_virtio_finish = false;
 /* Features desired/implemented by this driver. */
 #define VIRTIO_SCSI_DEV_SUPPORTED_FEATURES		\
 	(1ULL << VIRTIO_SCSI_F_INOUT		|	\
-	 1ULL << VIRTIO_SCSI_F_HOTPLUG)
+	 1ULL << VIRTIO_SCSI_F_HOTPLUG		|	\
+	 1ULL << VIRTIO_RING_F_EVENT_IDX	|	\
+	 1ULL << VHOST_USER_F_PROTOCOL_FEATURES)
 
 static void virtio_scsi_dev_unregister_cb(void *io_device);
 static void virtio_scsi_dev_remove(struct virtio_scsi_dev *svdev,
@@ -335,8 +337,14 @@ virtio_pci_scsi_dev_create(const char *name, struct virtio_pci_ctx *pci_ctx)
 		return NULL;
 	}
 
-	virtio_dev_read_dev_config(vdev, offsetof(struct virtio_scsi_config, num_queues),
-				   &num_queues, sizeof(num_queues));
+	rc = virtio_dev_read_dev_config(vdev, offsetof(struct virtio_scsi_config, num_queues),
+					&num_queues, sizeof(num_queues));
+	if (rc) {
+		SPDK_ERRLOG("%s: config read failed: %s\n", vdev->name, spdk_strerror(-rc));
+		virtio_dev_destruct(vdev);
+		free(svdev);
+		return NULL;
+	}
 
 	rc = virtio_scsi_dev_init(svdev, num_queues);
 	if (rc != 0) {
@@ -578,7 +586,7 @@ bdev_virtio_unmap(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 	uint64_t offset_blocks, num_blocks;
 	uint16_t cmd_len;
 
-	buf = bdev_io->u.bdev.iov.iov_base;
+	buf = bdev_io->u.bdev.iovs[0].iov_base;
 
 	offset_blocks = bdev_io->u.bdev.offset_blocks;
 	num_blocks = bdev_io->u.bdev.num_blocks;

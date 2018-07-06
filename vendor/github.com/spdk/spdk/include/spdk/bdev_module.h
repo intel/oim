@@ -46,7 +46,7 @@
 #include "spdk/bdev.h"
 #include "spdk/queue.h"
 #include "spdk/scsi_spec.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/uuid.h"
 
 /** Block device module */
@@ -106,14 +106,6 @@ struct spdk_bdev_module {
 	void (*examine)(struct spdk_bdev *bdev);
 
 	/**
-	 * Count of bdev inits/examinations in progress. Used by generic bdev
-	 * layer and must not be modified by bdev modules.
-	 *
-	 * \note Used internally by bdev subsystem, don't change this value in bdev module.
-	 */
-	uint32_t action_in_progress;
-
-	/**
 	 * Denotes if the module_init function may complete asynchronously. If set to true,
 	 * the module initialization has to be explicitly completed by calling
 	 * spdk_bdev_module_init_done().
@@ -127,7 +119,21 @@ struct spdk_bdev_module {
 	 */
 	bool async_fini;
 
-	TAILQ_ENTRY(spdk_bdev_module) tailq;
+	/**
+	 * Fields that are used by the internal bdev subsystem. Bdev modules
+	 *  must not read or write to these fields.
+	 */
+	struct __bdev_module_internal_fields {
+		/**
+		 * Count of bdev inits/examinations in progress. Used by generic bdev
+		 * layer and must not be modified by bdev modules.
+		 *
+		 * \note Used internally by bdev subsystem, don't change this value in bdev module.
+		 */
+		uint32_t action_in_progress;
+
+		TAILQ_ENTRY(spdk_bdev_module) tailq;
+	} internal;
 };
 
 typedef void (*spdk_bdev_unregister_cb)(void *cb_arg, int rc);
@@ -219,15 +225,6 @@ struct spdk_bdev {
 	/** Number of blocks */
 	uint64_t blockcnt;
 
-	/** Number of active channels on this bdev except the QoS bdev channel */
-	uint32_t channel_count;
-
-	/** Quality of service parameters */
-	struct spdk_bdev_qos *qos;
-
-	/** True if the state of the QoS is being modified */
-	bool qos_mod_in_progress;
-
 	/** write cache enabled, not used at the moment */
 	int write_cache;
 
@@ -257,40 +254,50 @@ struct spdk_bdev {
 	/** function table for all LUN ops */
 	const struct spdk_bdev_fn_table *fn_table;
 
-	/** Mutex protecting claimed */
-	pthread_mutex_t mutex;
-
-	/** The bdev status */
-	enum spdk_bdev_status status;
-
-	/** The array of block devices that this block device is built on top of (if any). */
-	struct spdk_bdev **base_bdevs;
-	size_t base_bdevs_cnt;
-
-
 	/** The array of virtual block devices built on top of this block device. */
 	struct spdk_bdev **vbdevs;
 	size_t vbdevs_cnt;
 
-	/**
-	 * Pointer to the module that has claimed this bdev for purposes of creating virtual
-	 *  bdevs on top of it.  Set to NULL if the bdev has not been claimed.
+	/** Fields that are used internally by the bdev subsystem.  Bdev modules
+	 *  must not read or write to these fields.
 	 */
-	struct spdk_bdev_module *claim_module;
+	struct __bdev_internal_fields {
+		/** Quality of service parameters */
+		struct spdk_bdev_qos *qos;
 
-	/** Callback function that will be called after bdev destruct is completed. */
-	spdk_bdev_unregister_cb	unregister_cb;
+		/** True if the state of the QoS is being modified */
+		bool qos_mod_in_progress;
 
-	/** Unregister call context */
-	void *unregister_ctx;
+		/** Mutex protecting claimed */
+		pthread_mutex_t mutex;
 
-	/** List of open descriptors for this block device. */
-	TAILQ_HEAD(, spdk_bdev_desc) open_descs;
+		/** The bdev status */
+		enum spdk_bdev_status status;
 
-	TAILQ_ENTRY(spdk_bdev) link;
+		/** The array of block devices that this block device is built on top of (if any). */
+		struct spdk_bdev **base_bdevs;
+		size_t base_bdevs_cnt;
 
-	/** points to a reset bdev_io if one is in progress. */
-	struct spdk_bdev_io *reset_in_progress;
+		/**
+		 * Pointer to the module that has claimed this bdev for purposes of creating virtual
+		 *  bdevs on top of it.  Set to NULL if the bdev has not been claimed.
+		 */
+		struct spdk_bdev_module *claim_module;
+
+		/** Callback function that will be called after bdev destruct is completed. */
+		spdk_bdev_unregister_cb	unregister_cb;
+
+		/** Unregister call context */
+		void *unregister_ctx;
+
+		/** List of open descriptors for this block device. */
+		TAILQ_HEAD(, spdk_bdev_desc) open_descs;
+
+		TAILQ_ENTRY(spdk_bdev) link;
+
+		/** points to a reset bdev_io if one is in progress. */
+		struct spdk_bdev_io *reset_in_progress;
+	} internal;
 };
 
 typedef void (*spdk_bdev_io_get_buf_cb)(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io);
@@ -299,62 +306,14 @@ struct spdk_bdev_io {
 	/** The block device that this I/O belongs to. */
 	struct spdk_bdev *bdev;
 
-	/** The bdev I/O channel that this was handled on. */
-	struct spdk_bdev_channel *ch;
-
-	/** The bdev I/O channel that this was submitted on. */
-	struct spdk_bdev_channel *io_submit_ch;
-
-	/** User function that will be called when this completes */
-	spdk_bdev_io_completion_cb cb;
-
-	/** Context that will be passed to the completion callback */
-	void *caller_ctx;
-
-	/** Current tsc at submit time. Used to calculate latency at completion. */
-	uint64_t submit_tsc;
-
-	/**
-	 * Set to true while the bdev module submit_request function is in progress.
-	 *
-	 * This is used to decide whether spdk_bdev_io_complete() can complete the I/O directly
-	 * or if completion must be deferred via an event.
-	 */
-	bool in_submit_request;
-
-	/** Status for the IO */
-	int8_t status;
-
-	/** Error information from a device */
-	union {
-		/** Only valid when status is SPDK_BDEV_IO_STATUS_NVME_ERROR */
-		struct {
-			/** NVMe status code type */
-			uint8_t sct;
-			/** NVMe status code */
-			uint8_t sc;
-		} nvme;
-		/** Only valid when status is SPDK_BDEV_IO_STATUS_SCSI_ERROR */
-		struct {
-			/** SCSI status code */
-			uint8_t sc;
-			/** SCSI sense key */
-			uint8_t sk;
-			/** SCSI additional sense code */
-			uint8_t asc;
-			/** SCSI additional sense code qualifier */
-			uint8_t ascq;
-		} scsi;
-	} error;
-
 	/** Enumerated value representing the I/O type. */
 	uint8_t type;
 
+	/** A single iovec element for use by this bdev_io. */
+	struct iovec iov;
+
 	union {
 		struct {
-			/** For basic IO case, use our own iovec element. */
-			struct iovec iov;
-
 			/** For SG buffer cases, array of iovecs to transfer. */
 			struct iovec *iovs;
 
@@ -398,23 +357,77 @@ struct spdk_bdev_io {
 		} nvme_passthru;
 	} u;
 
-	/** bdev allocated memory associated with this request */
-	void *buf;
-
-	/** requested size of the buffer associated with this I/O */
-	uint64_t buf_len;
-
-	/** Callback for when buf is allocated */
-	spdk_bdev_io_get_buf_cb get_buf_cb;
-
-	/** Entry to the list need_buf of struct spdk_bdev. */
-	STAILQ_ENTRY(spdk_bdev_io) buf_link;
-
-	/** Member used for linking child I/Os together. */
-	TAILQ_ENTRY(spdk_bdev_io) link;
-
 	/** It may be used by modules to put the bdev_io into its own list. */
 	TAILQ_ENTRY(spdk_bdev_io) module_link;
+
+	/**
+	 *  Fields that are used internally by the bdev subsystem.  Bdev modules
+	 *  must not read or write to these fields.
+	 */
+	struct __bdev_io_internal_fields {
+		/** Error information from a device */
+		union {
+			/** Only valid when status is SPDK_BDEV_IO_STATUS_NVME_ERROR */
+			struct {
+				/** NVMe status code type */
+				uint8_t sct;
+				/** NVMe status code */
+				uint8_t sc;
+			} nvme;
+			/** Only valid when status is SPDK_BDEV_IO_STATUS_SCSI_ERROR */
+			struct {
+				/** SCSI status code */
+				uint8_t sc;
+				/** SCSI sense key */
+				uint8_t sk;
+				/** SCSI additional sense code */
+				uint8_t asc;
+				/** SCSI additional sense code qualifier */
+				uint8_t ascq;
+			} scsi;
+		} error;
+
+		/** The bdev I/O channel that this was handled on. */
+		struct spdk_bdev_channel *ch;
+
+		/** The bdev I/O channel that this was submitted on. */
+		struct spdk_bdev_channel *io_submit_ch;
+
+		/** User function that will be called when this completes */
+		spdk_bdev_io_completion_cb cb;
+
+		/** Context that will be passed to the completion callback */
+		void *caller_ctx;
+
+		/** Current tsc at submit time. Used to calculate latency at completion. */
+		uint64_t submit_tsc;
+
+		/**
+		 * Set to true while the bdev module submit_request function is in progress.
+		 *
+		 * This is used to decide whether spdk_bdev_io_complete() can complete the I/O directly
+		 * or if completion must be deferred via an event.
+		 */
+		bool in_submit_request;
+
+		/** Status for the IO */
+		int8_t status;
+
+		/** bdev allocated memory associated with this request */
+		void *buf;
+
+		/** requested size of the buffer associated with this I/O */
+		uint64_t buf_len;
+
+		/** Callback for when buf is allocated */
+		spdk_bdev_io_get_buf_cb get_buf_cb;
+
+		/** Member used for linking child I/Os together. */
+		TAILQ_ENTRY(spdk_bdev_io) link;
+
+		/** Entry to the list need_buf of struct spdk_bdev. */
+		STAILQ_ENTRY(spdk_bdev_io) buf_link;
+	} internal;
 
 	/**
 	 * Per I/O context for use by the bdev module.
@@ -424,17 +437,103 @@ struct spdk_bdev_io {
 	/* No members may be added after driver_ctx! */
 };
 
+/**
+ * Register a new bdev.
+ *
+ * \param bdev Block device to register.
+ *
+ * \return 0 on success.
+ * \return -EINVAL if the bdev name is NULL.
+ * \return -EEXIST if a bdev or bdev alias with the same name already exists.
+ */
 int spdk_bdev_register(struct spdk_bdev *bdev);
+
+/**
+ * Unregister a bdev
+ *
+ * \param bdev Block device to unregister.
+ * \param cb_fn Callback function to be called when the unregister is complete.
+ * \param cb_arg Argument to be supplied to cb_fn
+ */
 void spdk_bdev_unregister(struct spdk_bdev *bdev, spdk_bdev_unregister_cb cb_fn, void *cb_arg);
+
+/**
+ * Invokes the unregister callback of a bdev backing a virtual bdev.
+ *
+ * A Bdev with an asynchronous destruct path should return 1 from its
+ * destruct function and call this function at the conclusion of that path.
+ * Bdevs with synchronous destruct paths should return 0 from their destruct
+ * path.
+ *
+ * \param bdev Block device that was destroyed.
+ * \param bdeverrno Error code returned from bdev's destruct callback.
+ */
 void spdk_bdev_destruct_done(struct spdk_bdev *bdev, int bdeverrno);
+
+/**
+ * Register a virtual bdev.
+ *
+ * \param vbdev Virtual bdev to register.
+ * \param base_bdevs Array of bdevs upon which this vbdev is based.
+ * \param base_bdev_count Number of bdevs in base_bdevs.
+ *
+ * \return 0 on success
+ * \return -EINVAL if the bdev name is NULL.
+ * \return -EEXIST if the bdev already exists.
+ * \return -ENOMEM if allocation of the base_bdevs array or the base bdevs vbdevs array fails.
+ */
 int spdk_vbdev_register(struct spdk_bdev *vbdev, struct spdk_bdev **base_bdevs,
 			int base_bdev_count);
 
+/**
+ * Indicate to the bdev layer that the module is done examining a bdev.
+ *
+ * To be called synchronously or asynchronously in response to the
+ * module's examine function being called.
+ *
+ * \param module Pointer to the module completing the examination.
+ */
 void spdk_bdev_module_examine_done(struct spdk_bdev_module *module);
+
+/**
+ * Indicate to the bdev layer that the module is done initializing.
+ *
+ * To be called synchronously or asynchronously in response to the
+ * module_init function being called.
+ *
+ * \param module Pointer to the module completing the initialization.
+ */
 void spdk_bdev_module_init_done(struct spdk_bdev_module *module);
+
+/**
+ * Indicate to the bdev layer that the module is done cleaning up.
+ *
+ * To be called either synchronously or asynchronously
+ * in response to the module_fini function being called.
+ *
+ */
 void spdk_bdev_module_finish_done(void);
+
+/**
+ * Called by a bdev module to lay exclusive write claim to a bdev.
+ *
+ * Also upgrades that bdev's descriptor to have write access.
+ *
+ * \param bdev Block device to be claimed.
+ * \param desc Descriptor for the above block device.
+ * \param module Bdev module attempting to claim bdev.
+ *
+ * \return 0 on success
+ * \return -EPERM if the bdev is already claimed by another module.
+ */
 int spdk_bdev_module_claim_bdev(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 				struct spdk_bdev_module *module);
+
+/**
+ * Called to release a write claim on a block device.
+ *
+ * \param bdev Block device to be released.
+ */
 void spdk_bdev_module_release_bdev(struct spdk_bdev *bdev);
 
 /**
@@ -444,7 +543,6 @@ void spdk_bdev_module_release_bdev(struct spdk_bdev *bdev);
  * \param bdev Block device to query.
  * \param alias Alias to be added to list.
  *
- * Return codes
  * \return 0 on success
  * \return -EEXIST if alias already exists as name or alias on any bdev
  * \return -ENOMEM if memory cannot be allocated to store alias
@@ -486,6 +584,26 @@ const struct spdk_bdev_aliases_list *spdk_bdev_get_aliases(const struct spdk_bde
  */
 void spdk_bdev_io_get_buf(struct spdk_bdev_io *bdev_io, spdk_bdev_io_get_buf_cb cb, uint64_t len);
 
+/**
+ * Set the given buffer as the data buffer described by this bdev_io.
+ *
+ * The portion of the buffer used may be adjusted for memory alignement
+ * purposes.
+ *
+ * \param bdev_io I/O to set the buffer on.
+ * \param buf The buffer to set as the active data buffer.
+ * \param len The length of the buffer.
+ *
+ * \return The usable size of the buffer, after adjustments of alignment.
+ */
+size_t spdk_bdev_io_set_buf(struct spdk_bdev_io *bdev_io, void *buf, size_t len);
+
+/**
+ * Complete a bdev_io
+ *
+ * \param bdev_io I/O to complete.
+ * \param status The I/O completion status.
+ */
 void spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io,
 			   enum spdk_bdev_io_status status);
 
@@ -530,9 +648,27 @@ struct spdk_thread *spdk_bdev_io_get_thread(struct spdk_bdev_io *bdev_io);
  */
 int spdk_bdev_notify_blockcnt_change(struct spdk_bdev *bdev, uint64_t size);
 
+/**
+ * Translates NVMe status codes to SCSI status information.
+ *
+ * The codes are stored in the user supplied integers.
+ *
+ * \param bdev_io I/O containing status codes to translate.
+ * \param sc SCSI Status Code will be stored here.
+ * \param sk SCSI Sense Key will be stored here.
+ * \param asc SCSI Additional Sense Code will be stored here.
+ * \param ascq SCSI Additional Sense Code Qualifier will be stored here.
+ */
 void spdk_scsi_nvme_translate(const struct spdk_bdev_io *bdev_io,
 			      int *sc, int *sk, int *asc, int *ascq);
 
+/**
+ * Add the given module to the list of registered modules.
+ * This function should be invoked by referencing the macro
+ * SPDK_BDEV_MODULE_REGISTER in the module c file.
+ *
+ * \param bdev_module Module to be added.
+ */
 void spdk_bdev_module_list_add(struct spdk_bdev_module *bdev_module);
 
 /**
@@ -552,27 +688,63 @@ spdk_bdev_io_from_ctx(void *ctx)
 
 struct spdk_bdev_part_base;
 
-typedef void (*spdk_bdev_part_base_free_fn)(struct spdk_bdev_part_base *base);
+/**
+ * Returns a pointer to the spdk_bdev associated with an spdk_bdev_part_base
+ *
+ * \param part_base A pointer to an spdk_bdev_part_base object.
+ *
+ * \return A pointer to the base's spdk_bdev struct.
+ */
+struct spdk_bdev *spdk_bdev_part_base_get_bdev(struct spdk_bdev_part_base *part_base);
 
-struct spdk_bdev_part_base {
-	struct spdk_bdev		*bdev;
-	struct spdk_bdev_desc		*desc;
-	uint32_t			ref;
-	uint32_t			channel_size;
-	spdk_bdev_part_base_free_fn	base_free_fn;
-	bool				claimed;
-	struct spdk_bdev_module		*module;
-	struct spdk_bdev_fn_table	*fn_table;
-	struct bdev_part_tailq		*tailq;
-	spdk_io_channel_create_cb	ch_create_cb;
-	spdk_io_channel_destroy_cb	ch_destroy_cb;
-};
+/**
+ * Returns a pointer to the spdk_bdev_descriptor associated with an spdk_bdev_part_base
+ *
+ * \param part_base A pointer to an spdk_bdev_part_base object.
+ *
+ * \return A pointer to the base's spdk_bdev_desc struct.
+ */
+struct spdk_bdev_desc *spdk_bdev_part_base_get_desc(struct spdk_bdev_part_base *part_base);
+
+/**
+ * Returns a pointer to the tailq associated with an spdk_bdev_part_base
+ *
+ * \param part_base A pointer to an spdk_bdev_part_base object.
+ *
+ * \return The head of a tailq of spdk_bdev_part structs registered to the base's module.
+ */
+struct bdev_part_tailq *spdk_bdev_part_base_get_tailq(struct spdk_bdev_part_base *part_base);
+
+/**
+ * Returns a pointer to the module level context associated with an spdk_bdev_part_base
+ *
+ * \param part_base A pointer to an spdk_bdev_part_base object.
+ *
+ * \return A pointer to the module level context registered with the base in spdk_bdev_part_base_construct.
+ */
+void *spdk_bdev_part_base_get_ctx(struct spdk_bdev_part_base *part_base);
+
+typedef void (*spdk_bdev_part_base_free_fn)(void *ctx);
 
 struct spdk_bdev_part {
-	struct spdk_bdev		bdev;
-	struct spdk_bdev_part_base	*base;
-	uint64_t			offset_blocks;
+	/* Entry into the module's global list of bdev parts */
 	TAILQ_ENTRY(spdk_bdev_part)	tailq;
+
+	/**
+	 * Fields that are used internally by part.c These fields should only
+	 * be accessed from a module using any pertinent get and set methods.
+	 */
+	struct bdev_part_internal_fields {
+
+		/* This part's corresponding bdev object. Not to be confused with the base bdev */
+		struct spdk_bdev		bdev;
+
+		/* The base to which this part belongs */
+		struct spdk_bdev_part_base	*base;
+
+		/* number of blocks from the start of the base bdev to the start of this part */
+		uint64_t			offset_blocks;
+	} internal;
 };
 
 struct spdk_bdev_part_channel {
@@ -582,23 +754,128 @@ struct spdk_bdev_part_channel {
 
 typedef TAILQ_HEAD(bdev_part_tailq, spdk_bdev_part)	SPDK_BDEV_PART_TAILQ;
 
+/**
+ * Free the base corresponding to one or more spdk_bdev_part.
+ *
+ * \param base The base to free.
+ */
 void spdk_bdev_part_base_free(struct spdk_bdev_part_base *base);
+
+/**
+ * Free an spdk_bdev_part context.
+ *
+ * \param part The part to free.
+ *
+ * \return 1 always. To indicate that the operation is asynchronous.
+ */
 int spdk_bdev_part_free(struct spdk_bdev_part *part);
+
+/**
+ * Calls spdk_bdev_unregister on the bdev for each part associated with base_bdev.
+ *
+ * \param base_bdev The spdk_bdev upon which an spdk_bdev-part_base is built
+ * \param tailq The list of spdk_bdev_part bdevs associated with this base bdev.
+ */
 void spdk_bdev_part_base_hotremove(struct spdk_bdev *base_bdev, struct bdev_part_tailq *tailq);
-int spdk_bdev_part_base_construct(struct spdk_bdev_part_base *base, struct spdk_bdev *bdev,
-				  spdk_bdev_remove_cb_t remove_cb,
-				  struct spdk_bdev_module *module,
-				  struct spdk_bdev_fn_table *fn_table,
-				  struct bdev_part_tailq *tailq,
-				  spdk_bdev_part_base_free_fn free_fn,
-				  uint32_t channel_size,
-				  spdk_io_channel_create_cb ch_create_cb,
-				  spdk_io_channel_destroy_cb ch_destroy_cb);
+
+/**
+ * Construct a new spdk_bdev_part_base on top of the provided bdev.
+ *
+ * \param bdev The spdk_bdev upon which this base will be built.
+ * \param remove_cb Function to be called upon hotremove of the bdev.
+ * \param module The module to which this bdev base belongs.
+ * \param fn_table Function table for communicating with the bdev backend.
+ * \param tailq The head of the list of all spdk_bdev_part structures registered to this base's module.
+ * \param free_fn User provided function to free base related context upon bdev removal or shutdown.
+ * \param ctx Module specific context for this bdev part base.
+ * \param channel_size Channel size in bytes.
+ * \param ch_create_cb Called after a new channel is allocated.
+ * \param ch_destroy_cb Called upon channel deletion.
+ *
+ * \return 0 on success
+ * \return -1 if the underlying bdev cannot be opened.
+ */
+struct spdk_bdev_part_base *spdk_bdev_part_base_construct(struct spdk_bdev *bdev,
+		spdk_bdev_remove_cb_t remove_cb,
+		struct spdk_bdev_module *module,
+		struct spdk_bdev_fn_table *fn_table,
+		struct bdev_part_tailq *tailq,
+		spdk_bdev_part_base_free_fn free_fn,
+		void *ctx,
+		uint32_t channel_size,
+		spdk_io_channel_create_cb ch_create_cb,
+		spdk_io_channel_destroy_cb ch_destroy_cb);
+
+/**
+ * Create a logical spdk_bdev_part on top of a base.
+ *
+ * \param part The part object allocated by the user.
+ * \param base The base from which to create the part.
+ * \param name The name of the new spdk_bdev_part.
+ * \param offset_blocks The offset into the base bdev at which this part begins.
+ * \param num_blocks The number of blocks that this part will span.
+ * \param product_name Unique name for this type of block device.
+ *
+ * \return 0 on success.
+ * \return -1 if the bases underlying bdev cannot be claimed by the current module.
+ */
 int spdk_bdev_part_construct(struct spdk_bdev_part *part, struct spdk_bdev_part_base *base,
 			     char *name, uint64_t offset_blocks, uint64_t num_blocks,
 			     char *product_name);
+
+/**
+ * Forwards I/O from an spdk_bdev_part to the underlying base bdev.
+ *
+ * This function will apply the offset_blocks the user provided to
+ * spdk_bdev_part_construct to the I/O. The user should not manually
+ * apply this offset before submitting any I/O through this function.
+ *
+ * \param ch The I/O channel associated with the spdk_bdev_part.
+ * \param bdev_io The I/O to be submitted to the underlying bdev.
+ */
 void spdk_bdev_part_submit_request(struct spdk_bdev_part_channel *ch, struct spdk_bdev_io *bdev_io);
 
+/**
+ * Return a pointer to this part's spdk_bdev.
+ *
+ * \param part An spdk_bdev_part object.
+ *
+ * \return A pointer to this part's spdk_bdev object.
+ */
+struct spdk_bdev *spdk_bdev_part_get_bdev(struct spdk_bdev_part *part);
+
+/**
+ * Return a pointer to this part's base.
+ *
+ * \param part An spdk_bdev_part object.
+ *
+ * \return A pointer to this part's spdk_bdev_part_base object.
+ */
+struct spdk_bdev_part_base *spdk_bdev_part_get_base(struct spdk_bdev_part *part);
+
+/**
+ * Return a pointer to this part's base bdev.
+ *
+ * The return value of this function is equivalent to calling
+ * spdk_bdev_part_base_get_bdev on this part's base.
+ *
+ * \param part An spdk_bdev_part object.
+ *
+ * \return A pointer to the bdev belonging to this part's base.
+ */
+struct spdk_bdev *spdk_bdev_part_get_base_bdev(struct spdk_bdev_part *part);
+
+/**
+ * Return this part's offset from the beginning of the base bdev.
+ *
+ * This function should not be called in the I/O path. Any block
+ * translations to I/O will be handled in spdk_bdev_part_submit_request.
+ *
+ * \param part An spdk_bdev_part object.
+ *
+ * \return the block offset of this part from it's underlying bdev.
+ */
+uint64_t spdk_bdev_part_get_offset_blocks(struct spdk_bdev_part *part);
 
 /*
  * Macro used to register module for later initialization.

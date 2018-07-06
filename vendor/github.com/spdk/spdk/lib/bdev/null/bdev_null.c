@@ -36,7 +36,7 @@
 #include "spdk/bdev.h"
 #include "spdk/conf.h"
 #include "spdk/env.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/json.h"
 
 #include "spdk/bdev_module.h"
@@ -212,6 +212,17 @@ create_null_bdev(const char *name, const struct spdk_uuid *uuid,
 	TAILQ_INSERT_TAIL(&g_null_bdev_head, bdev, tailq);
 
 	return &bdev->bdev;
+}
+
+void
+delete_null_bdev(struct spdk_bdev *bdev, spdk_delete_null_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || bdev->module != &null_if) {
+		cb_fn(cb_arg, -ENODEV);
+		return;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
 static int

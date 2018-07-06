@@ -37,7 +37,7 @@
 #define SPDK_NVME_DRIVER_NAME "spdk_nvme_driver"
 
 struct nvme_driver	*g_spdk_nvme_driver;
-static pid_t g_pid;
+pid_t			g_spdk_nvme_pid;
 
 int32_t			spdk_nvme_retry_count;
 
@@ -142,59 +142,6 @@ spdk_nvme_wait_for_completion(struct spdk_nvme_qpair *qpair,
 	return spdk_nvme_wait_for_completion_robust_lock(qpair, status, NULL);
 }
 
-struct nvme_request *
-nvme_allocate_request(struct spdk_nvme_qpair *qpair,
-		      const struct nvme_payload *payload, uint32_t payload_size,
-		      spdk_nvme_cmd_cb cb_fn, void *cb_arg)
-{
-	struct nvme_request *req;
-
-	req = STAILQ_FIRST(&qpair->free_req);
-	if (req == NULL) {
-		return req;
-	}
-
-	STAILQ_REMOVE_HEAD(&qpair->free_req, stailq);
-
-	/*
-	 * Only memset up to (but not including) the children
-	 *  TAILQ_ENTRY.  children, and following members, are
-	 *  only used as part of I/O splitting so we avoid
-	 *  memsetting them until it is actually needed.
-	 *  They will be initialized in nvme_request_add_child()
-	 *  if the request is split.
-	 */
-	memset(req, 0, offsetof(struct nvme_request, children));
-	req->cb_fn = cb_fn;
-	req->cb_arg = cb_arg;
-	req->payload = *payload;
-	req->payload_size = payload_size;
-	req->qpair = qpair;
-	req->pid = g_pid;
-
-	return req;
-}
-
-struct nvme_request *
-nvme_allocate_request_contig(struct spdk_nvme_qpair *qpair,
-			     void *buffer, uint32_t payload_size,
-			     spdk_nvme_cmd_cb cb_fn, void *cb_arg)
-{
-	struct nvme_payload payload;
-
-	payload.type = NVME_PAYLOAD_TYPE_CONTIG;
-	payload.u.contig = buffer;
-	payload.md = NULL;
-
-	return nvme_allocate_request(qpair, &payload, payload_size, cb_fn, cb_arg);
-}
-
-struct nvme_request *
-nvme_allocate_request_null(struct spdk_nvme_qpair *qpair, spdk_nvme_cmd_cb cb_fn, void *cb_arg)
-{
-	return nvme_allocate_request_contig(qpair, NULL, 0, cb_fn, cb_arg);
-}
-
 static void
 nvme_user_copy_cmd_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 {
@@ -203,15 +150,15 @@ nvme_user_copy_cmd_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 
 	if (req->user_buffer && req->payload_size) {
 		/* Copy back to the user buffer and free the contig buffer */
-		assert(req->payload.type == NVME_PAYLOAD_TYPE_CONTIG);
+		assert(nvme_payload_type(&req->payload) == NVME_PAYLOAD_TYPE_CONTIG);
 		xfer = spdk_nvme_opc_get_data_transfer(req->cmd.opc);
 		if (xfer == SPDK_NVME_DATA_CONTROLLER_TO_HOST ||
 		    xfer == SPDK_NVME_DATA_BIDIRECTIONAL) {
 			assert(req->pid == getpid());
-			memcpy(req->user_buffer, req->payload.u.contig, req->payload_size);
+			memcpy(req->user_buffer, req->payload.contig_or_cb_arg, req->payload_size);
 		}
 
-		spdk_dma_free(req->payload.u.contig);
+		spdk_dma_free(req->payload.contig_or_cb_arg);
 	}
 
 	/* Call the user's original callback now that the buffer has been copied */
@@ -219,7 +166,7 @@ nvme_user_copy_cmd_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 }
 
 /**
- * Allocate a request as well as a physically contiguous buffer to copy to/from the user's buffer.
+ * Allocate a request as well as a DMA-capable buffer to copy to/from the user's buffer.
  *
  * This is intended for use in non-fast-path functions (admin commands, reservations, etc.)
  * where the overhead of a copy is not a problem.
@@ -230,24 +177,24 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 				void *cb_arg, bool host_to_controller)
 {
 	struct nvme_request *req;
-	void *contig_buffer = NULL;
+	void *dma_buffer = NULL;
 	uint64_t phys_addr;
 
 	if (buffer && payload_size) {
-		contig_buffer = spdk_dma_zmalloc(payload_size, 4096, &phys_addr);
-		if (!contig_buffer) {
+		dma_buffer = spdk_dma_zmalloc(payload_size, 4096, &phys_addr);
+		if (!dma_buffer) {
 			return NULL;
 		}
 
 		if (host_to_controller) {
-			memcpy(contig_buffer, buffer, payload_size);
+			memcpy(dma_buffer, buffer, payload_size);
 		}
 	}
 
-	req = nvme_allocate_request_contig(qpair, contig_buffer, payload_size, nvme_user_copy_cmd_complete,
+	req = nvme_allocate_request_contig(qpair, dma_buffer, payload_size, nvme_user_copy_cmd_complete,
 					   NULL);
 	if (!req) {
-		spdk_dma_free(contig_buffer);
+		spdk_dma_free(dma_buffer);
 		return NULL;
 	}
 
@@ -259,14 +206,57 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 	return req;
 }
 
-void
-nvme_free_request(struct nvme_request *req)
+/**
+ * Check if a request has exceeded the controller timeout.
+ *
+ * \param req request to check for timeout.
+ * \param cid command ID for command submitted by req (will be passed to timeout_cb_fn)
+ * \param active_proc per-process data for the controller associated with req
+ * \param now_tick current time from spdk_get_ticks()
+ * \return 0 if requests submitted more recently than req should still be checked for timeouts, or
+ * 1 if requests newer than req need not be checked.
+ *
+ * The request's timeout callback will be called if needed; the caller is only responsible for
+ * calling this function on each outstanding request.
+ */
+int
+nvme_request_check_timeout(struct nvme_request *req, uint16_t cid,
+			   struct spdk_nvme_ctrlr_process *active_proc,
+			   uint64_t now_tick)
 {
-	assert(req != NULL);
-	assert(req->num_children == 0);
-	assert(req->qpair != NULL);
+	struct spdk_nvme_qpair *qpair = req->qpair;
+	struct spdk_nvme_ctrlr *ctrlr = qpair->ctrlr;
 
-	STAILQ_INSERT_HEAD(&req->qpair->free_req, req, stailq);
+	assert(active_proc->timeout_cb_fn != NULL);
+
+	if (req->timed_out || req->submit_tick == 0) {
+		return 0;
+	}
+
+	if (req->pid != g_spdk_nvme_pid) {
+		return 0;
+	}
+
+	if (nvme_qpair_is_admin_queue(qpair) &&
+	    req->cmd.opc == SPDK_NVME_OPC_ASYNC_EVENT_REQUEST) {
+		return 0;
+	}
+
+	if (req->submit_tick + active_proc->timeout_ticks > now_tick) {
+		return 1;
+	}
+
+	req->timed_out = true;
+
+	/*
+	 * We don't want to expose the admin queue to the user,
+	 * so when we're timing out admin commands set the
+	 * qpair to NULL.
+	 */
+	active_proc->timeout_cb_fn(active_proc->timeout_cb_arg, ctrlr,
+				   nvme_qpair_is_admin_queue(qpair) ? NULL : qpair,
+				   cid);
+	return 0;
 }
 
 int
@@ -293,7 +283,7 @@ nvme_robust_mutex_init_shared(pthread_mutex_t *mtx)
 	return rc;
 }
 
-static int
+int
 nvme_driver_init(void)
 {
 	int ret = 0;
@@ -301,7 +291,7 @@ nvme_driver_init(void)
 	int socket_id = -1;
 
 	/* Each process needs its own pid. */
-	g_pid = getpid();
+	g_spdk_nvme_pid = getpid();
 
 	/*
 	 * Only one thread from one process will do this driver init work.
@@ -312,12 +302,11 @@ nvme_driver_init(void)
 	if (spdk_process_is_primary()) {
 		/* The unique named memzone already reserved. */
 		if (g_spdk_nvme_driver != NULL) {
-			assert(g_spdk_nvme_driver->initialized == true);
-
 			return 0;
 		} else {
 			g_spdk_nvme_driver = spdk_memzone_reserve(SPDK_NVME_DRIVER_NAME,
-					     sizeof(struct nvme_driver), socket_id, 0);
+					     sizeof(struct nvme_driver), socket_id,
+					     SPDK_MEMZONE_NO_IOVA_CONTIG);
 		}
 
 		if (g_spdk_nvme_driver == NULL) {
@@ -657,6 +646,8 @@ spdk_nvme_transport_id_parse_trtype(enum spdk_nvme_transport_type *trtype, const
 		*trtype = SPDK_NVME_TRANSPORT_PCIE;
 	} else if (strcasecmp(str, "RDMA") == 0) {
 		*trtype = SPDK_NVME_TRANSPORT_RDMA;
+	} else if (strcasecmp(str, "FC") == 0) {
+		*trtype = SPDK_NVME_TRANSPORT_FC;
 	} else {
 		return -ENOENT;
 	}
@@ -671,6 +662,8 @@ spdk_nvme_transport_id_trtype_str(enum spdk_nvme_transport_type trtype)
 		return "PCIe";
 	case SPDK_NVME_TRANSPORT_RDMA:
 		return "RDMA";
+	case SPDK_NVME_TRANSPORT_FC:
+		return "FC";
 	default:
 		return NULL;
 	}

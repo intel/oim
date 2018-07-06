@@ -66,13 +66,15 @@ $testdir/lib/blobfs/blobfs_sync_ut/blobfs_sync_ut
 
 $valgrind $testdir/lib/event/subsystem.c/subsystem_ut
 
-$valgrind $testdir/lib/net/sock.c/sock_ut
+$valgrind $testdir/lib/sock/sock.c/sock_ut
 
 $valgrind $testdir/lib/nvme/nvme.c/nvme_ut
 $valgrind $testdir/lib/nvme/nvme_ctrlr.c/nvme_ctrlr_ut
 $valgrind $testdir/lib/nvme/nvme_ctrlr_cmd.c/nvme_ctrlr_cmd_ut
+$valgrind $testdir/lib/nvme/nvme_ctrlr_ocssd_cmd.c/nvme_ctrlr_ocssd_cmd_ut
 $valgrind $testdir/lib/nvme/nvme_ns.c/nvme_ns_ut
 $valgrind $testdir/lib/nvme/nvme_ns_cmd.c/nvme_ns_cmd_ut
+$valgrind $testdir/lib/nvme/nvme_ns_ocssd_cmd.c/nvme_ns_ocssd_cmd_ut
 $valgrind $testdir/lib/nvme/nvme_qpair.c/nvme_qpair_ut
 $valgrind $testdir/lib/nvme/nvme_pcie.c/nvme_pcie_ut
 $valgrind $testdir/lib/nvme/nvme_quirks.c/nvme_quirks_ut
@@ -107,18 +109,16 @@ $valgrind $testdir/lib/iscsi/iscsi.c/iscsi_ut
 $valgrind $testdir/lib/iscsi/init_grp.c/init_grp_ut $testdir/lib/iscsi/init_grp.c/init_grp.conf
 $valgrind $testdir/lib/iscsi/portal_grp.c/portal_grp_ut $testdir/lib/iscsi/portal_grp.c/portal_grp.conf
 
+$valgrind $testdir/lib/thread/thread.c/thread_ut
+
 $valgrind $testdir/lib/util/bit_array.c/bit_array_ut
 $valgrind $testdir/lib/util/crc16.c/crc16_ut
 $valgrind $testdir/lib/util/crc32_ieee.c/crc32_ieee_ut
 $valgrind $testdir/lib/util/crc32c.c/crc32c_ut
-$valgrind $testdir/lib/util/io_channel.c/io_channel_ut
 $valgrind $testdir/lib/util/string.c/string_ut
 
 if [ $(uname -s) = Linux ]; then
 $valgrind $testdir/lib/vhost/vhost.c/vhost_ut
-$valgrind $testdir/lib/vhost/vhost_scsi.c/vhost_scsi_ut
-$valgrind $testdir/lib/vhost/vhost_blk.c/vhost_blk_ut
-$valgrind $testdir/lib/vhost/vhost_nvme.c/vhost_nvme_ut
 fi
 
 # local unit test coverage

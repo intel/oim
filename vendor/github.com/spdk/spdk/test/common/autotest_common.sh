@@ -6,6 +6,10 @@ fi
 
 set -e
 
+# Export flag to skip the known bug that exists in librados
+# Bug is reported on ceph bug tracker with number 24078
+export ASAN_OPTIONS=new_delete_type_mismatch=0
+
 PS4=' \t	\$ '
 ulimit -c unlimited
 
@@ -19,6 +23,15 @@ if [[ ! -z $1 ]]; then
 	if [ -f $1 ]; then
 		source $1
 	fi
+fi
+
+# If certain utilities are not installed, preemptively disable the tests
+if ! hash ceph; then
+	SPDK_TEST_RBD=0
+fi
+
+if ! hash pmempool; then
+	SPDK_TEST_PMDK=0
 fi
 
 # Set defaults for missing test config options
@@ -43,6 +56,16 @@ fi
 : ${SPDK_RUN_ASAN=1}; export SPDK_RUN_ASAN
 : ${SPDK_RUN_UBSAN=1}; export SPDK_RUN_UBSAN
 
+if [ -z "$DEPENDENCY_DIR" ]; then
+	export DEPENDENCY_DIR=/home/sys_sgsw
+else
+	export DEPENDENCY_DIR
+fi
+
+if [ ! -z "$HUGEMEM" ]; then
+	export HUGEMEM
+fi
+
 # pass our valgrind desire on to unittest.sh
 if [ $SPDK_RUN_VALGRIND -eq 0 ]; then
 	export valgrind=''
@@ -52,8 +75,12 @@ config_params='--enable-debug --enable-werror'
 
 export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1:abort_on_error=1'
 
-# Override the default HUGEMEM in scripts/setup.sh
-export HUGEMEM=8192
+# On Linux systems, override the default HUGEMEM in scripts/setup.sh to
+#  allocate 8GB in hugepages.
+# FreeBSD runs a much more limited set of tests, so keep the default 2GB.
+if [ `uname -s` = "Linux" ]; then
+	export HUGEMEM=8192
+fi
 
 DEFAULT_RPC_ADDR=/var/tmp/spdk.sock
 
@@ -115,8 +142,8 @@ if [ -d /usr/src/fio ]; then
 	config_params+=' --with-fio=/usr/src/fio'
 fi
 
-if [ -d /home/sys_sgsw/vtune_codes ]; then
-	config_params+=' --with-vtune=/home/sys_sgsw/vtune_codes'
+if [ -d ${DEPENDENCY_DIR}/vtune_codes ]; then
+	config_params+=' --with-vtune='${DEPENDENCY_DIR}'/vtune_codes'
 fi
 
 if [ -d /usr/include/rbd ] &&  [ -d /usr/include/rados ]; then
@@ -354,9 +381,8 @@ function rbd_cleanup() {
 
 function start_stub() {
 	# Disable ASLR for multi-process testing.  SPDK does support using DPDK multi-process,
-	# but ASAN instrumentation will result in mmap hints in our specified virt address
-	# region getting ignored.   We will reenable it again after multi-process testing
-	# is complete in kill_stub()
+	# but ASLR can still be unreliable in some cases.
+	# We will reenable it again after multi-process testing is complete in kill_stub()
 	echo 0 > /proc/sys/kernel/randomize_va_space
 	$rootdir/test/app/stub/stub $1 &
 	stubpid=$!

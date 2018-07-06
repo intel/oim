@@ -35,7 +35,7 @@
 #include "scsi_internal.h"
 #include "spdk/endian.h"
 #include "spdk/env.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/event.h"
 #include "spdk/util.h"
 
@@ -181,21 +181,55 @@ spdk_scsi_lun_execute_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *tas
 	}
 }
 
+static void
+spdk_scsi_lun_remove(struct spdk_scsi_lun *lun)
+{
+	spdk_bdev_close(lun->bdev_desc);
+
+	spdk_scsi_dev_delete_lun(lun->dev, lun);
+	free(lun);
+}
+
 static int
-spdk_scsi_lun_hotplug(void *arg)
+spdk_scsi_lun_check_io_channel(void *arg)
 {
 	struct spdk_scsi_lun *lun = (struct spdk_scsi_lun *)arg;
 
-	if (!spdk_scsi_lun_has_pending_tasks(lun)) {
-		spdk_scsi_lun_free_io_channel(lun);
+	if (lun->io_channel) {
+		return -1;
+	}
+	spdk_poller_unregister(&lun->hotremove_poller);
 
-		spdk_bdev_close(lun->bdev_desc);
-		spdk_poller_unregister(&lun->hotplug_poller);
+	spdk_scsi_lun_remove(lun);
+	return -1;
+}
 
-		spdk_scsi_dev_delete_lun(lun->dev, lun);
-		free(lun);
+static void
+spdk_scsi_lun_notify_hot_remove(struct spdk_scsi_lun *lun)
+{
+	if (lun->hotremove_cb) {
+		lun->hotremove_cb(lun, lun->hotremove_ctx);
 	}
 
+	if (lun->io_channel) {
+		lun->hotremove_poller = spdk_poller_register(spdk_scsi_lun_check_io_channel,
+					lun, 10);
+	} else {
+		spdk_scsi_lun_remove(lun);
+	}
+}
+
+static int
+spdk_scsi_lun_check_pending_tasks(void *arg)
+{
+	struct spdk_scsi_lun *lun = (struct spdk_scsi_lun *)arg;
+
+	if (spdk_scsi_lun_has_pending_tasks(lun)) {
+		return -1;
+	}
+	spdk_poller_unregister(&lun->hotremove_poller);
+
+	spdk_scsi_lun_notify_hot_remove(lun);
 	return -1;
 }
 
@@ -204,14 +238,11 @@ _spdk_scsi_lun_hot_remove(void *arg1)
 {
 	struct spdk_scsi_lun *lun = arg1;
 
-	if (lun->hotremove_cb) {
-		lun->hotremove_cb(lun, lun->hotremove_ctx);
-	}
-
 	if (spdk_scsi_lun_has_pending_tasks(lun)) {
-		lun->hotplug_poller = spdk_poller_register(spdk_scsi_lun_hotplug, lun, 10);
+		lun->hotremove_poller = spdk_poller_register(spdk_scsi_lun_check_pending_tasks,
+					lun, 10);
 	} else {
-		spdk_scsi_lun_hotplug(lun);
+		spdk_scsi_lun_notify_hot_remove(lun);
 	}
 }
 
@@ -293,7 +324,7 @@ spdk_scsi_lun_destruct(struct spdk_scsi_lun *lun)
 int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
 {
 	if (lun->io_channel != NULL) {
-		if (pthread_self() == lun->thread_id) {
+		if (spdk_get_thread() == spdk_io_channel_get_thread(lun->io_channel)) {
 			lun->ref++;
 			return 0;
 		}
@@ -306,19 +337,25 @@ int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
 	if (lun->io_channel == NULL) {
 		return -1;
 	}
-	lun->thread_id = pthread_self();
 	lun->ref = 1;
 	return 0;
 }
 
 void spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun)
 {
-	if (lun->io_channel != NULL) {
-		lun->ref--;
-		if (lun->ref == 0) {
-			spdk_put_io_channel(lun->io_channel);
-			lun->io_channel = NULL;
-		}
+	if (lun->io_channel == NULL) {
+		return;
+	}
+
+	if (spdk_get_thread() != spdk_io_channel_get_thread(lun->io_channel)) {
+		SPDK_ERRLOG("io_channel was freed by different thread\n");
+		return;
+	}
+
+	lun->ref--;
+	if (lun->ref == 0) {
+		spdk_put_io_channel(lun->io_channel);
+		lun->io_channel = NULL;
 	}
 }
 

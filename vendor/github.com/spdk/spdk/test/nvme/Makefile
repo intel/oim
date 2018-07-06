@@ -34,7 +34,7 @@
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
-DIRS-y = aer reset sgl e2edp overhead deallocated_value
+DIRS-y = aer reset sgl e2edp overhead deallocated_value err_injection
 
 .PHONY: all clean $(DIRS-y)
 

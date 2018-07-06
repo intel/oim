@@ -37,6 +37,7 @@
 #include "spdk/env.h"
 #include "spdk/queue.h"
 #include "spdk/string.h"
+#include "spdk/util.h"
 
 #define SRC_BUFFER_SIZE (512*1024)
 
@@ -125,33 +126,33 @@ ioat_exit(void)
 static void prepare_ioat_task(struct thread_entry *thread_entry, struct ioat_task *ioat_task)
 {
 	int len;
-	int src_offset;
-	int dst_offset;
-	int num_ddwords;
+	uintptr_t src_offset;
+	uintptr_t dst_offset;
 	uint64_t fill_pattern;
 
 	if (ioat_task->type == IOAT_FILL_TYPE) {
 		fill_pattern = rand_r(&seed);
 		fill_pattern = fill_pattern << 32 | rand_r(&seed);
 
-		/* ensure that the length of memset block is 8 Bytes aligned */
-		num_ddwords = (rand_r(&seed) % SRC_BUFFER_SIZE) / 8;
-		len = num_ddwords * 8;
-		if (len < 8) {
-			len = 8;
-		}
-		dst_offset = rand_r(&seed) % (SRC_BUFFER_SIZE - len);
+		/* Ensure that the length of memset block is 8 Bytes aligned.
+		 * In case the buffer crosses hugepage boundary and must be split,
+		 * we also need to ensure 8 byte address alignment. We do it
+		 * unconditionally to keep things simple.
+		 */
+		len = 8 + ((rand_r(&seed) % (SRC_BUFFER_SIZE - 16)) & ~0x7);
+		dst_offset = 8 + rand_r(&seed) % (SRC_BUFFER_SIZE - 8 - len);
 		ioat_task->fill_pattern = fill_pattern;
+		ioat_task->dst = (void *)(((uintptr_t)ioat_task->buffer + dst_offset) & ~0x7);
 	} else {
 		src_offset = rand_r(&seed) % SRC_BUFFER_SIZE;
 		len = rand_r(&seed) % (SRC_BUFFER_SIZE - src_offset);
 		dst_offset = rand_r(&seed) % (SRC_BUFFER_SIZE - len);
 
 		memset(ioat_task->buffer, 0, SRC_BUFFER_SIZE);
-		ioat_task->src =  g_src + src_offset;
+		ioat_task->src = (void *)((uintptr_t)g_src + src_offset);
+		ioat_task->dst = (void *)((uintptr_t)ioat_task->buffer + dst_offset);
 	}
 	ioat_task->len = len;
-	ioat_task->dst = ioat_task->buffer + dst_offset;
 	ioat_task->thread_entry = thread_entry;
 }
 
@@ -425,7 +426,7 @@ dump_result(struct thread_entry *threads, uint32_t num_threads)
 		total_completed += t->fill_completed;
 		total_failed += t->xfer_failed;
 		total_failed += t->fill_failed;
-		if (t->xfer_completed || t->xfer_failed)
+		if (total_completed || total_failed)
 			printf("lcore = %d, copy success = %ld, copy failed = %ld, fill success = %ld, fill failed = %ld\n",
 			       t->lcore_id, t->xfer_completed, t->xfer_failed, t->fill_completed, t->fill_failed);
 	}

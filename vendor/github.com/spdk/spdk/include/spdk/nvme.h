@@ -183,6 +183,11 @@ enum spdk_nvme_transport_type {
 	 * RDMA Transport (RoCE, iWARP, etc.)
 	 */
 	SPDK_NVME_TRANSPORT_RDMA = SPDK_NVMF_TRTYPE_RDMA,
+
+	/**
+	 * Fibre Channel (FC) Transport
+	 */
+	SPDK_NVME_TRANSPORT_FC = SPDK_NVMF_TRTYPE_FC,
 };
 
 /**
@@ -210,14 +215,16 @@ struct spdk_nvme_transport_id {
 	 * Transport address of the NVMe-oF endpoint. For transports which use IP
 	 * addressing (e.g. RDMA), this should be an IP address. For PCIe, this
 	 * can either be a zero length string (the whole bus) or a PCI address
-	 * in the format DDDD:BB:DD.FF or DDDD.BB.DD.FF
+	 * in the format DDDD:BB:DD.FF or DDDD.BB.DD.FF. For FC the string is
+	 * formatted as: nn-0xWWNN:pn-0xWWPN” where a)WWN isthe Node_Name of the
+	 * target NVMe_Port and b)WWPN is the N_Port_Name of the target NVMe_Port.
 	 */
 	char traddr[SPDK_NVMF_TRADDR_MAX_LEN + 1];
 
 	/**
 	 * Transport service id of the NVMe-oF endpoint.  For transports which use
 	 * IP addressing (e.g. RDMA), this field shoud be the port number. For PCIe,
-	 * this is always a zero length string.
+	 * and FC this is always a zero length string.
 	 */
 	char trsvcid[SPDK_NVMF_TRSVCID_MAX_LEN + 1];
 
@@ -241,7 +248,7 @@ struct spdk_nvme_transport_id {
  * ------------ | -----
  * trtype       | Transport type (e.g. PCIe, RDMA)
  * adrfam       | Address family (e.g. IPv4, IPv6)
- * traddr       | Transport address (e.g. 0000:04:00.0 for PCIe or 192.168.100.8 for RDMA)
+ * traddr       | Transport address (e.g. 0000:04:00.0 for PCIe, 192.168.100.8 for RDMA, or WWN for FC)
  * trsvcid      | Transport service identifier (e.g. 4420)
  * subnqn       | Subsystem NQN
  *
@@ -877,6 +884,62 @@ int spdk_nvme_ctrlr_cmd_get_feature(struct spdk_nvme_ctrlr *ctrlr,
 				    spdk_nvme_cmd_cb cb_fn, void *cb_arg);
 
 /**
+ * \brief Get specific feature from given NVMe controller.
+ *
+ * \param ctrlr NVMe controller to query.
+ * \param feature The feature identifier.
+ * \param cdw11 as defined by the specification for this command.
+ * \param payload The pointer to the payload buffer.
+ * \param payload_size The size of payload buffer.
+ * \param cb_fn Callback function to invoke when the feature has been retrieved.
+ * \param cb_arg Argument to pass to the callback function.
+ * \param ns_id The namespace identifier.
+ *
+ * \return 0 if successfully submitted, ENOMEM if resources could not be allocated
+ * for this request
+ *
+ * This function is thread safe and can be called at any point while the controller
+ * is attached to the SPDK NVMe driver.
+ *
+ * Call \ref spdk_nvme_ctrlr_process_admin_completions() to poll for completion
+ * of commands submitted through this function.
+ *
+ * \sa spdk_nvme_ctrlr_cmd_set_feature_ns()
+ */
+int spdk_nvme_ctrlr_cmd_get_feature_ns(struct spdk_nvme_ctrlr *ctrlr, uint8_t feature,
+				       uint32_t cdw11, void *payload, uint32_t payload_size,
+				       spdk_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t ns_id);
+
+/**
+ * \brief Set specific feature for the given NVMe controller and namespace ID.
+ *
+ * \param ctrlr NVMe controller to manipulate.
+ * \param feature The feature identifier.
+ * \param cdw11 as defined by the specification for this command.
+ * \param cdw12 as defined by the specification for this command.
+ * \param payload The pointer to the payload buffer.
+ * \param payload_size The size of payload buffer.
+ * \param cb_fn Callback function to invoke when the feature has been set.
+ * \param cb_arg Argument to pass to the callback function.
+ * \param ns_id The namespace identifier.
+ *
+ * \return 0 if successfully submitted, ENOMEM if resources could not be allocated
+ * for this request.
+ *
+ * This function is thread safe and can be called at any point while the controller
+ * is attached to the SPDK NVMe driver.
+ *
+ * Call \ref spdk_nvme_ctrlr_process_admin_completions() to poll for completion
+ * of commands submitted through this function.
+ *
+ * \sa spdk_nvme_ctrlr_cmd_get_feature_ns()
+ */
+int spdk_nvme_ctrlr_cmd_set_feature_ns(struct spdk_nvme_ctrlr *ctrlr, uint8_t feature,
+				       uint32_t cdw11, uint32_t cdw12, void *payload,
+				       uint32_t payload_size, spdk_nvme_cmd_cb cb_fn,
+				       void *cb_arg, uint32_t ns_id);
+
+/**
  * \brief Attach the specified namespace to controllers.
  *
  * \param ctrlr NVMe controller to use for command submission.
@@ -957,6 +1020,7 @@ int spdk_nvme_ctrlr_format(struct spdk_nvme_ctrlr *ctrlr, uint32_t nsid,
 /**
  * \brief Download a new firmware image.
  *
+ * \param ctrlr NVMe controller to perform firmware operation on.
  * \param payload The data buffer for the firmware image.
  * \param size The data size will be downloaded.
  * \param slot The slot that the firmware image will be committed to.
@@ -1213,6 +1277,37 @@ int spdk_nvme_ns_cmd_writev(struct spdk_nvme_ns *ns, struct spdk_nvme_qpair *qpa
  *
  * \param ns NVMe namespace to submit the write I/O
  * \param qpair I/O queue pair to submit the request
+ * \param lba starting LBA to write the data
+ * \param lba_count length (in sectors) for the write operation
+ * \param cb_fn callback function to invoke when the I/O is completed
+ * \param cb_arg argument to pass to the callback function
+ * \param io_flags set flags, defined in nvme_spec.h, for this I/O
+ * \param reset_sgl_fn callback function to reset scattered payload
+ * \param next_sge_fn callback function to iterate each scattered
+ * payload memory segment
+ * \param metadata virtual address pointer to the metadata payload, the length
+ *	           of metadata is specified by spdk_nvme_ns_get_md_size()
+ * \param apptag_mask application tag mask.
+ * \param apptag application tag to use end-to-end protection information.
+ *
+ * \return 0 if successfully submitted, ENOMEM if an nvme_request
+ *	     structure cannot be allocated for the I/O request
+ *
+ * The command is submitted to a qpair allocated by spdk_nvme_ctrlr_alloc_io_qpair().
+ * The user must ensure that only one thread submits I/O on a given qpair at any given time.
+ */
+int spdk_nvme_ns_cmd_writev_with_md(struct spdk_nvme_ns *ns, struct spdk_nvme_qpair *qpair,
+				    uint64_t lba, uint32_t lba_count,
+				    spdk_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags,
+				    spdk_nvme_req_reset_sgl_cb reset_sgl_fn,
+				    spdk_nvme_req_next_sge_cb next_sge_fn, void *metadata,
+				    uint16_t apptag_mask, uint16_t apptag);
+
+/**
+ * \brief Submits a write I/O to the specified NVMe namespace.
+ *
+ * \param ns NVMe namespace to submit the write I/O
+ * \param qpair I/O queue pair to submit the request
  * \param payload virtual address pointer to the data payload
  * \param metadata virtual address pointer to the metadata payload, the length
  *	           of metadata is specified by spdk_nvme_ns_get_md_size()
@@ -1313,6 +1408,37 @@ int spdk_nvme_ns_cmd_readv(struct spdk_nvme_ns *ns, struct spdk_nvme_qpair *qpai
  *
  * \param ns NVMe namespace to submit the read I/O
  * \param qpair I/O queue pair to submit the request
+ * \param lba starting LBA to read the data
+ * \param lba_count length (in sectors) for the read operation
+ * \param cb_fn callback function to invoke when the I/O is completed
+ * \param cb_arg argument to pass to the callback function
+ * \param io_flags set flags, defined in nvme_spec.h, for this I/O
+ * \param reset_sgl_fn callback function to reset scattered payload
+ * \param next_sge_fn callback function to iterate each scattered
+ * payload memory segment
+ * \param metadata virtual address pointer to the metadata payload, the length
+ *	           of metadata is specified by spdk_nvme_ns_get_md_size()
+ * \param apptag_mask application tag mask.
+ * \param apptag application tag to use end-to-end protection information.
+ *
+ * \return 0 if successfully submitted, ENOMEM if an nvme_request
+ *	     structure cannot be allocated for the I/O request
+ *
+ * The command is submitted to a qpair allocated by spdk_nvme_ctrlr_alloc_io_qpair().
+ * The user must ensure that only one thread submits I/O on a given qpair at any given time.
+ */
+int spdk_nvme_ns_cmd_readv_with_md(struct spdk_nvme_ns *ns, struct spdk_nvme_qpair *qpair,
+				   uint64_t lba, uint32_t lba_count,
+				   spdk_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags,
+				   spdk_nvme_req_reset_sgl_cb reset_sgl_fn,
+				   spdk_nvme_req_next_sge_cb next_sge_fn, void *metadata,
+				   uint16_t apptag_mask, uint16_t apptag);
+
+/**
+ * \brief Submits a read I/O to the specified NVMe namespace.
+ *
+ * \param ns NVMe namespace to submit the read I/O
+ * \param qpair I/O queue pair to submit the request
  * \param payload virtual address pointer to the data payload
  * \param metadata virtual address pointer to the metadata payload, the length
  *	           of metadata is specified by spdk_nvme_ns_get_md_size()
@@ -1343,7 +1469,7 @@ int spdk_nvme_ns_cmd_read_with_md(struct spdk_nvme_ns *ns, struct spdk_nvme_qpai
  *        deallocate, which is often referred to as TRIM or UNMAP.
  *
  * \param ns NVMe namespace to submit the DSM request
- * \param type A bit field constructed from \ref enum spdk_nvme_dsm_attribute.
+ * \param type A bit field constructed from \ref spdk_nvme_dsm_attribute.
  * \param qpair I/O queue pair to submit the request
  * \param ranges An array of \ref spdk_nvme_dsm_range elements describing
  *		 the LBAs to operate on.
@@ -1559,6 +1685,54 @@ int spdk_nvme_ns_cmd_compare_with_md(struct spdk_nvme_ns *ns, struct spdk_nvme_q
 				     uint64_t lba, uint32_t lba_count, spdk_nvme_cmd_cb cb_fn,
 				     void *cb_arg, uint32_t io_flags,
 				     uint16_t apptag_mask, uint16_t apptag);
+
+/**
+ * \brief Inject an error for the next request with a given opcode.
+ *
+ * \param ctrlr NVMe controller.
+ * \param qpair I/O queue pair to add the error command,
+ *              NULL for Admin queue pair.
+ * \param opc Opcode for Admin or I/O commands.
+ * \param do_not_submit True if matching requests should not be submitted
+ *                      to the controller, but instead completed manually
+ *                      after timeout_in_us has expired.  False if matching
+ *                      requests should be submitted to the controller and
+ *                      have their completion status modified after the
+ *                      controller completes the request.
+ * \param timeout_in_us Wait specified microseconds when do_not_submit is true.
+ * \param err_count Number of matching requests to inject errors.
+ * \param sct Status code type.
+ * \param sc Status code.
+ *
+ * \return 0 if successfully enabled, ENOMEM if an error command
+ *	     structure cannot be allocated.
+ *
+ * The function can be called multiple times to inject errors for different
+ * commands.  If the opcode matches an existing entry, the existing entry
+ * will be updated with the values specified.
+ */
+int spdk_nvme_qpair_add_cmd_error_injection(struct spdk_nvme_ctrlr *ctrlr,
+		struct spdk_nvme_qpair *qpair,
+		uint8_t opc,
+		bool do_not_submit,
+		uint64_t timeout_in_us,
+		uint32_t err_count,
+		uint8_t sct, uint8_t sc);
+
+/**
+ * \brief Clear the specified NVMe command with error status.
+ *
+ * \param ctrlr NVMe controller.
+ * \param qpair I/O queue pair to remove the error command,
+ * \            NULL for Admin queue pair.
+ * \param opc Opcode for Admin or I/O commands.
+ *
+ * The function will remove specified command in the error list.
+ */
+void spdk_nvme_qpair_remove_cmd_error_injection(struct spdk_nvme_ctrlr *ctrlr,
+		struct spdk_nvme_qpair *qpair,
+		uint8_t opc);
+
 
 #ifdef __cplusplus
 }

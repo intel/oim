@@ -166,6 +166,21 @@ decode_ns_eui64(const struct spdk_json_val *val, void *out)
 	return rc;
 }
 
+static int
+decode_ns_uuid(const struct spdk_json_val *val, void *out)
+{
+	char *str = NULL;
+	int rc;
+
+	rc = spdk_json_decode_string(val, &str);
+	if (rc == 0) {
+		rc = spdk_uuid_parse(out, str);
+	}
+
+	free(str);
+	return rc;
+}
+
 static void
 dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *subsystem)
 {
@@ -236,9 +251,16 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 	if (spdk_nvmf_subsystem_get_type(subsystem) == SPDK_NVMF_SUBTYPE_NVME) {
 		struct spdk_nvmf_ns *ns;
 		struct spdk_nvmf_ns_opts ns_opts;
+		uint32_t max_namespaces;
 
 		spdk_json_write_name(w, "serial_number");
 		spdk_json_write_string(w, spdk_nvmf_subsystem_get_sn(subsystem));
+
+		max_namespaces = spdk_nvmf_subsystem_get_max_namespaces(subsystem);
+		if (max_namespaces != 0) {
+			spdk_json_write_named_uint32(w, "max_namespaces", max_namespaces);
+		}
+
 		spdk_json_write_name(w, "namespaces");
 		spdk_json_write_array_begin(w);
 		for (ns = spdk_nvmf_subsystem_get_first_ns(subsystem); ns != NULL;
@@ -424,6 +446,7 @@ struct spdk_nvmf_ns_params {
 	uint32_t nsid;
 	char nguid[16];
 	char eui64[8];
+	struct spdk_uuid uuid;
 };
 
 struct rpc_namespaces {
@@ -437,6 +460,7 @@ static const struct spdk_json_object_decoder rpc_ns_params_decoders[] = {
 	{"bdev_name", offsetof(struct spdk_nvmf_ns_params, bdev_name), spdk_json_decode_string},
 	{"nguid", offsetof(struct spdk_nvmf_ns_params, nguid), decode_ns_nguid, true},
 	{"eui64", offsetof(struct spdk_nvmf_ns_params, eui64), decode_ns_eui64, true},
+	{"uuid", offsetof(struct spdk_nvmf_ns_params, uuid), decode_ns_uuid, true},
 };
 
 static void
@@ -469,7 +493,7 @@ static int
 decode_rpc_namespaces(const struct spdk_json_val *val, void *out)
 {
 	struct rpc_namespaces *namespaces = out;
-	char *names[RPC_MAX_NAMESPACES]; /* old format - array of strings (bdev names) */
+	char *names[RPC_MAX_NAMESPACES] = {0}; /* old format - array of strings (bdev names) */
 	size_t i;
 	int rc;
 
@@ -716,6 +740,10 @@ spdk_rpc_construct_nvmf_subsystem(struct spdk_jsonrpc_request *request,
 
 		SPDK_STATIC_ASSERT(sizeof(ns_opts.eui64) == sizeof(ns_params->eui64), "size mismatch");
 		memcpy(ns_opts.eui64, ns_params->eui64, sizeof(ns_opts.eui64));
+
+		if (!spdk_mem_all_zero(&ns_params->uuid, sizeof(ns_params->uuid))) {
+			ns_opts.uuid = ns_params->uuid;
+		}
 
 		if (spdk_nvmf_subsystem_add_ns(subsystem, bdev, &ns_opts, sizeof(ns_opts)) == 0) {
 			SPDK_ERRLOG("Unable to add namespace\n");
@@ -1126,6 +1154,10 @@ nvmf_rpc_ns_paused(struct spdk_nvmf_subsystem *subsystem,
 	SPDK_STATIC_ASSERT(sizeof(ns_opts.eui64) == sizeof(ctx->ns_params.eui64), "size mismatch");
 	memcpy(ns_opts.eui64, ctx->ns_params.eui64, sizeof(ns_opts.eui64));
 
+	if (!spdk_mem_all_zero(&ctx->ns_params.uuid, sizeof(ctx->ns_params.uuid))) {
+		ns_opts.uuid = ctx->ns_params.uuid;
+	}
+
 	ctx->ns_params.nsid = spdk_nvmf_subsystem_add_ns(subsystem, bdev, &ns_opts, sizeof(ns_opts));
 	if (ctx->ns_params.nsid == 0) {
 		SPDK_ERRLOG("Unable to add namespace\n");
@@ -1529,3 +1561,110 @@ nvmf_rpc_subsystem_allow_any_host(struct spdk_jsonrpc_request *request,
 }
 SPDK_RPC_REGISTER("nvmf_subsystem_allow_any_host", nvmf_rpc_subsystem_allow_any_host,
 		  SPDK_RPC_RUNTIME)
+
+static const struct spdk_json_object_decoder nvmf_rpc_subsystem_tgt_opts_decoder[] = {
+	{"max_queue_depth", offsetof(struct spdk_nvmf_tgt_opts, max_queue_depth), spdk_json_decode_uint16, true},
+	{"max_qpairs_per_ctrlr", offsetof(struct spdk_nvmf_tgt_opts, max_qpairs_per_ctrlr), spdk_json_decode_uint16, true},
+	{"in_capsule_data_size", offsetof(struct spdk_nvmf_tgt_opts, in_capsule_data_size), spdk_json_decode_uint32, true},
+	{"max_io_size", offsetof(struct spdk_nvmf_tgt_opts, max_io_size), spdk_json_decode_uint32, true},
+	{"max_subsystems", offsetof(struct spdk_nvmf_tgt_opts, max_subsystems), spdk_json_decode_uint32, true},
+	{"io_unit_size", offsetof(struct spdk_nvmf_tgt_opts, io_unit_size), spdk_json_decode_uint32, true},
+};
+
+static void
+nvmf_rpc_subsystem_set_tgt_opts(struct spdk_jsonrpc_request *request,
+				const struct spdk_json_val *params)
+{
+	struct spdk_nvmf_tgt_opts *opts;
+	struct spdk_json_write_ctx *w;
+
+	if (g_spdk_nvmf_tgt_opts != NULL) {
+		SPDK_ERRLOG("this RPC must not be called more than once.\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+						 "Must not call more than once");
+		return;
+	}
+
+	opts = calloc(1, sizeof(*opts));
+	if (opts == NULL) {
+		SPDK_ERRLOG("malloc() failed for target options\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+						 "Out of memory");
+		return;
+	}
+
+	spdk_nvmf_tgt_opts_init(opts);
+
+	if (params != NULL) {
+		if (spdk_json_decode_object(params, nvmf_rpc_subsystem_tgt_opts_decoder,
+					    SPDK_COUNTOF(nvmf_rpc_subsystem_tgt_opts_decoder), opts)) {
+			free(opts);
+			SPDK_ERRLOG("spdk_json_decode_object() failed\n");
+			spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+							 "Invalid parameters");
+			return;
+		}
+	}
+
+	g_spdk_nvmf_tgt_opts = opts;
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("set_nvmf_target_options", nvmf_rpc_subsystem_set_tgt_opts, SPDK_RPC_STARTUP)
+
+static const struct spdk_json_object_decoder nvmf_rpc_subsystem_tgt_conf_decoder[] = {
+	{"acceptor_poll_rate", offsetof(struct spdk_nvmf_tgt_conf, acceptor_poll_rate), spdk_json_decode_uint32, true},
+};
+
+static void
+nvmf_rpc_subsystem_set_tgt_conf(struct spdk_jsonrpc_request *request,
+				const struct spdk_json_val *params)
+{
+	struct spdk_nvmf_tgt_conf *conf;
+	struct spdk_json_write_ctx *w;
+
+	if (g_spdk_nvmf_tgt_conf != NULL) {
+		SPDK_ERRLOG("this RPC must not be called more than once.\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+						 "Must not call more than once");
+		return;
+	}
+
+	conf = calloc(1, sizeof(*conf));
+	if (conf == NULL) {
+		SPDK_ERRLOG("calloc() failed for target config\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+						 "Out of memory");
+		return;
+	}
+
+	conf->acceptor_poll_rate = ACCEPT_TIMEOUT_US;
+
+	if (params != NULL) {
+		if (spdk_json_decode_object(params, nvmf_rpc_subsystem_tgt_conf_decoder,
+					    SPDK_COUNTOF(nvmf_rpc_subsystem_tgt_conf_decoder), conf)) {
+			free(conf);
+			SPDK_ERRLOG("spdk_json_decode_object() failed\n");
+			spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+							 "Invalid parameters");
+			return;
+		}
+	}
+
+	g_spdk_nvmf_tgt_conf = conf;
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("set_nvmf_target_config", nvmf_rpc_subsystem_set_tgt_conf, SPDK_RPC_STARTUP)

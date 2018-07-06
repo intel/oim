@@ -44,7 +44,7 @@
 #include "spdk/conf.h"
 #include "spdk/endian.h"
 #include "spdk/string.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/util.h"
 
 #include "spdk/bdev_module.h"
@@ -567,6 +567,17 @@ create_passthru_disk(const char *bdev_name, const char *vbdev_name)
 	vbdev_passthru_register(bdev);
 
 	return 0;
+}
+
+void
+delete_passthru_disk(struct spdk_bdev *bdev, spdk_delete_passthru_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || bdev->module != &passthru_if) {
+		cb_fn(cb_arg, -ENODEV);
+		return;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
 /* Because we specified this function in our pt bdev function table when we

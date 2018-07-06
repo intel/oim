@@ -41,7 +41,7 @@
 #include "spdk/env.h"
 #include "spdk/copy_engine.h"
 #include "spdk/json.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/queue.h"
 #include "spdk/string.h"
 
@@ -446,6 +446,17 @@ struct spdk_bdev *create_malloc_disk(const char *name, const struct spdk_uuid *u
 	TAILQ_INSERT_TAIL(&g_malloc_disks, mdisk, link);
 
 	return &mdisk->disk;
+}
+
+void
+delete_malloc_disk(struct spdk_bdev *bdev, spdk_delete_malloc_complete cb_fn, void *cb_arg)
+{
+	if (!bdev || bdev->module != &malloc_if) {
+		cb_fn(cb_arg, -ENODEV);
+		return;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
 static int bdev_malloc_initialize(void)

@@ -63,9 +63,7 @@ spdk_nvme_ctrlr_cmd_io_raw_with_md(struct spdk_nvme_ctrlr *ctrlr,
 	struct nvme_request *req;
 	struct nvme_payload payload;
 
-	payload.type = NVME_PAYLOAD_TYPE_CONTIG;
-	payload.u.contig = buf;
-	payload.md = md_buf;
+	payload = NVME_PAYLOAD_CONTIG(buf, md_buf);
 
 	req = nvme_allocate_request(qpair, &payload, len, cb_fn, cb_arg);
 	if (req == NULL) {
@@ -343,6 +341,66 @@ spdk_nvme_ctrlr_cmd_get_feature(struct spdk_nvme_ctrlr *ctrlr, uint8_t feature,
 }
 
 int
+spdk_nvme_ctrlr_cmd_get_feature_ns(struct spdk_nvme_ctrlr *ctrlr, uint8_t feature,
+				   uint32_t cdw11, void *payload,
+				   uint32_t payload_size, spdk_nvme_cmd_cb cb_fn,
+				   void *cb_arg, uint32_t ns_id)
+{
+	struct nvme_request *req;
+	struct spdk_nvme_cmd *cmd;
+	int rc;
+
+	nvme_robust_mutex_lock(&ctrlr->ctrlr_lock);
+	req = nvme_allocate_request_user_copy(ctrlr->adminq, payload, payload_size, cb_fn, cb_arg,
+					      false);
+	if (req == NULL) {
+		nvme_robust_mutex_unlock(&ctrlr->ctrlr_lock);
+		return -ENOMEM;
+	}
+
+	cmd = &req->cmd;
+	cmd->opc = SPDK_NVME_OPC_GET_FEATURES;
+	cmd->cdw10 = feature;
+	cmd->cdw11 = cdw11;
+	cmd->nsid = ns_id;
+
+	rc = nvme_ctrlr_submit_admin_request(ctrlr, req);
+	nvme_robust_mutex_unlock(&ctrlr->ctrlr_lock);
+
+	return rc;
+}
+
+int spdk_nvme_ctrlr_cmd_set_feature_ns(struct spdk_nvme_ctrlr *ctrlr, uint8_t feature,
+				       uint32_t cdw11, uint32_t cdw12, void *payload,
+				       uint32_t payload_size, spdk_nvme_cmd_cb cb_fn,
+				       void *cb_arg, uint32_t ns_id)
+{
+	struct nvme_request *req;
+	struct spdk_nvme_cmd *cmd;
+	int rc;
+
+	nvme_robust_mutex_lock(&ctrlr->ctrlr_lock);
+	req = nvme_allocate_request_user_copy(ctrlr->adminq, payload, payload_size, cb_fn, cb_arg,
+					      true);
+	if (req == NULL) {
+		nvme_robust_mutex_unlock(&ctrlr->ctrlr_lock);
+		return -ENOMEM;
+	}
+
+	cmd = &req->cmd;
+	cmd->opc = SPDK_NVME_OPC_SET_FEATURES;
+	cmd->cdw10 = feature;
+	cmd->cdw11 = cdw11;
+	cmd->cdw12 = cdw12;
+	cmd->nsid = ns_id;
+
+	rc = nvme_ctrlr_submit_admin_request(ctrlr, req);
+	nvme_robust_mutex_unlock(&ctrlr->ctrlr_lock);
+
+	return rc;
+}
+
+int
 nvme_ctrlr_cmd_set_num_queues(struct spdk_nvme_ctrlr *ctrlr,
 			      uint32_t num_queues, spdk_nvme_cmd_cb cb_fn, void *cb_arg)
 {
@@ -467,6 +525,7 @@ spdk_nvme_ctrlr_cmd_abort_cpl(void *ctx, const struct spdk_nvme_cpl *cpl)
 		rc = nvme_ctrlr_submit_admin_request(ctrlr, next);
 		if (rc < 0) {
 			SPDK_ERRLOG("Failed to submit queued abort.\n");
+			memset(&next->cpl, 0, sizeof(next->cpl));
 			next->cpl.status.sct = SPDK_NVME_SCT_GENERIC;
 			next->cpl.status.sc = SPDK_NVME_SC_INTERNAL_DEVICE_ERROR;
 			next->cpl.status.dnr = 1;

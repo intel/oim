@@ -60,6 +60,7 @@ struct spdk_nvmf_request;
 struct spdk_nvmf_host;
 struct spdk_nvmf_listener;
 struct spdk_nvmf_poll_group;
+struct spdk_json_write_ctx;
 
 struct spdk_nvmf_tgt_opts {
 	uint16_t max_queue_depth;
@@ -67,6 +68,7 @@ struct spdk_nvmf_tgt_opts {
 	uint32_t in_capsule_data_size;
 	uint32_t max_io_size;
 	uint32_t max_subsystems;
+	uint32_t io_unit_size;
 };
 /**
  * Initialize the default value of opts.
@@ -84,13 +86,32 @@ void spdk_nvmf_tgt_opts_init(struct spdk_nvmf_tgt_opts *opts);
  */
 struct spdk_nvmf_tgt *spdk_nvmf_tgt_create(struct spdk_nvmf_tgt_opts *opts);
 
+typedef void (spdk_nvmf_tgt_destroy_done_fn)(void *ctx, int status);
+
 /**
  * Destroy an NVMe-oF target.
  *
  * \param tgt The target to destroy. This releases all resources.
+ * \param cb_fn A callback that will be called once the target is destroyed
+ * \param cb_arg A context argument passed to cb_fn.
  */
-void spdk_nvmf_tgt_destroy(struct spdk_nvmf_tgt *tgt);
+void spdk_nvmf_tgt_destroy(struct spdk_nvmf_tgt *tgt,
+			   spdk_nvmf_tgt_destroy_done_fn cb_fn,
+			   void *cb_arg);
 
+/**
+ * Write NVMe-oF target configuration into provided JSON context.
+ * \param w JSON write context
+ * \param tgt The NVMe-oF target
+ */
+void spdk_nvmf_tgt_write_config_json(struct spdk_json_write_ctx *w, struct spdk_nvmf_tgt *tgt);
+
+/**
+ * Function to be called once the target is listening.
+ *
+ * \param ctx Context argument passed to this function.
+ * \param status 0 if it completed successfully, or negative errno if it failed.
+ */
 typedef void (*spdk_nvmf_tgt_listen_done_fn)(void *ctx, int status);
 
 /**
@@ -113,6 +134,11 @@ void spdk_nvmf_tgt_listen(struct spdk_nvmf_tgt *tgt,
 			  spdk_nvmf_tgt_listen_done_fn cb_fn,
 			  void *cb_arg);
 
+/**
+ * Function to be called for each newly discovered qpair.
+ *
+ * \param qpair The newly discovered qpair.
+ */
 typedef void (*new_qpair_fn)(struct spdk_nvmf_qpair *qpair);
 
 /**
@@ -166,6 +192,13 @@ int spdk_nvmf_poll_group_remove(struct spdk_nvmf_poll_group *group,
 				struct spdk_nvmf_qpair *qpair);
 
 /**
+ * Disconnect an NVMe-oF qpair
+ *
+ * \param qpair The NVMe-oF qpair to disconnect.
+ */
+void spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair);
+
+/**
  * Create an NVMe-oF subsystem.
  *
  * Subsystems are in one of three states: Inactive, Active, Paused. This
@@ -194,6 +227,13 @@ struct spdk_nvmf_subsystem *spdk_nvmf_subsystem_create(struct spdk_nvmf_tgt *tgt
  */
 void spdk_nvmf_subsystem_destroy(struct spdk_nvmf_subsystem *subsystem);
 
+/**
+ * Function to be called once the subsystem has changed state.
+ *
+ * \param subsytem NVMe-oF subsystem that has changed state.
+ * \param cb_arg Argument passed to callback function.
+ * \param status 0 if it completed successfully, or negative errno if it failed.
+ */
 typedef void (*spdk_nvmf_subsystem_state_change_done)(struct spdk_nvmf_subsystem *subsystem,
 		void *cb_arg, int status);
 
@@ -269,16 +309,17 @@ struct spdk_nvmf_subsystem *spdk_nvmf_tgt_find_subsystem(struct spdk_nvmf_tgt *t
  *
  * \param tgt The NVMe-oF target to iterate.
  *
- * \return a pointer to the NVMe-oF subsystem on success, or NULL on failure.
+ * \return a pointer to the first NVMe-oF subsystem on success, or NULL on failure.
  */
 struct spdk_nvmf_subsystem *spdk_nvmf_subsystem_get_first(struct spdk_nvmf_tgt *tgt);
 
 /**
  * Continue iterating over all known subsystems. If no additional subsystems, return NULL.
  *
- * \param tgt The NVMe-oF target to iterate.
+ * \param subsystem Previous subsystem returned from \ref spdk_nvmf_subsystem_get_first or
+ *                  \ref spdk_nvmf_subsystem_get_next.
  *
- * \return a pointer to the NVMe-oF subsystem on success, or NULL on failure.
+ * \return a pointer to the next NVMe-oF subsystem on success, or NULL on failure.
  */
 struct spdk_nvmf_subsystem *spdk_nvmf_subsystem_get_next(struct spdk_nvmf_subsystem *subsystem);
 
@@ -288,7 +329,7 @@ struct spdk_nvmf_subsystem *spdk_nvmf_subsystem_get_next(struct spdk_nvmf_subsys
  * May only be performed on subsystems in the PAUSED or INACTIVE states.
  *
  * \param subsystem Subsystem to add host to.
- * \param host_nqn The NQN for the host.
+ * \param hostnqn The NQN for the host.
  *
  * \return 0 on success, or negated errno value on failure.
  */
@@ -301,7 +342,7 @@ int spdk_nvmf_subsystem_add_host(struct spdk_nvmf_subsystem *subsystem,
  * May only be performed on subsystems in the PAUSED or INACTIVE states.
  *
  * \param subsystem Subsystem to remove host from.
- * \param host_nqn The NQN for the host.
+ * \param hostnqn The NQN for the host.
  *
  * \return 0 on success, or negated errno value on failure.
  */
@@ -544,6 +585,15 @@ struct spdk_nvmf_ns *spdk_nvmf_subsystem_get_ns(struct spdk_nvmf_subsystem *subs
 		uint32_t nsid);
 
 /**
+ * Get the maximum number of namespaces allowed in a subsystem.
+ *
+ * \param subsystem Subsystem to query.
+ *
+ * \return Maximum number of namespaces allowed in the subsystem, or 0 for unlimited.
+ */
+uint32_t spdk_nvmf_subsystem_get_max_namespaces(const struct spdk_nvmf_subsystem *subsystem);
+
+/**
  * Get a namespace's NSID.
  *
  * \param ns Namespace to query.
@@ -608,20 +658,6 @@ const char *spdk_nvmf_subsystem_get_nqn(struct spdk_nvmf_subsystem *subsystem);
  * \return the type of the specified subsystem.
  */
 enum spdk_nvmf_subtype spdk_nvmf_subsystem_get_type(struct spdk_nvmf_subsystem *subsystem);
-
-/**
- * Handle the NVMe-oF request for connection.
- *
- * \param req NVMe-oF request to handle.
- */
-void spdk_nvmf_handle_connect(struct spdk_nvmf_request *req);
-
-/**
- * Disconnect the NVMe-oF controller.
- *
- * \param qpair The NVMe-oF qpair associated with the controller.
- */
-void spdk_nvmf_ctrlr_disconnect(struct spdk_nvmf_qpair *qpair);
 
 #ifdef __cplusplus
 }

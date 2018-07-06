@@ -35,7 +35,7 @@
 
 #include "spdk/bdev.h"
 #include "spdk/event.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk/log.h"
 #include "spdk/nvme.h"
 #include "spdk/util.h"
@@ -179,9 +179,7 @@ nvmf_tgt_create_poll_group(void *ctx)
 	assert(pg != NULL);
 
 	pg->group = spdk_nvmf_poll_group_create(g_spdk_nvmf_tgt);
-	if (pg->group == NULL) {
-		SPDK_ERRLOG("Failed to create poll group for core %u\n", spdk_env_get_current_core());
-	}
+	assert(pg->group != NULL);
 
 	g_active_poll_groups++;
 }
@@ -213,6 +211,14 @@ nvmf_tgt_subsystem_stopped(struct spdk_nvmf_subsystem *subsystem,
 	}
 
 	g_tgt_state = NVMF_TGT_FINI_DESTROY_POLL_GROUPS;
+	nvmf_tgt_advance_state();
+}
+
+static void
+nvmf_tgt_destroy_done(void *ctx, int status)
+{
+	g_tgt_state = NVMF_TGT_STOPPED;
+	free(g_spdk_nvmf_tgt_conf);
 	nvmf_tgt_advance_state();
 }
 
@@ -273,7 +279,7 @@ nvmf_tgt_advance_state(void)
 		}
 		case NVMF_TGT_INIT_START_ACCEPTOR:
 			g_acceptor_poller = spdk_poller_register(acceptor_poll, g_spdk_nvmf_tgt,
-					    g_spdk_nvmf_tgt_conf.acceptor_poll_rate);
+					    g_spdk_nvmf_tgt_conf->acceptor_poll_rate);
 			SPDK_INFOLOG(SPDK_LOG_NVMF, "Acceptor running\n");
 			g_tgt_state = NVMF_TGT_RUNNING;
 			break;
@@ -303,8 +309,7 @@ nvmf_tgt_advance_state(void)
 					     nvmf_tgt_destroy_poll_group_done);
 			break;
 		case NVMF_TGT_FINI_FREE_RESOURCES:
-			spdk_nvmf_tgt_destroy(g_spdk_nvmf_tgt);
-			g_tgt_state = NVMF_TGT_STOPPED;
+			spdk_nvmf_tgt_destroy(g_spdk_nvmf_tgt, nvmf_tgt_destroy_done, NULL);
 			break;
 		case NVMF_TGT_STOPPED:
 			spdk_subsystem_fini_next();
@@ -324,10 +329,30 @@ spdk_nvmf_subsystem_init(void)
 	nvmf_tgt_advance_state();
 }
 
+static void
+spdk_nvmf_subsystem_write_config_json(struct spdk_json_write_ctx *w, struct spdk_event *done_ev)
+{
+	spdk_json_write_array_begin(w);
+
+	spdk_json_write_object_begin(w);
+	spdk_json_write_named_string(w, "method", "set_nvmf_target_config");
+
+	spdk_json_write_named_object_begin(w, "params");
+	spdk_json_write_named_uint32(w, "acceptor_poll_rate", g_spdk_nvmf_tgt_conf->acceptor_poll_rate);
+	spdk_json_write_object_end(w);
+	spdk_json_write_object_end(w);
+
+	spdk_nvmf_tgt_write_config_json(w, g_spdk_nvmf_tgt);
+	spdk_json_write_array_end(w);
+
+	spdk_event_call(done_ev);
+}
+
 static struct spdk_subsystem g_spdk_subsystem_nvmf = {
 	.name = "nvmf",
 	.init = spdk_nvmf_subsystem_init,
 	.fini = spdk_nvmf_subsystem_fini,
+	.write_config_json = spdk_nvmf_subsystem_write_config_json,
 };
 
 SPDK_SUBSYSTEM_REGISTER(g_spdk_subsystem_nvmf)

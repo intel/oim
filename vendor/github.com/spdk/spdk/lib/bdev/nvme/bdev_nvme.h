@@ -52,6 +52,9 @@ struct nvme_ctrlr {
 	struct spdk_nvme_transport_id	trid;
 	char				*name;
 	int				ref;
+	uint32_t			num_ns;
+	/** Array of bdevs indexed by nsid - 1 */
+	struct nvme_bdev		*bdevs;
 
 	struct spdk_poller		*adminq_timer_poller;
 
@@ -62,14 +65,15 @@ struct nvme_ctrlr {
 struct nvme_bdev {
 	struct spdk_bdev	disk;
 	struct nvme_ctrlr	*nvme_ctrlr;
+	uint32_t		id;
+	bool			active;
 	struct spdk_nvme_ns	*ns;
-
-	TAILQ_ENTRY(nvme_bdev)	link;
 };
 
 int spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 			  const char *base_name,
-			  const char **names, size_t *count);
+			  const char **names, size_t *count,
+			  const char *hostnqn);
 struct spdk_nvme_ctrlr *spdk_bdev_nvme_get_ctrlr(struct spdk_bdev *bdev);
 
 #endif // SPDK_BDEV_NVME_H

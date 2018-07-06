@@ -134,7 +134,7 @@ const char *spdk_vhost_dev_get_name(struct spdk_vhost_dev *vdev);
  * Get cpuset of the vhost device.  The cpuset is constant throughout the lifetime
  * of a vdev. It is a subset of SPDK app cpuset vhost was started with.
  *
- * \param dev vhost device.
+ * \param vdev vhost device.
  *
  * \return cpuset of the vdev.
  */
@@ -163,6 +163,18 @@ int spdk_vhost_set_coalescing(struct spdk_vhost_dev *vdev, uint32_t delay_base_u
 			      uint32_t iops_threshold);
 
 /**
+ * Get coalescing parameters.
+ *
+ * \see spdk_vhost_set_coalescing
+ *
+ * \param vdev vhost device.
+ * \param delay_base_us Optional pointer to store base delay time.
+ * \param iops_threshold Optional pointer to store IOPS threshold.
+ */
+void spdk_vhost_get_coalescing(struct spdk_vhost_dev *vdev, uint32_t *delay_base_us,
+			       uint32_t *iops_threshold);
+
+/**
  * Construct an empty vhost SCSI device.  This will create a
  * Unix domain socket together with a vhost-user slave server waiting
  * for a connection on this socket. Creating the vdev does not
@@ -176,7 +188,7 @@ int spdk_vhost_set_coalescing(struct spdk_vhost_dev *vdev, uint32_t delay_base_u
  *
  * \param name name of the vhost device. The name will also be used
  * for socket name, which is exactly \c socket_base_dir/name
- * \param mask string containing cpumask in hex. The leading *0x*
+ * \param cpumask string containing cpumask in hex. The leading *0x*
  * is allowed but not required. The mask itself can be constructed as:
  * ((1 << cpu0) | (1 << cpu1) | ... | (1 << cpuN)).
  *
@@ -190,9 +202,9 @@ int spdk_vhost_scsi_dev_construct(const char *name, const char *cpumask);
  * LUN0 associated with given SPDK bdev. Currently only one LUN per
  * device is supported.
  *
- * If vhost SCSI device has an active socket connection, it is
- * required that it has negotiated \c VIRTIO_SCSI_F_HOTPLUG feature
- * flag. Otherwise an -ENOTSUP error code is returned.
+ * If the vhost SCSI device has an active connection and has negotiated
+ * \c VIRTIO_SCSI_F_HOTPLUG feature,  the new SCSI target should be
+ * automatically detected by the other side.
  *
  * \param vdev vhost SCSI device.
  * \param scsi_tgt_num slot to attach to.
@@ -256,7 +268,7 @@ int spdk_vhost_scsi_dev_remove_tgt(struct spdk_vhost_dev *vdev, unsigned scsi_tg
  *
  * \param name name of the vhost blk device. The name will also be
  * used for socket name, which is exactly \c socket_base_dir/name
- * \param mask string containing cpumask in hex. The leading *0x*
+ * \param cpumask string containing cpumask in hex. The leading *0x*
  * is allowed but not required. The mask itself can be constructed as:
  * ((1 << cpu0) | (1 << cpu1) | ... | (1 << cpuN)).
  * \param dev_name bdev name to associate with this vhost device
@@ -281,7 +293,7 @@ int spdk_vhost_dev_remove(struct spdk_vhost_dev *vdev);
  * Get underlying SPDK bdev from vhost blk device. The bdev might be NULL, as it
  * could have been hotremoved.
  *
- * \param ctrl vhost blk device.
+ * \param ctrlr vhost blk device.
  *
  * \return SPDK bdev associated with given vdev.
  */

@@ -32,7 +32,7 @@
  */
 
 #include "spdk_cunit.h"
-#include "spdk/io_channel.h"
+#include "spdk/thread.h"
 #include "spdk_internal/mock.h"
 
 static uint32_t g_ut_num_threads;
@@ -226,7 +226,7 @@ poll_thread(uintptr_t thread_id)
 		poller = TAILQ_FIRST(&thread->pollers);
 		TAILQ_REMOVE(&thread->pollers, poller, tailq);
 
-		while (g_current_time_in_us >= poller->next_expiration_in_us) {
+		if (g_current_time_in_us >= poller->next_expiration_in_us) {
 			if (poller->fn) {
 				poller->fn(poller->arg);
 			}

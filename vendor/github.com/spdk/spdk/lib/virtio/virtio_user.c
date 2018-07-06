@@ -46,6 +46,10 @@
 
 #include "spdk_internal/virtio.h"
 
+#define VIRTIO_USER_SUPPORTED_PROTOCOL_FEATURES \
+	((1ULL << VHOST_USER_PROTOCOL_F_MQ) | \
+	(1ULL << VHOST_USER_PROTOCOL_F_CONFIG))
+
 static int
 virtio_user_create_queue(struct virtio_dev *vdev, uint32_t queue_sel)
 {
@@ -142,6 +146,15 @@ virtio_user_start_device(struct virtio_dev *vdev)
 	uint64_t host_max_queues;
 	int ret;
 
+	if ((dev->protocol_features & (1ULL << VHOST_USER_PROTOCOL_F_MQ)) == 0 &&
+	    vdev->max_queues > 1 + vdev->fixed_queues_num) {
+		SPDK_WARNLOG("%s: requested %"PRIu16" request queues, but the "
+			     "host doesn't support VHOST_USER_PROTOCOL_F_MQ. "
+			     "Only one request queue will be used.\n",
+			     vdev->name, vdev->max_queues - vdev->fixed_queues_num);
+		vdev->max_queues = 1 + vdev->fixed_queues_num;
+	}
+
 	/* negotiate the number of I/O queues. */
 	ret = dev->ops->send_request(dev, VHOST_USER_GET_QUEUE_NUM, &host_max_queues);
 	if (ret < 0) {
@@ -202,30 +215,39 @@ virtio_user_dev_setup(struct virtio_dev *vdev)
 	return 0;
 }
 
-static void
+static int
 virtio_user_read_dev_config(struct virtio_dev *vdev, size_t offset,
 			    void *dst, int length)
 {
 	struct virtio_user_dev *dev = vdev->ctx;
 	struct vhost_user_config cfg = {0};
 
+	if ((dev->protocol_features & (1ULL << VHOST_USER_PROTOCOL_F_CONFIG)) == 0) {
+		return -ENOTSUP;
+	}
+
 	cfg.offset = 0;
 	cfg.size = VHOST_USER_MAX_CONFIG_SIZE;
 
 	if (dev->ops->send_request(dev, VHOST_USER_GET_CONFIG, &cfg) < 0) {
 		SPDK_ERRLOG("get_config failed: %s\n", spdk_strerror(errno));
-		return;
+		return -errno;
 	}
 
 	memcpy(dst, cfg.region + offset, length);
+	return 0;
 }
 
-static void
+static int
 virtio_user_write_dev_config(struct virtio_dev *vdev, size_t offset,
 			     const void *src, int length)
 {
 	struct virtio_user_dev *dev = vdev->ctx;
 	struct vhost_user_config cfg = {0};
+
+	if ((dev->protocol_features & (1ULL << VHOST_USER_PROTOCOL_F_CONFIG)) == 0) {
+		return -ENOTSUP;
+	}
 
 	cfg.offset = offset;
 	cfg.size = length;
@@ -233,8 +255,10 @@ virtio_user_write_dev_config(struct virtio_dev *vdev, size_t offset,
 
 	if (dev->ops->send_request(dev, VHOST_USER_SET_CONFIG, &cfg) < 0) {
 		SPDK_ERRLOG("set_config failed: %s\n", spdk_strerror(errno));
-		return;
+		return -errno;
 	}
+
+	return 0;
 }
 
 static void
@@ -286,6 +310,7 @@ static int
 virtio_user_set_features(struct virtio_dev *vdev, uint64_t features)
 {
 	struct virtio_user_dev *dev = vdev->ctx;
+	uint64_t protocol_features;
 	int ret;
 
 	ret = dev->ops->send_request(dev, VHOST_USER_SET_FEATURES, &features);
@@ -296,6 +321,23 @@ virtio_user_set_features(struct virtio_dev *vdev, uint64_t features)
 	vdev->negotiated_features = features;
 	vdev->modern = virtio_dev_has_feature(vdev, VIRTIO_F_VERSION_1);
 
+	if (!virtio_dev_has_feature(vdev, VHOST_USER_F_PROTOCOL_FEATURES)) {
+		/* nothing else to do */
+		return 0;
+	}
+
+	ret = dev->ops->send_request(dev, VHOST_USER_GET_PROTOCOL_FEATURES, &protocol_features);
+	if (ret < 0) {
+		return -1;
+	}
+
+	protocol_features &= VIRTIO_USER_SUPPORTED_PROTOCOL_FEATURES;
+	ret = dev->ops->send_request(dev, VHOST_USER_SET_PROTOCOL_FEATURES, &protocol_features);
+	if (ret < 0) {
+		return -1;
+	}
+
+	dev->protocol_features = protocol_features;
 	return 0;
 }
 
@@ -312,6 +354,7 @@ static int
 virtio_user_setup_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 {
 	struct virtio_user_dev *dev = vdev->ctx;
+	struct vhost_vring_state state;
 	uint16_t queue_idx = vq->vq_queue_index;
 	uint64_t desc_addr, avail_addr, used_addr;
 	int callfd;
@@ -336,6 +379,16 @@ virtio_user_setup_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 	if (kickfd < 0) {
 		SPDK_ERRLOG("kickfd error, %s\n", spdk_strerror(errno));
 		close(callfd);
+		return -1;
+	}
+
+	state.index = vq->vq_queue_index;
+	state.num = 0;
+
+	if (virtio_dev_has_feature(vdev, VHOST_USER_F_PROTOCOL_FEATURES) &&
+	    dev->ops->send_request(dev, VHOST_USER_SET_VRING_ENABLE, &state) < 0) {
+		SPDK_ERRLOG("failed to send VHOST_USER_SET_VRING_ENABLE: %s\n",
+			    spdk_strerror(errno));
 		return -1;
 	}
 
@@ -365,8 +418,8 @@ virtio_user_del_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 	 * For modern devices, set queue desc, avail, used in PCI bar to 0,
 	 * not see any more behavior in QEMU.
 	 *
-	 * Here we just care about what information to deliver to vhost-user
-	 * or vhost-kernel. So we just close ioeventfd for now.
+	 * Here we just care about what information to deliver to vhost-user.
+	 * So we just close ioeventfd for now.
 	 */
 	struct virtio_user_dev *dev = vdev->ctx;
 

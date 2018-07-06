@@ -192,6 +192,7 @@ CXXFLAGS += $(COMMON_CFLAGS) -std=c++0x
 
 SYS_LIBS += -lrt
 SYS_LIBS += -luuid
+SYS_LIBS += -lcrypto
 
 MAKEFLAGS += --no-print-directory
 
@@ -237,6 +238,12 @@ INSTALL_LIB=\
 	$(Q)echo "  INSTALL $(DESTDIR)$(libdir)/$(notdir $(LIB))"; \
 	install -d -m 755 "$(DESTDIR)$(libdir)"; \
 	install -m 644 "$(LIB)" "$(DESTDIR)$(libdir)/"
+
+# Install a shared library
+INSTALL_SHARED_LIB=\
+	$(Q)echo "  INSTALL $(DESTDIR)$(libdir)/$(notdir $(SHARED_LIB))"; \
+	install -d -m 755 "$(DESTDIR)$(libdir)"; \
+	install -m 644 "$(SHARED_LIB)" "$(DESTDIR)$(libdir)/"
 
 # Install an app binary
 INSTALL_APP=\

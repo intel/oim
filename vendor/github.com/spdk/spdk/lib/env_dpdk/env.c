@@ -133,15 +133,26 @@ spdk_dma_free(void *buf)
 }
 
 void *
-spdk_memzone_reserve(const char *name, size_t len, int socket_id, unsigned flags)
+spdk_memzone_reserve_aligned(const char *name, size_t len, int socket_id,
+			     unsigned flags, unsigned align)
 {
 	const struct rte_memzone *mz;
+	unsigned dpdk_flags = 0;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0)
+	/* Older DPDKs do not offer such flag since their
+	 * memzones are iova-contiguous by default.
+	 */
+	if ((flags & SPDK_MEMZONE_NO_IOVA_CONTIG) == 0) {
+		dpdk_flags |= RTE_MEMZONE_IOVA_CONTIG;
+	}
+#endif
 
 	if (socket_id == SPDK_ENV_SOCKET_ID_ANY) {
 		socket_id = SOCKET_ID_ANY;
 	}
 
-	mz = rte_memzone_reserve(name, len, socket_id, flags);
+	mz = rte_memzone_reserve_aligned(name, len, socket_id, dpdk_flags, align);
 
 	if (mz != NULL) {
 		memset(mz->addr, 0, len);
@@ -149,6 +160,13 @@ spdk_memzone_reserve(const char *name, size_t len, int socket_id, unsigned flags
 	} else {
 		return NULL;
 	}
+}
+
+void *
+spdk_memzone_reserve(const char *name, size_t len, int socket_id, unsigned flags)
+{
+	return spdk_memzone_reserve_aligned(name, len, socket_id, flags,
+					    RTE_CACHE_LINE_SIZE);
 }
 
 void *
@@ -259,7 +277,7 @@ spdk_mempool_put(struct spdk_mempool *mp, void *ele)
 }
 
 void
-spdk_mempool_put_bulk(struct spdk_mempool *mp, void *const *ele_arr, size_t count)
+spdk_mempool_put_bulk(struct spdk_mempool *mp, void **ele_arr, size_t count)
 {
 	rte_mempool_put_bulk((struct rte_mempool *)mp, ele_arr, count);
 }
