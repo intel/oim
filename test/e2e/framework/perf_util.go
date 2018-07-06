@@ -19,7 +19,7 @@ package framework
 import (
 	"fmt"
 
-	"k8s.io/kubernetes/test/e2e/perftype"
+	"github.com/intel/oim/test/e2e/perftype"
 )
 
 // TODO(random-liu): Change the tests to actually use PerfData from the beginning instead of

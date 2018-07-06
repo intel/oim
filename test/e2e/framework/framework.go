@@ -46,7 +46,7 @@ import (
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/kubemark"
-	"k8s.io/kubernetes/test/e2e/framework/metrics"
+	"github.com/intel/oim/test/e2e/framework/metrics"
 	testutils "k8s.io/kubernetes/test/utils"
 
 	. "github.com/onsi/ginkgo"

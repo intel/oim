@@ -34,7 +34,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	storageutil "k8s.io/kubernetes/pkg/apis/storage/v1/util"
-	"k8s.io/kubernetes/test/e2e/framework"
+	"github.com/intel/oim/test/e2e/framework"
 )
 
 type storageClassTest struct {

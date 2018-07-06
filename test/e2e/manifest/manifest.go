@@ -28,7 +28,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
-	"k8s.io/kubernetes/test/e2e/generated"
+	"github.com/intel/oim/test/e2e/generated"
 )
 
 // PodFromManifest reads a .json/yaml file and returns the pod in it.

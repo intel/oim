@@ -35,9 +35,8 @@ update: update_dep
 
 # We have to do some post-processing because dep does not support
 # go-bindata.
-update_dep: test/gobindata_util.go.patch
+update_dep:
 	dep ensure -v
-	patch vendor/k8s.io/kubernetes/test/e2e/generated/gobindata_util.go <$<
 
 .PHONY: update update_dep
 

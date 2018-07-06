@@ -27,8 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/kubernetes/test/e2e/framework"
-	"k8s.io/kubernetes/test/e2e/storage/utils"
+	"github.com/intel/oim/test/e2e/framework"
+	"github.com/intel/oim/test/e2e/storage/utils"
 
 	e2eutils "github.com/intel/oim/test/e2e/utils"
 	"github.com/intel/oim/test/pkg/spdk"

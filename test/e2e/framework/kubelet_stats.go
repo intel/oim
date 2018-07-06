@@ -38,7 +38,7 @@ import (
 	dockermetrics "k8s.io/kubernetes/pkg/kubelet/dockershim/metrics"
 	kubeletmetrics "k8s.io/kubernetes/pkg/kubelet/metrics"
 	"k8s.io/kubernetes/pkg/master/ports"
-	"k8s.io/kubernetes/test/e2e/framework/metrics"
+	"github.com/intel/oim/test/e2e/framework/metrics"
 
 	"github.com/prometheus/common/model"
 )

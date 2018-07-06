@@ -100,7 +100,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/system"
 	taintutils "k8s.io/kubernetes/pkg/util/taints"
 	utilversion "k8s.io/kubernetes/pkg/util/version"
-	"k8s.io/kubernetes/test/e2e/framework/ginkgowrapper"
+	"github.com/intel/oim/test/e2e/framework/ginkgowrapper"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	uexec "k8s.io/utils/exec"

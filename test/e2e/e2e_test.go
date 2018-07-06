@@ -23,7 +23,7 @@ import (
 	"os"
 	"testing"
 
-	"k8s.io/kubernetes/test/e2e/framework"
+	"github.com/intel/oim/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
 

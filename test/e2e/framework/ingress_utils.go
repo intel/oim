@@ -52,7 +52,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	utilfile "k8s.io/kubernetes/pkg/util/file"
-	"k8s.io/kubernetes/test/e2e/manifest"
+	"github.com/intel/oim/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
 	utilexec "k8s.io/utils/exec"
 
