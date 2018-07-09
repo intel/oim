@@ -20,12 +20,11 @@ import (
 	"github.com/nightlyone/lockfile"
 
 	"github.com/intel/oim/pkg/oim-common"
-	"github.com/intel/oim/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
 )
 
 var (
-	VM *qemu.VM
+	VM *VirtualMachine
 
 	qemuImage = os.Getenv("TEST_QEMU_IMAGE")
 	lock      *lockfile.Lockfile
@@ -110,7 +109,7 @@ func Init(options ...Option) error {
 		)
 	}
 	o.logger.Logf("Starting %s with: %v", qemuImage, opts)
-	vm, err := qemu.StartQEMU(qemuImage, opts...)
+	vm, err := StartQEMU(qemuImage, opts...)
 	if err != nil {
 		procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
 		return fmt.Errorf("Starting QEMU %s with %s failed: %s\nRunning processes:\n%s",
@@ -142,7 +141,7 @@ func SimpleInit() error {
 	}
 
 	var err error
-	VM, err = qemu.UseQEMU(qemuImage)
+	VM, err = UseQEMU(qemuImage)
 	return err
 }
 

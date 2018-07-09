@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/intel/oim/pkg/qemu"
 	testqemu "github.com/intel/oim/test/pkg/qemu"
 )
 

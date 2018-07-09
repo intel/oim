@@ -4,9 +4,6 @@ Copyright 2018 Intel Corporation.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// qemu starts images under QEMU and controls the virtual machine
-// via QMP. The main purpose is for testing, so a single instance
-// is created on demand and reused for different tests.
 package qemu
 
 import (
@@ -27,7 +24,7 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 )
 
-type VM struct {
+type VirtualMachine struct {
 	QMP    *qemu.QMP
 	Cmd    *exec.Cmd
 	Stderr bytes.Buffer
@@ -75,9 +72,9 @@ func (ql QMPLog) Errorf(format string, v ...interface{}) {
 
 // UseQEMU sets up a VM instance so that SSH commands can be issued.
 // The machine must be started separately.
-func UseQEMU(image string) (*VM, error) {
+func UseQEMU(image string) (*VirtualMachine, error) {
 	var err error
-	var vm VM
+	var vm VirtualMachine
 	// Here we use the start script provided with the image.
 	// In addition, we disable the serial console and instead
 	// use stdin/out for QMP. That way we immediately detect
@@ -100,7 +97,7 @@ func UseQEMU(image string) (*VM, error) {
 // StartQEMU() returns a VM pointer if a virtual machine could be
 // started, and error when starting failed, and nil for both when no
 // image is configured and thus nothing can be started.
-func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
+func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 	vm, err := UseQEMU(image)
 	if err != nil {
 		return nil, err
@@ -211,7 +208,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 }
 
 // Running returns true if the virtual machine instance is currently active.
-func (vm *VM) Running() bool {
+func (vm *VirtualMachine) Running() bool {
 	if vm.done == nil {
 		// Not started yet or already exited.
 		return false
@@ -224,9 +221,9 @@ func (vm *VM) Running() bool {
 	}
 }
 
-func (vm *VM) String() string {
+func (vm *VirtualMachine) String() string {
 	if vm == nil {
-		return "*VM{nil}"
+		return "*VirtualMachine{nil}"
 	}
 	result := vm.image
 	if vm.Running() {
@@ -242,7 +239,7 @@ func (vm *VM) String() string {
 // script of the machine image. It returns the commands combined output and
 // any exit error. Beware that (as usual) ssh will cocatenate the arguments
 // and run the result in a shell, so complex scripts may break.
-func (vm *VM) SSH(args ...string) (string, error) {
+func (vm *VirtualMachine) SSH(args ...string) (string, error) {
 	log.Printf("Running SSH %s %s\n", vm.SSHCmd, args)
 	cmd := exec.Command(vm.SSHCmd, args...)
 	out, err := cmd.CombinedOutput()
@@ -252,7 +249,7 @@ func (vm *VM) SSH(args ...string) (string, error) {
 
 // Transfers the content to the virtual machine and creates the file
 // with the chosen mode.
-func (vm *VM) Install(path string, data io.Reader, mode os.FileMode) error {
+func (vm *VirtualMachine) Install(path string, data io.Reader, mode os.FileMode) error {
 	cmd := exec.Command(vm.SSHCmd, fmt.Sprintf("rm -f '%[1]s' && cat > '%[1]s' && chmod %d '%s'", path, mode, path))
 	cmd.Stdin = data
 	out, err := cmd.CombinedOutput()
@@ -264,7 +261,7 @@ func (vm *VM) Install(path string, data io.Reader, mode os.FileMode) error {
 
 // StopQEMU ensures that the virtual machine powers down cleanly and
 // all resources are freed. Can be called more than once.
-func (vm *VM) StopQEMU() error {
+func (vm *VirtualMachine) StopQEMU() error {
 	var err error
 
 	// Trigger shutdown, ignoring errors.
@@ -301,7 +298,7 @@ type forwardPort struct {
 // Unix domaain sockets).
 //
 // Optionally a command can be run. If none is given, ssh is invoked with -N.
-func (vm *VM) ForwardPort(logger oimcommon.SimpleLogger, from interface{}, to interface{}, cmd ...string) (io.Closer, <-chan interface{}, error) {
+func (vm *VirtualMachine) ForwardPort(logger oimcommon.SimpleLogger, from interface{}, to interface{}, cmd ...string) (io.Closer, <-chan interface{}, error) {
 	fromStr := portToString(from)
 	toStr := portToString(to)
 	args := []string{
