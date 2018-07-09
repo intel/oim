@@ -9,7 +9,7 @@ import math "math"
 import _ "github.com/golang/protobuf/ptypes/wrappers"
 
 import (
-	context "golang.org/x/net/context"
+	"context"
 	grpc "google.golang.org/grpc"
 )
 

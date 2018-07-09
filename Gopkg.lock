@@ -1696,7 +1696,6 @@
     "github.com/stretchr/testify/require",
     "github.com/uber/jaeger-client-go/config",
     "golang.org/x/crypto/ssh",
-    "golang.org/x/net/context",
     "golang.org/x/net/websocket",
     "google.golang.org/api/compute/v1",
     "google.golang.org/grpc",

@@ -95,6 +95,8 @@ $(OIM_GO_TMP): INCLUDE = -I$(PROTOC_TMP_DIR)/include
 $(OIM_GO_TMP): $(OIM_PROTO) | $(PROTOC) $(PROTOC_GEN_GO)
 	@mkdir -p "$(@D)"
 	$(PROTOC) -I "$(<D)" $(INCLUDE) --go_out=$(GO_OUT):"$(@D)" "$<"
+	: https://github.com/golang/protobuf/issues/537
+	sed -i -e 's;context "golang.org/x/net/context";"context";' "$@"
 
 # The temp language bindings are compared to the ones that are
 # versioned. If they are different then it means the language

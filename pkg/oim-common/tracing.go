@@ -8,12 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 package oimcommon
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/golang/glog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
 	"github.com/opentracing/opentracing-go"
