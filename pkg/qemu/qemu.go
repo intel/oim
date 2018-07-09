@@ -11,6 +11,7 @@ package qemu
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -20,21 +21,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/digitalocean/go-qemu/qemu"
+	"github.com/intel/govmm/qemu"
 	"github.com/pkg/errors"
 
 	"github.com/intel/oim/pkg/oim-common"
 )
 
 type VM struct {
-	Domain  *qemu.Domain
-	Monitor *StdioMonitor
-	Cmd     *exec.Cmd
-	Stderr  bytes.Buffer
-	SSHCmd  string
-	done    <-chan interface{}
-	image   string
-	start   string
+	QMP    *qemu.QMP
+	Cmd    *exec.Cmd
+	Stderr bytes.Buffer
+	SSHCmd string
+	done   <-chan interface{}
+	image  string
+	start  string
 }
 
 type StartError struct {
@@ -51,6 +51,26 @@ func (err StartError) Error() string {
 		err.OtherError,
 		err.ExitError,
 		err.Stderr)
+}
+
+// QMPLog implements https://godoc.org/github.com/intel/govmm/qemu#QMPLog
+type QMPLog struct{}
+
+func (ql QMPLog) V(int32) bool {
+	// TODO: decide what we want to log (see https://github.com/intel/govmm/issues/20)
+	return true
+}
+
+func (ql QMPLog) Infof(format string, v ...interface{}) {
+	log.Printf("GOVMM INFO "+format, v...)
+}
+
+func (ql QMPLog) Warningf(format string, v ...interface{}) {
+	log.Printf("GOVMM WARNING "+format, v...)
+}
+
+func (ql QMPLog) Errorf(format string, v ...interface{}) {
+	log.Printf("GOVMM ERROR "+format, v...)
 }
 
 // UseQEMU sets up a VM instance so that SSH commands can be issued.
@@ -86,6 +106,12 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 		return nil, err
 	}
 
+	// We have to use a Unix domain socket for qemu.QMPStart.
+	qmpSocket := vm.image + ".qmp"
+	if err := os.Remove(qmpSocket); err != nil && !os.IsNotExist(err) {
+		return nil, errors.Wrapf(err, "removing %s", qmpSocket)
+	}
+
 	// Here we use the start script provided with the image.
 	// In addition, we disable the serial console and instead
 	// use stdin/out for QMP. That way we immediately detect
@@ -97,19 +123,11 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 		"-serial", "none",
 		"-chardev", "stdio,id=mon0",
 		"-serial", "file:" + filepath.Join(filepath.Dir(image), "serial.log"),
-		"-mon", "chardev=mon0,mode=control,pretty=off",
+		"-qmp", "unix:" + qmpSocket + ",server,nowait",
 	}
 	args = append(args, qemuOptions...)
 	log.Printf("QEMU command: %q", args)
 	vm.Cmd = exec.Command(args[0], args[1:]...)
-	in, err := vm.Cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	out, err := vm.Cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
 	vm.Cmd.Stderr = &vm.Stderr
 
 	// cleanup() kills the command and collects as much information as possible
@@ -132,22 +150,50 @@ func StartQEMU(image string, qemuOptions ...string) (*VM, error) {
 	}
 
 	// Give VM some time to power up, then kill it.
+	// If we succeeed, we stop the timer.
 	timer := time.AfterFunc(60*time.Second, func() {
 		vm.Cmd.Process.Kill()
 	})
 
+	cmdMonitor, err := oimcommon.AddCmdMonitor(vm.Cmd)
+	if err != nil {
+		return nil, errors.Wrap(err, "AddCmdMonitor")
+	}
 	if err = vm.Cmd.Start(); err != nil {
 		return nil, cleanup(err)
 	}
-	if vm.Monitor, err = NewStdioMonitor(in, out); err != nil {
-		return nil, cleanup(err)
+	vm.done = cmdMonitor.Watch()
+
+	// Poll for the QMP socket to appear.
+	for {
+		_, err := os.Stat(qmpSocket)
+		if err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return nil, cleanup(errors.Wrapf(err, "stat %s", qmpSocket))
+		}
+		select {
+		case <-vm.done:
+			return nil, cleanup(errors.New("QEMU terminated while waiting for QMP socket"))
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	if vm.done, err = vm.Monitor.ConnectStdio(); err != nil {
-		return nil, cleanup(err)
+
+	// Connect to QMP socket.
+	cfg := qemu.QMPConfig{
+		Logger: QMPLog{},
 	}
-	if vm.Domain, err = qemu.NewDomain(vm.Monitor, filepath.Base(image)); err != nil {
-		return nil, cleanup(err)
+	q, _, err := qemu.QMPStart(context.Background(), qmpSocket, cfg, make(chan struct{}))
+	if err != nil {
+		return nil, cleanup(errors.Wrapf(err, "QMPStart"))
 	}
+
+	// This has to be the first command executed in a QMP session.
+	err = q.ExecuteQMPCapabilities(context.Background())
+	if err != nil {
+		return nil, cleanup(errors.Wrapf(err, "ExecuteQMPCapabilities"))
+	}
+	vm.QMP = q
 
 	// Wait for successful SSH connection.
 	for {

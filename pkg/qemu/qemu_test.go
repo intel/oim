@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/intel/oim/pkg/qemu"
 	testqemu "github.com/intel/oim/test/pkg/qemu"
 )
 
@@ -128,4 +129,14 @@ echo 'hello | world'
 
 	err = testqemu.Finalize()
 	require.NoError(t, err)
+}
+
+func TestQEMUFailure(t *testing.T) {
+	start := time.Now()
+	_, err := qemu.StartQEMU("no-such-image")
+	end := time.Now()
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), "no-such-image")
+	}
+	assert.WithinDuration(t, end, start, time.Second)
 }

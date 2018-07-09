@@ -112,38 +112,6 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5fdfd8dfdb323ae8328363ec4f80a9aeb204da807578a0d620ef8ae54e881cb3"
-  name = "github.com/davecgh/go-xdr"
-  packages = ["xdr2"]
-  pruneopts = "UT"
-  revision = "e6a2ba005892b6a5b27cb5352f64c2e96942dd28"
-
-[[projects]]
-  branch = "master"
-  digest = "1:69674f04d81670b8a9818f376a0d19691c6f14f8c04283c933201792b4b7301b"
-  name = "github.com/digitalocean/go-libvirt"
-  packages = [
-    ".",
-    "internal/constants",
-  ]
-  pruneopts = "UT"
-  revision = "17c24de8037ae3d40336d41a7e9f2a67d0fc1dcf"
-
-[[projects]]
-  branch = "master"
-  digest = "1:b42bf72a4f71f036f329e5791903ee2723ab7054941cdd6a694d30620fb558ab"
-  name = "github.com/digitalocean/go-qemu"
-  packages = [
-    "internal/qmp-gen",
-    "qemu",
-    "qmp",
-    "qmp/raw",
-  ]
-  pruneopts = "UT"
-  revision = "d5e8dbfd06fdb6f19c5149c74b79d5b4318dbfa7"
-
-[[projects]]
-  branch = "master"
   digest = "1:9f5e5fe15b95106e3b79c9d3cd9467a580b28ab44b2ccc07f617076d736ebdc2"
   name = "github.com/docker/distribution"
   packages = [
@@ -479,6 +447,14 @@
   pruneopts = "UT"
   revision = "76626ae9c91c4f2a10f34cad8ce83ea42c93bb75"
   version = "v1.0"
+
+[[projects]]
+  branch = "master"
+  digest = "1:5b8ca6d4305972976cef5c39034c4212af72556166d530ba9612966b8eaa5bc3"
+  name = "github.com/intel/govmm"
+  packages = ["qemu"]
+  pruneopts = "UT"
+  revision = "ff2401825e0930811919c86c36d64b113aa00083"
 
 [[projects]]
   digest = "1:bb3cc4c1b21ea18cfa4e3e47440fc74d316ab25b0cf42927e8c1274917bd9891"
@@ -1670,13 +1646,12 @@
   analyzer-version = 1
   input-imports = [
     "github.com/container-storage-interface/spec/lib/go/csi/v0",
-    "github.com/digitalocean/go-qemu/qemu",
-    "github.com/digitalocean/go-qemu/qmp",
     "github.com/golang/glog",
     "github.com/golang/protobuf/proto",
     "github.com/golang/protobuf/ptypes/wrappers",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
+    "github.com/intel/govmm/qemu",
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/mwitkow/grpc-proxy/proxy",
     "github.com/nightlyone/lockfile",
