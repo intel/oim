@@ -128,7 +128,7 @@ var _ = Describe("OIM Controller", func() {
 			bdevName = volumeID
 			bdevArgs = oim.ProvisionMallocBDevRequest{
 				BdevName: bdevName,
-				Size:     1 * 1024 * 1024,
+				Size_:    1 * 1024 * 1024,
 			}
 		)
 
@@ -236,13 +236,13 @@ var _ = Describe("OIM Controller", func() {
 			// Create new BDev.
 			bdevArgs2 := oim.ProvisionMallocBDevRequest{
 				BdevName: bdevName + "2",
-				Size:     1 * 1024 * 1024,
+				Size_:    1 * 1024 * 1024,
 			}
 			_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Delete twice.
-			bdevArgs2.Size = 0
+			bdevArgs2.Size_ = 0
 			_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)
 			Expect(err).NotTo(HaveOccurred())
 			_, err = c.ProvisionMallocBDev(context.Background(), &bdevArgs2)

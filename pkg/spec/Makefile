@@ -55,10 +55,11 @@ $(PROTOC):
 
 # This is the recipe for getting and installing the go plug-in
 # for protoc
-PROTOC_GEN_GO_PKG := github.com/golang/protobuf/protoc-gen-go
-PROTOC_GEN_GO := protoc-gen-go
+PROTOC_GEN_GO_BINARY := gogofaster
+PROTOC_GEN_GO := protoc-gen-$(PROTOC_GEN_GO_BINARY)
+PROTOC_GEN_GO_PKG := github.com/gogo/protobuf/$(PROTOC_GEN_GO)
 $(PROTOC_GEN_GO): PROTOBUF_PKG := $(dir $(PROTOC_GEN_GO_PKG))
-$(PROTOC_GEN_GO): PROTOBUF_VERSION := v1.1.0
+$(PROTOC_GEN_GO): PROTOBUF_VERSION := v1.0.0
 $(PROTOC_GEN_GO):
 	mkdir -p $(dir $(GOPATH)/src/$(PROTOBUF_PKG))
 	test -d $(GOPATH)/src/$(PROTOBUF_PKG)/.git || git clone https://$(PROTOBUF_PKG) $(GOPATH)/src/$(PROTOBUF_PKG)
@@ -90,11 +91,16 @@ OIM_GO_TMP := $(OIM_PKG)/.build/oim.pb.go
 
 # This recipe generates the go language bindings to a temp area.
 $(OIM_GO_TMP): GO_OUT := plugins=grpc
-$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/wrappers.proto=github.com/golang/protobuf/ptypes/wrappers
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/any.proto=github.com/gogo/protobuf/types
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/any.proto=github.com/gogo/protobuf/types
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/struct.proto=github.com/gogo/protobuf/types
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types
+$(OIM_GO_TMP): GO_OUT := $(GO_OUT),Mgoogle/protobuf/wrappers.proto=github.com/gogo/protobuf/types
 $(OIM_GO_TMP): INCLUDE = -I$(PROTOC_TMP_DIR)/include
 $(OIM_GO_TMP): $(OIM_PROTO) | $(PROTOC) $(PROTOC_GEN_GO)
 	@mkdir -p "$(@D)"
-	$(PROTOC) -I "$(<D)" $(INCLUDE) --go_out=$(GO_OUT):"$(@D)" "$<"
+	$(PROTOC) -I "$(<D)" $(INCLUDE) --$(PROTOC_GEN_GO_BINARY)_out=$(GO_OUT):"$(@D)" "$<"
 	: https://github.com/golang/protobuf/issues/537
 	sed -i -e 's;context "golang.org/x/net/context";"context";' "$@"
 

@@ -315,13 +315,14 @@
   revision = "b0a3ed684d0fdd3e1eda00433382188ce8aa7169"
 
 [[projects]]
-  digest = "1:0a50b1106ea8a2f5fdef2bc3689c5d41ac11288292e8627f7f96ad80da048356"
+  digest = "1:dcfb52b8e9ca0cdee25b6d9a22153563bf7f8f5fda1c89418305d391883c9b3b"
   name = "github.com/gogo/protobuf"
   packages = [
     "gogoproto",
     "proto",
     "protoc-gen-gogo/descriptor",
     "sortkeys",
+    "types",
   ]
   pruneopts = "UT"
   revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
@@ -1645,9 +1646,9 @@
   analyzer-version = 1
   input-imports = [
     "github.com/container-storage-interface/spec/lib/go/csi/v0",
+    "github.com/gogo/protobuf/proto",
+    "github.com/gogo/protobuf/types",
     "github.com/golang/glog",
-    "github.com/golang/protobuf/proto",
-    "github.com/golang/protobuf/ptypes/wrappers",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
     "github.com/intel/govmm/qemu",

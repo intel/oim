@@ -179,7 +179,7 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 	if bdevName == "" {
 		return nil, errors.New("empty BDev name")
 	}
-	size := in.Size
+	size := in.Size_
 	if size != 0 {
 		bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
 		if err != nil || len(bdevs) != 1 {

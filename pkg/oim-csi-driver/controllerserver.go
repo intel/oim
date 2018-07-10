@@ -202,7 +202,7 @@ func (cs *controllerServer) provisionOIM(ctx context.Context, bdevName string, s
 	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", cs.od.oimControllerID)
 	_, err = controllerClient.ProvisionMallocBDev(ctx, &oim.ProvisionMallocBDevRequest{
 		BdevName: bdevName,
-		Size:     size,
+		Size_:    size,
 	})
 	return err
 }
