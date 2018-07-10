@@ -77,13 +77,6 @@ required = ["github.com/spdk/spdk/go"]
   branch = "master"
   name = "golang.org/x/net"
 
-# Cannot use 1.12 because it is not compatible
-# with github.com/mwitkow/grpc-proxy@master (https://github.com/mwitkow/grpc-proxy/issues/24)
-[[constraint]]
-  name = "github.com/mwitkow/grpc-proxy"
-  branch = "gRPC-1.12"
-  source = "github.com/pohly/grpc-proxy"
-
 [[constraint]]
   name = "k8s.io/kubernetes"
   version = "=1.10.5"

@@ -11,7 +11,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/mwitkow/grpc-proxy/proxy"
+	"github.com/vgough/grpc-proxy/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -46,33 +46,43 @@ func (r *Registry) RegisterController(ctx context.Context, in *oim.RegisterContr
 	return &oim.RegisterControllerReply{}, nil
 }
 
-// StreamDirectory returns a director which transparently
-// proxies gRPC method calls to the corresponding controller.
+// StreamDirectory transparently proxies gRPC method calls to the
+// corresponding controller, without keeping connections open.
 func (r *Registry) StreamDirector() proxy.StreamDirector {
-	return func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
-		// Make sure we never forward internal services.
-		if strings.HasPrefix(fullMethodName, "/oim.v0.Registry/") {
-			return nil, nil, status.Error(codes.Unimplemented, "Unknown method")
-		}
-		md, ok := metadata.FromIncomingContext(ctx)
-		// Copy the inbound metadata explicitly.
-		outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
-		if ok {
-			// Decide on which backend to dial
-			if controllerID, exists := md["controllerid"]; exists {
-				address := r.db.Lookup(controllerID[0])
-				if address == "" {
-					return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", controllerID[0])
-				}
-				opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()))
+	return &StreamDirector{r}
+}
 
-				// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
-				conn, err := grpc.DialContext(ctx, address, opts...)
-				return outCtx, conn, err
-			}
-		}
-		return outCtx, nil, status.Error(codes.Unimplemented, "Unknown method")
+type StreamDirector struct {
+	r *Registry
+}
+
+func (sd *StreamDirector) Connect(ctx context.Context, method string) (context.Context, *grpc.ClientConn, error) {
+	// Make sure we never forward internal services.
+	if strings.HasPrefix(method, "/oim.v0.Registry/") {
+		return nil, nil, status.Error(codes.Unimplemented, "Unknown method")
 	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	// Copy the inbound metadata explicitly.
+	outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
+	if ok {
+		// Decide on which backend to dial
+		if controllerID, exists := md["controllerid"]; exists {
+			address := sd.r.db.Lookup(controllerID[0])
+			if address == "" {
+				return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", controllerID[0])
+			}
+			opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()))
+
+			// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
+			conn, err := grpc.DialContext(ctx, address, opts...)
+			return outCtx, conn, err
+		}
+	}
+	return outCtx, nil, status.Error(codes.Unimplemented, "Unknown method")
+}
+
+func (sd *StreamDirector) Release(ctx context.Context, conn *grpc.ClientConn) {
+	conn.Close()
 }
 
 type Option func(r *Registry) error
@@ -105,7 +115,7 @@ func Server(endpoint string, registry *Registry) (*oimcommon.NonBlockingGRPCServ
 		Endpoint: endpoint,
 		ServerOptions: []grpc.ServerOption{
 			grpc.CustomCodec(proxy.Codec()),
-			grpc.UnknownServiceHandler(proxy.TransparentHandler(registry.StreamDirector())),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(&StreamDirector{registry})),
 		},
 	}
 	return server, service
