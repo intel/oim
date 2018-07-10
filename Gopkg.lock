@@ -58,10 +58,10 @@
   revision = "3a0bb77429bd3a61596f5e8a3172445844342120"
 
 [[projects]]
-  digest = "1:a54dc69ec3668e0e57ad159a0a8c0ce1ec571174bb4eb6b3915833a8c21d40f3"
+  digest = "1:40b1401a3a750b2e075eea5f48d1327d99af952d52b74cb09cebd64d15ab63cb"
   name = "github.com/container-storage-interface/spec"
   packages = ["lib/go/csi/v0"]
-  pruneopts = "UT"
+  pruneopts = ""
   revision = "2178fdeea87f1150a17a63252eee28d4d8141f72"
   version = "v0.3.0"
 
@@ -343,21 +343,6 @@
   packages = ["lru"]
   pruneopts = "UT"
   revision = "24b0969c4cb722950103eed87108c8d291a8df00"
-
-[[projects]]
-  digest = "1:4c3902ed2d562ad828e077149a7969200a3d27852a7b4fb5c1e1055675dbd0f3"
-  name = "github.com/golang/protobuf"
-  packages = [
-    "proto",
-    "ptypes",
-    "ptypes/any",
-    "ptypes/duration",
-    "ptypes/timestamp",
-    "ptypes/wrappers",
-  ]
-  pruneopts = "UT"
-  revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
-  version = "v1.1.0"
 
 [[projects]]
   branch = "master"
@@ -1646,6 +1631,7 @@
   analyzer-version = 1
   input-imports = [
     "github.com/container-storage-interface/spec/lib/go/csi/v0",
+    "github.com/gogo/protobuf/gogoproto",
     "github.com/gogo/protobuf/proto",
     "github.com/gogo/protobuf/types",
     "github.com/golang/glog",

@@ -30,7 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 	spb "google.golang.org/genproto/googleapis/rpc/status"

@@ -19,7 +19,7 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 
 	dto "github.com/prometheus/client_model/go"
 )

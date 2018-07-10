@@ -19,8 +19,8 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
+	"github.com/gogo/protobuf/proto"
+	ptypes "github.com/gogo/protobuf/types"
 )
 
 type documentHandler func(version string, extensionName string, document string)

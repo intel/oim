@@ -35,7 +35,7 @@ import (
 	"github.com/NYTimes/gziphandler"
 	restful "github.com/emicklei/go-restful"
 	"github.com/go-openapi/spec"
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	openapi_v2 "github.com/googleapis/gnostic/OpenAPIv2"
 	"github.com/googleapis/gnostic/compiler"
 

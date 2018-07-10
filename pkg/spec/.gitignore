@@ -1,5 +1,5 @@
 /.protoc
 /oim.a
-/oim/v0/.build/
+/.build/
 /protoc
 /protoc-gen-gogofaster

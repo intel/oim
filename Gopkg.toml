@@ -26,6 +26,18 @@
 
 required = ["github.com/spdk/spdk/go"]
 
+# golang/protobuf gets replaced with gogo/protobuf by
+# post-processing the vendored sources, see "update_dep"
+# in the Makefile.
+ignored = [
+  "github.com/golang/protobuf/proto",
+  "github.com/golang/protobuf/ptypes",
+  "github.com/golang/protobuf/ptypes/any",
+  "github.com/golang/protobuf/ptypes/duration",
+  "github.com/golang/protobuf/ptypes/timestamp",
+  "github.com/golang/protobuf/ptypes/wrappers",
+]
+
 [prune]
   go-tests = true
   unused-packages = true
@@ -35,13 +47,14 @@ required = ["github.com/spdk/spdk/go"]
     go-tests = false
     unused-packages = false
 
+  [[prune.project]]
+    name = "github.com/container-storage-interface/spec"
+    go-tests = false
+    unused-packages = false
+
 [[constraint]]
   name = "github.com/spdk/spdk"
   branch = "master"
-
-[[constraint]]
-  name = "github.com/container-storage-interface/spec"
-  version = "0.3.0"
 
 [[override]]
   name = "github.com/kubernetes-csi/csi-test"

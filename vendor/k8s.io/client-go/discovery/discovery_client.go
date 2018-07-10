@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	"github.com/googleapis/gnostic/OpenAPIv2"
 
 	"k8s.io/apimachinery/pkg/api/errors"
