@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware"
-	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
-	"github.com/opentracing/opentracing-go"
+	// "github.com/grpc-ecosystem/go-grpc-middleware"
+	// "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
+	// "github.com/opentracing/opentracing-go"
 	"google.golang.org/grpc"
 )
 
@@ -54,11 +54,12 @@ func ChooseDialOpts(endpoint string, opts ...grpc.DialOption) []grpc.DialOption 
 
 	// Tracing of outgoing calls, including remote and local logging.
 	formatter := CompletePayloadFormatter{} // TODO: filter out secrets
-	interceptor := grpc_middleware.ChainUnaryClient(
-		otgrpc.OpenTracingClientInterceptor(
-			opentracing.GlobalTracer(),
-			otgrpc.SpanDecorator(TraceGRPCPayload(formatter))),
-		LogGRPCClient(formatter))
+	// interceptor := grpc_middleware.ChainUnaryClient(
+	// 	otgrpc.OpenTracingClientInterceptor(
+	// 		opentracing.GlobalTracer(),
+	// 		otgrpc.SpanDecorator(TraceGRPCPayload(formatter))),
+	// 	LogGRPCClient(formatter))
+	interceptor := LogGRPCClient(formatter)
 	opts = append(opts, grpc.WithUnaryInterceptor(interceptor))
 
 	result = append(result, opts...)

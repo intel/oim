@@ -357,22 +357,6 @@
   version = "v0.2.0"
 
 [[projects]]
-  digest = "1:91eb9611558c592269aac6f3a8c8e017be26fe4300dfb6824728eadf8103a75a"
-  name = "github.com/grpc-ecosystem/go-grpc-middleware"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "c250d6563d4d4c20252cd865923440e829844f4e"
-  version = "v1.0.0"
-
-[[projects]]
-  branch = "master"
-  digest = "1:1a1206efd03a54d336dce7bb8719e74f2f8932f661cb9f57d5813a1d99c083d8"
-  name = "github.com/grpc-ecosystem/grpc-opentracing"
-  packages = ["go/otgrpc"]
-  pruneopts = "UT"
-  revision = "8e809c8a86450a29b90dcc9efbf062d0fe6d9746"
-
-[[projects]]
   branch = "master"
   digest = "1:cf296baa185baae04a9a7004efee8511d08e2f5f51d4cbe5375da89722d681db"
   name = "github.com/hashicorp/golang-lru"
@@ -589,18 +573,6 @@
   version = "v1.0.1"
 
 [[projects]]
-  digest = "1:27af6024faa3c28426a698b8c653be0fd908bc96e25b7d76f2192eb342427db6"
-  name = "github.com/opentracing/opentracing-go"
-  packages = [
-    ".",
-    "ext",
-    "log",
-  ]
-  pruneopts = "UT"
-  revision = "1949ddbfd147afd4d964a9f00b24eb291e0e7c38"
-  version = "v1.0.2"
-
-[[projects]]
   digest = "1:361de06aa7ae272616cbe71c3994a654cc6316324e30998e650f7765b20c5b33"
   name = "github.com/pborman/uuid"
   packages = ["."]
@@ -742,40 +714,6 @@
   pruneopts = "UT"
   revision = "f35b8ab0b5a2cef36673838d662e249dd9c94686"
   version = "v1.2.2"
-
-[[projects]]
-  digest = "1:85d199d3ade76032535e77dfab3838216cc2da7e503de1cf224acc731beb493d"
-  name = "github.com/uber/jaeger-client-go"
-  packages = [
-    ".",
-    "config",
-    "internal/baggage",
-    "internal/baggage/remote",
-    "internal/spanlog",
-    "internal/throttler",
-    "internal/throttler/remote",
-    "log",
-    "rpcmetrics",
-    "thrift",
-    "thrift-gen/agent",
-    "thrift-gen/baggage",
-    "thrift-gen/jaeger",
-    "thrift-gen/sampling",
-    "thrift-gen/zipkincore",
-    "utils",
-  ]
-  pruneopts = "UT"
-  revision = "b043381d944715b469fd6b37addfd30145ca1758"
-  version = "v2.14.0"
-
-[[projects]]
-  branch = "metrics-local"
-  digest = "1:edd5621aa5a9fd3c98a12987e98d44c72df8bfb0b0def006a57ccff790bd041b"
-  name = "github.com/uber/jaeger-lib"
-  packages = ["metrics"]
-  pruneopts = "UT"
-  revision = "d202adb1a1ee61eb0edc33eda2c66a890ddbf242"
-  source = "github.com/pohly/jaeger-lib"
 
 [[projects]]
   digest = "1:03aa6e485e528acb119fb32901cf99582c380225fc7d5a02758e08b180cb56c3"
@@ -1626,16 +1564,12 @@
     "github.com/gogo/protobuf/gogoproto",
     "github.com/gogo/protobuf/proto",
     "github.com/gogo/protobuf/types",
-    "github.com/grpc-ecosystem/go-grpc-middleware",
-    "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
     "github.com/intel/govmm/qemu",
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/nightlyone/lockfile",
     "github.com/onsi/ginkgo",
     "github.com/onsi/gomega",
     "github.com/onsi/gomega/types",
-    "github.com/opentracing/opentracing-go",
-    "github.com/opentracing/opentracing-go/log",
     "github.com/pkg/errors",
     "github.com/prometheus/common/expfmt",
     "github.com/prometheus/common/model",
@@ -1643,7 +1577,6 @@
     "github.com/spf13/viper",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
-    "github.com/uber/jaeger-client-go/config",
     "github.com/vgough/grpc-proxy/proxy",
     "golang.org/x/crypto/ssh",
     "golang.org/x/net/websocket",

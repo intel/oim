@@ -11,14 +11,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"google.golang.org/grpc"
 
-	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
-	"github.com/opentracing/opentracing-go"
-	otlog "github.com/opentracing/opentracing-go/log"
-	jaegercfg "github.com/uber/jaeger-client-go/config"
+	// TODO: re-enable tracing once https://github.com/jaegertracing/jaeger-lib/issues/32 is addressed.
+	// "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
+	// "github.com/opentracing/opentracing-go"
+	// otlog "github.com/opentracing/opentracing-go/log"
+	// jaegercfg "github.com/uber/jaeger-client-go/config"
 
 	"github.com/intel/oim/pkg/log"
 )
@@ -88,11 +88,11 @@ func LogGRPCServer(logger log.Logger, formatter PayloadFormatter) grpc.UnaryServ
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		ctx = logGRPCPre(ctx, logger, formatter, "received", info.FullMethod, req)
 		innerCtx := ctx
-		if sp := opentracing.SpanFromContext(ctx); sp != nil {
-			l := log.FromContext(ctx)
-			l = newSpanLogger(sp, l)
-			innerCtx = log.WithLogger(ctx, l)
-		}
+		// if sp := opentracing.SpanFromContext(ctx); sp != nil {
+		// 	l := log.FromContext(ctx)
+		// 	l = newSpanLogger(sp, l)
+		// 	innerCtx = log.WithLogger(ctx, l)
+		// }
 		resp, err := handler(innerCtx, req)
 		logGRPCPost(ctx, formatter, "sending", err, resp)
 		return resp, err
@@ -110,11 +110,11 @@ func LogGRPCClient(formatter PayloadFormatter) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = logGRPCPre(ctx, log.FromContext(ctx), formatter, "sending", method, req)
 		innerCtx := ctx
-		if sp := opentracing.SpanFromContext(ctx); sp != nil {
-			logger := log.FromContext(ctx)
-			logger = newSpanLogger(sp, logger)
-			innerCtx = log.WithLogger(ctx, logger)
-		}
+		// if sp := opentracing.SpanFromContext(ctx); sp != nil {
+		// 	logger := log.FromContext(ctx)
+		// 	logger = newSpanLogger(sp, logger)
+		// 	innerCtx = log.WithLogger(ctx, logger)
+		// }
 		err := invoker(innerCtx, method, req, reply, cc, opts...)
 		logGRPCPost(ctx, formatter, "received", err, reply)
 		return err
@@ -140,83 +140,88 @@ func logGRPCPost(ctx context.Context, formatter PayloadFormatter, msg string, er
 // TraceGRPCPayload returns a span decorator which adds the request
 // and response as tags to the call's span if (and only if) a
 // formatter is given.
-func TraceGRPCPayload(formatter PayloadFormatter) otgrpc.SpanDecoratorFunc {
-	return func(sp opentracing.Span, method string, req, reply interface{}, err error) {
-		if formatter != nil {
-			sp.SetTag("request", &delayedFormatter{formatter, req})
-			if err == nil {
-				sp.SetTag("response", &delayedFormatter{formatter, reply})
-			}
-		}
-	}
-}
+// func TraceGRPCPayload(formatter PayloadFormatter) otgrpc.SpanDecoratorFunc {
+// 	return func(sp opentracing.Span, method string, req, reply interface{}, err error) {
+// 		if formatter != nil {
+// 			sp.SetTag("request", &delayedFormatter{formatter, req})
+// 			if err == nil {
+// 				sp.SetTag("response", &delayedFormatter{formatter, reply})
+// 			}
+// 		}
+// 	}
+// }
 
-type spanLogger struct {
-	log.LoggerBase
-	sp     opentracing.Span
-	logger log.Logger
-}
+// type spanLogger struct {
+// 	log.LoggerBase
+// 	sp     opentracing.Span
+// 	logger log.Logger
+// }
 
-func newSpanLogger(sp opentracing.Span, logger log.Logger) log.Logger {
-	l := &spanLogger{sp: sp, logger: logger}
-	l.LoggerBase.Init(l)
-	return l
-}
+// func newSpanLogger(sp opentracing.Span, logger log.Logger) log.Logger {
+// 	l := &spanLogger{sp: sp, logger: logger}
+// 	l.LoggerBase.Init(l)
+// 	return l
+// }
 
-func (sl *spanLogger) Output(threshold log.Threshold, args ...interface{}) {
-	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
-		fv.EmitString("event", strings.ToLower(threshold.String()))
-		fv.EmitString("message", fmt.Sprint(args...))
-	}))
-	sl.logger.Output(threshold, args...)
-}
+// func (sl *spanLogger) Output(threshold log.Threshold, args ...interface{}) {
+// 	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+// 		fv.EmitString("event", strings.ToLower(threshold.String()))
+// 		fv.EmitString("message", fmt.Sprint(args...))
+// 	}))
+// 	sl.logger.Output(threshold, args...)
+// }
 
-func (sl *spanLogger) Outputf(threshold log.Threshold, format string, args ...interface{}) {
-	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
-		fv.EmitString("event", strings.ToLower(threshold.String()))
-		fv.EmitString("message", fmt.Sprintf(format, args...))
-	}))
-	sl.logger.Outputf(threshold, format, args...)
-}
+// func (sl *spanLogger) Outputf(threshold log.Threshold, format string, args ...interface{}) {
+// 	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+// 		fv.EmitString("event", strings.ToLower(threshold.String()))
+// 		fv.EmitString("message", fmt.Sprintf(format, args...))
+// 	}))
+// 	sl.logger.Outputf(threshold, format, args...)
+// }
 
-func (sl *spanLogger) Outputw(threshold log.Threshold, msg string, keysAndValues ...interface{}) {
-	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
-		fv.EmitString("event", strings.ToLower(threshold.String()))
-		fv.EmitString("message", msg)
-		for i := 0; i+1 < len(keysAndValues); i += 2 {
-			// We rely in reflection inside emitObject
-			// here instead of trying to switch by the
-			// type of the value ourselves, like
-			// otlog.InterleavedKVToFields does.
-			fv.EmitObject(fmt.Sprintf("%s", keysAndValues[i]),
-				keysAndValues[i+1])
-		}
-	}))
-	sl.logger.Outputw(threshold, msg, keysAndValues...)
-}
+// func (sl *spanLogger) Outputw(threshold log.Threshold, msg string, keysAndValues ...interface{}) {
+// 	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+// 		fv.EmitString("event", strings.ToLower(threshold.String()))
+// 		fv.EmitString("message", msg)
+// 		for i := 0; i+1 < len(keysAndValues); i += 2 {
+// 			// We rely in reflection inside emitObject
+// 			// here instead of trying to switch by the
+// 			// type of the value ourselves, like
+// 			// otlog.InterleavedKVToFields does.
+// 			fv.EmitObject(fmt.Sprintf("%s", keysAndValues[i]),
+// 				keysAndValues[i+1])
+// 		}
+// 	}))
+// 	sl.logger.Outputw(threshold, msg, keysAndValues...)
+// }
 
-// With creates a new instance with the same span and a logger
-// which has the additional fields added.
-func (sl *spanLogger) With(keysAndValues ...interface{}) log.Logger {
-	return newSpanLogger(sl.sp,
-		sl.logger.With(keysAndValues...))
-}
+// // With creates a new instance with the same span and a logger
+// // which has the additional fields added.
+// func (sl *spanLogger) With(keysAndValues ...interface{}) log.Logger {
+// 	return newSpanLogger(sl.sp,
+// 		sl.logger.With(keysAndValues...))
+// }
+
+type nopCloser struct{}
+
+func (n nopCloser) Close() error { return nil }
 
 // InitTracer initializes the global OpenTracing tracer, using Jaeger
 // and the provided name for the current process. Must be called at
 // the start of main(). The result is a function which should be
 // called at the end of main() to clean up.
 func InitTracer(component string) (closer io.Closer, err error) {
-	// Add support for the usual env variables, in particular
-	// JAEGER_AGENT_HOST, which is needed when running only one
-	// Jaeger agent per cluster.
-	cfg, err := jaegercfg.FromEnv()
-	if err != nil {
-		// parsing errors might happen here, such as when we get a string where we expect a number
-		return
-	}
+	// // Add support for the usual env variables, in particular
+	// // JAEGER_AGENT_HOST, which is needed when running only one
+	// // Jaeger agent per cluster.
+	// cfg, err := jaegercfg.FromEnv()
+	// if err != nil {
+	// 	// parsing errors might happen here, such as when we get a string where we expect a number
+	// 	return
+	// }
 
-	// Initialize tracer singleton.
-	closer, err = cfg.InitGlobalTracer(component)
+	// // Initialize tracer singleton.
+	// closer, err = cfg.InitGlobalTracer(component)
+	closer = nopCloser{}
 	return
 }

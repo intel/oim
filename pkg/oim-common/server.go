@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware"
-	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
-	"github.com/opentracing/opentracing-go"
+	// "github.com/grpc-ecosystem/go-grpc-middleware"
+	// "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
+	// "github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 
@@ -75,11 +75,12 @@ func (s *NonBlockingGRPCServer) Start(ctx context.Context, services ...RegisterS
 	logger := log.FromContext(ctx)
 	formatter := CompletePayloadFormatter{}
 
-	interceptor := grpc_middleware.ChainUnaryServer(
-		otgrpc.OpenTracingServerInterceptor(
-			opentracing.GlobalTracer(),
-			otgrpc.SpanDecorator(TraceGRPCPayload(formatter))),
-		LogGRPCServer(logger, formatter))
+	// interceptor := grpc_middleware.ChainUnaryServer(
+	// 	otgrpc.OpenTracingServerInterceptor(
+	// 		opentracing.GlobalTracer(),
+	// 		otgrpc.SpanDecorator(TraceGRPCPayload(formatter))),
+	// 	LogGRPCServer(logger, formatter))
+	interceptor := LogGRPCServer(logger, formatter)
 	opts := []grpc.ServerOption{
 		grpc.UnaryInterceptor(interceptor),
 	}
