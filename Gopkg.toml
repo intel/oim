@@ -86,6 +86,11 @@ ignored = [
   name = "github.com/uber/jaeger-client-go"
   version = "2.14.0"
 
+[[override]]
+  name = "github.com/uber/jaeger-lib"
+  branch = "metrics-local"
+  source = "github.com/pohly/jaeger-lib"
+
 [[constraint]]
   branch = "master"
   name = "golang.org/x/net"
