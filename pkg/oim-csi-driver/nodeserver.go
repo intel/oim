@@ -264,6 +264,9 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 		case <-watcher.Events:
 			// Try again.
 			log.Printf("%s changed.", sys)
+		case <-time.After(5 * time.Second):
+			// Sometimes inotify seems to miss events. Recover by checking from time to time.
+			log.Printf("Checking %s after timeout.", sys)
 		case err := <-watcher.Errors:
 			return "", 0, 0, status.Errorf(codes.Internal, "watching %s: %s", sys, err.Error())
 		}
