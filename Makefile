@@ -62,6 +62,19 @@ test: all vet run_tests
 vet:
 	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
 
+# Check resp. fix formatting.
+.PHONY: test_fmt fmt
+test: test_fmt
+test_fmt:
+	@ files=$$(find pkg cmd test -name '*.go'); \
+	if [ $$(gofmt -d $$files | wc -l) -ne 0 ]; then \
+		echo "formatting errors:"; \
+		gofmt -d $$files; \
+		false; \
+	fi
+fmt:
+	gofmt -l -w $$(find pkg cmd test -name '*.go')
+
 # Determine whether we have QEMU and SPDK.
 _TEST_QEMU_IMAGE=$(if $(TEST_QEMU_IMAGE),$(TEST_QEMU_IMAGE),$(if $(WITH_E2E_TESTS),_work/clear-kvm.img))
 _TEST_SPDK_VHOST_BINARY=$(if $(TEST_SPDK_VHOST_BINARY),$(TEST_SPDK_VHOST_BINARY),$(if $(WITH_E2E_TESTS),_work/vhost))
