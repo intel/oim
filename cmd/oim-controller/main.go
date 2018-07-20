@@ -8,18 +8,14 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
-	"os"
 	"time"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
 )
-
-func init() {
-	flag.Set("logtostderr", "true")
-}
 
 var (
 	endpoint          = flag.String("endpoint", "tcp://:8999", "OIM controller endpoint for net.Listen")
@@ -30,14 +26,19 @@ var (
 	controllerAddress = flag.String("controller-address", "ipv4:///oim-controller:8999", "external gRPC name for use with grpc.Dial that corresponds to the endpoint")
 	registry          = flag.String("registry", "", "gRPC name that connects to the OIM registry, empty disables registration")
 	registryDelay     = flag.Duration("registry-delay", time.Minute, "determines how long the controller waits before registering at the OIM registry")
+	_                 = log.InitSimpleFlags()
 )
 
 func main() {
 	flag.Parse()
-	closer, err := oimcommon.InitTracer("OIM Controller")
+	app := "oim-controller"
+
+	logger := log.NewSimpleLogger(log.NewSimpleConfig())
+	log.Set(logger)
+
+	closer, err := oimcommon.InitTracer(app)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize tracer: %s\n", err)
-		os.Exit(1)
+		logger.Fatalf("Failed to initialize tracer: %s\n", err)
 	}
 	defer closer.Close()
 
@@ -52,12 +53,10 @@ func main() {
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize server: %s\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to initialize server: %s\n", err)
 	}
 	server, service := oimcontroller.Server(*endpoint, controller)
-	if err := server.Run(service); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to run server: %s\n", err)
-		os.Exit(1)
+	if err := server.Run(context.Background(), service); err != nil {
+		logger.Fatal("Failed to run server: %s\n", err)
 	}
 }

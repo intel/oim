@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/intel/oim/test/e2e/framework"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
-	"github.com/intel/oim/test/e2e/framework"
 )
 
 type KubeletOpt string

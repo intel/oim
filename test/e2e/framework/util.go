@@ -41,7 +41,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/golang/glog"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
 
@@ -101,6 +100,8 @@ import (
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	uexec "k8s.io/utils/exec"
+
+	"github.com/intel/oim/pkg/log"
 )
 
 const (
@@ -270,12 +271,8 @@ func nowStamp() string {
 	return time.Now().Format(time.StampMilli)
 }
 
-func log(level string, format string, args ...interface{}) {
-	fmt.Fprintf(GinkgoWriter, nowStamp()+": "+level+": "+format+"\n", args...)
-}
-
 func Logf(format string, args ...interface{}) {
-	log("INFO", format, args...)
+	log.L().Infof(format, args...)
 }
 
 func Failf(format string, args ...interface{}) {
@@ -286,13 +283,13 @@ func Failf(format string, args ...interface{}) {
 // (for example, for call chain f -> g -> FailfWithOffset(1, ...) error would be logged for "f").
 func FailfWithOffset(offset int, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	log("INFO", msg)
+	log.L().Info(msg)
 	ginkgowrapper.Fail(nowStamp()+": "+msg, 1+offset)
 }
 
 func Skipf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	log("INFO", msg)
+	log.L().Info(msg)
 	ginkgowrapper.Skip(nowStamp() + ": " + msg)
 }
 
@@ -4778,7 +4775,7 @@ func ListNamespaceEvents(c clientset.Interface, ns string) error {
 		return err
 	}
 	for _, event := range ls.Items {
-		glog.Infof("Event(%#v): type: '%v' reason: '%v' %v", event.InvolvedObject, event.Type, event.Reason, event.Message)
+		log.L().Infof("Event(%#v): type: '%v' reason: '%v' %v", event.InvolvedObject, event.Type, event.Reason, event.Message)
 	}
 	return nil
 }
@@ -4817,7 +4814,7 @@ func (p *E2ETestNodePreparer) PrepareNodes() error {
 		sum += v.Count
 		for ; index < sum; index++ {
 			if err := testutils.DoPrepareNode(p.client, &nodes.Items[index], v.Strategy); err != nil {
-				glog.Errorf("Aborting node preparation: %v", err)
+				log.L().Errorf("Aborting node preparation: %v", err)
 				return err
 			}
 			p.nodeToAppliedStrategy[nodes.Items[index].Name] = v.Strategy
@@ -4835,7 +4832,7 @@ func (p *E2ETestNodePreparer) CleanupNodes() error {
 		strategy, found := p.nodeToAppliedStrategy[name]
 		if found {
 			if err = testutils.DoCleanupNode(p.client, name, strategy); err != nil {
-				glog.Errorf("Skipping cleanup of Node: failed update of %v: %v", name, err)
+				log.L().Errorf("Skipping cleanup of Node: failed update of %v: %v", name, err)
 				encounteredError = err
 			}
 		}

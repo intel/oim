@@ -7,15 +7,16 @@ SPDX-License-Identifier: Apache-2.0
 package oimregistry_test
 
 import (
-	"log"
 	"testing"
+
+	"github.com/intel/oim/pkg/log/testlog"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
 func init() {
-	log.SetOutput(GinkgoWriter)
+	testlog.SetGlobal(GinkgoWriter)
 }
 
 func TestOIMRegistry(t *testing.T) {

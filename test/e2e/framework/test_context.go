@@ -23,7 +23,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/onsi/ginkgo/config"
 	"github.com/spf13/viper"
 	utilflag "k8s.io/apiserver/pkg/util/flag"
@@ -31,6 +30,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubernetes/pkg/kubelet/apis/kubeletconfig"
+
+	"github.com/intel/oim/pkg/log"
 )
 
 const defaultHost = "http://127.0.0.1:8080"
@@ -350,11 +351,11 @@ func AfterReadingAllFlags(t *TestContextType) {
 				kubeConfig := createKubeConfig(clusterConfig)
 				clientcmd.WriteToFile(*kubeConfig, tempFile.Name())
 				t.KubeConfig = tempFile.Name()
-				glog.Infof("Using a temporary kubeconfig file from in-cluster config : %s", tempFile.Name())
+				log.L().Infof("Using a temporary kubeconfig file from in-cluster config : %s", tempFile.Name())
 			}
 		}
 		if len(t.KubeConfig) == 0 {
-			glog.Warningf("Unable to find in-cluster config, using default host : %s", defaultHost)
+			log.L().Warnf("Unable to find in-cluster config, using default host : %s", defaultHost)
 			t.Host = defaultHost
 		}
 	}

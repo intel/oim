@@ -23,12 +23,15 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 
+	"github.com/intel/oim/pkg/log"
+	"github.com/intel/oim/pkg/log/testlog"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
 	"github.com/intel/oim/pkg/spec/oim/v0"
-
 	"github.com/intel/oim/test/pkg/spdk"
+
+	. "github.com/onsi/ginkgo"
 )
 
 // SudoMount provides wrappers around several commands used by the k8s
@@ -73,8 +76,12 @@ func (s SudoMount) Close() {
 // The corresponding test for non-local mode is in
 // test/e2e/storage/oim-csi.go.
 func TestSPDK(t *testing.T) {
+	// The sanity suite uses Ginkgo, so log via that.
+	log.SetOutput(GinkgoWriter)
+	ctx := context.Background()
+
 	defer spdk.Finalize()
-	if err := spdk.Init(spdk.WithLogger(t)); err != nil {
+	if err := spdk.Init(); err != nil {
 		require.NoError(t, err)
 	}
 	if spdk.SPDK == nil {
@@ -88,8 +95,8 @@ func TestSPDK(t *testing.T) {
 	endpoint := "unix://" + tmp + "/oim-driver.sock"
 	driver, err := New(WithCSIEndpoint(endpoint), WithVHostEndpoint(spdk.SPDKPath))
 	require.NoError(t, err)
-	s, err := driver.Start()
-	defer s.ForceStop()
+	s, err := driver.Start(ctx)
+	defer s.ForceStop(ctx)
 
 	sudo := SetupSudoMount(t)
 	defer sudo.Close()
@@ -134,7 +141,9 @@ func (m *MockController) CheckMallocBDev(ctx context.Context, in *oim.CheckMallo
 // This can only be used to test the communication paths, but not
 // the actual operation.
 func TestMockOIM(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	ctx := context.Background()
+
 	var err error
 
 	tmp, err := ioutil.TempDir("", "oim-driver")
@@ -147,17 +156,17 @@ func TestMockOIM(t *testing.T) {
 	registry, err := oimregistry.New()
 	require.NoError(t, err)
 	registryServer, service := oimregistry.Server(registryAddress, registry)
-	err = registryServer.Start(service)
+	err = registryServer.Start(ctx, service)
 	require.NoError(t, err)
-	defer registryServer.ForceStop()
+	defer registryServer.ForceStop(ctx)
 
 	controllerAddress := "unix://" + tmp + "/oim-controller.sock"
 	controller := &MockController{}
 	require.NoError(t, err)
 	controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller)
-	err = controllerServer.Start(controllerService)
+	err = controllerServer.Start(ctx, controllerService)
 	require.NoError(t, err)
-	defer controllerServer.ForceStop()
+	defer controllerServer.ForceStop(ctx)
 
 	_, err = registry.RegisterController(ctx, &oim.RegisterControllerRequest{
 		ControllerId: controllerID,
@@ -171,8 +180,8 @@ func TestMockOIM(t *testing.T) {
 		WithOIMControllerID(controllerID),
 	)
 	require.NoError(t, err)
-	s, err := driver.Start()
-	defer s.ForceStop()
+	s, err := driver.Start(ctx)
+	defer s.ForceStop(ctx)
 
 	opts := oimcommon.ChooseDialOpts(endpoint, grpc.WithBlock())
 	conn, err := grpc.Dial(endpoint, opts...)

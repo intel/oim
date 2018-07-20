@@ -28,6 +28,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	"github.com/intel/oim/test/e2e/manifest"
 	apps "k8s.io/api/apps/v1"
 	appsV1beta2 "k8s.io/api/apps/v1beta2"
 	"k8s.io/api/core/v1"
@@ -40,7 +41,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	"github.com/intel/oim/test/e2e/manifest"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
 

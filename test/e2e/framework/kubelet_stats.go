@@ -33,12 +33,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"github.com/intel/oim/test/e2e/framework/metrics"
 	clientset "k8s.io/client-go/kubernetes"
 	stats "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
 	dockermetrics "k8s.io/kubernetes/pkg/kubelet/dockershim/metrics"
 	kubeletmetrics "k8s.io/kubernetes/pkg/kubelet/metrics"
 	"k8s.io/kubernetes/pkg/master/ports"
-	"github.com/intel/oim/test/e2e/framework/metrics"
 
 	"github.com/prometheus/common/model"
 )

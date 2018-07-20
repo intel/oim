@@ -1627,7 +1627,6 @@
     "github.com/gogo/protobuf/gogoproto",
     "github.com/gogo/protobuf/proto",
     "github.com/gogo/protobuf/types",
-    "github.com/golang/glog",
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc",
     "github.com/intel/govmm/qemu",

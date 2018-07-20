@@ -16,8 +16,8 @@ import (
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	clientset "k8s.io/client-go/kubernetes"
 	"github.com/intel/oim/test/e2e/framework"
+	clientset "k8s.io/client-go/kubernetes"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
@@ -136,7 +136,8 @@ func csiOIMPod(
 						Privileged: &priv,
 					},
 					Args: []string{
-						"--v=5",
+						"--v=5", // TODO: get rid of glog
+						"--log.level=DEBUG",
 						"--endpoint=$(CSI_ENDPOINT)",
 						"--nodeid=$(KUBE_NODE_NAME)",
 						"--oim-registry-address=$(OIM_REGISTRY_ADDRESS)",
@@ -230,10 +231,10 @@ type OIMControlPlane struct {
 }
 
 // TODO: test binaries instead or in addition?
-func (op *OIMControlPlane) StartOIMControlPlane() {
+func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	var err error
 
-	op.ctx, op.cancel = context.WithCancel(context.Background())
+	op.ctx, op.cancel = context.WithCancel(ctx)
 
 	// Spin up registry on the host. We
 	// intentionally use the hostname here instead
@@ -252,7 +253,7 @@ func (op *OIMControlPlane) StartOIMControlPlane() {
 	Expect(err).NotTo(HaveOccurred())
 	rs, registryService := oimregistry.Server("tcp4://"+hostname+":0", registry)
 	op.registryServer = rs
-	err = op.registryServer.Start(registryService)
+	err = op.registryServer.Start(ctx, registryService)
 	Expect(err).NotTo(HaveOccurred())
 	addr := op.registryServer.Addr()
 	Expect(addr).NotTo(BeNil())
@@ -271,30 +272,29 @@ func (op *OIMControlPlane) StartOIMControlPlane() {
 		oimcontroller.WithVHostController(spdk.VHost),
 		oimcontroller.WithVHostDev(spdk.VHostDev),
 		oimcontroller.WithSPDK(spdk.SPDKPath),
-		oimcontroller.WithLogger(oimcommon.WrapWriter(GinkgoWriter)),
 	)
 	Expect(err).NotTo(HaveOccurred())
 	cs, controllerService := oimcontroller.Server(controllerAddress, op.controller)
 	op.controllerServer = cs
-	err = op.controllerServer.Start(controllerService)
+	err = op.controllerServer.Start(ctx, controllerService)
 	Expect(err).NotTo(HaveOccurred())
 	err = op.controller.Start()
 	Expect(err).NotTo(HaveOccurred())
 }
 
-func (op *OIMControlPlane) StopOIMControlPlane() {
+func (op *OIMControlPlane) StopOIMControlPlane(ctx context.Context) {
 	By("stopping OIM services")
 
 	if op.cancel != nil {
 		op.cancel()
 	}
 	if op.registryServer != nil {
-		op.registryServer.ForceStop()
-		op.registryServer.Wait()
+		op.registryServer.ForceStop(ctx)
+		op.registryServer.Wait(ctx)
 	}
 	if op.controllerServer != nil {
-		op.controllerServer.ForceStop()
-		op.controllerServer.Wait()
+		op.controllerServer.ForceStop(ctx)
+		op.controllerServer.Wait(ctx)
 	}
 	if op.controller != nil {
 		op.controller.Stop()

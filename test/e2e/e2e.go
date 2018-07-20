@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/ginkgo/config"
 	"github.com/onsi/ginkgo/reporters"
@@ -43,10 +42,9 @@ import (
 	"github.com/intel/oim/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
-
-	. "github.com/onsi/ginkgo"
 )
 
 // setupProviderConfig validates and sets up cloudConfig based on framework.TestContext.Provider.
@@ -54,11 +52,10 @@ func setupProviderConfig(data *[]byte) error {
 	switch framework.TestContext.Provider {
 	case "":
 		if *data == nil {
-			if err := spdk.Init(spdk.WithWriter(GinkgoWriter),
-				spdk.WithVHostSCSI()); err != nil {
+			if err := spdk.Init(spdk.WithVHostSCSI()); err != nil {
 				return err
 			}
-			if err := qemu.Init(qemu.WithWriter(GinkgoWriter), qemu.WithKubernetes()); err != nil {
+			if err := qemu.Init(qemu.WithKubernetes()); err != nil {
 				return err
 			}
 			if qemu.VM == nil {
@@ -76,9 +73,7 @@ func setupProviderConfig(data *[]byte) error {
 			if err := qemu.SimpleInit(); err != nil {
 				return err
 			}
-			if err := spdk.Init(spdk.WithSPDKSocket(string(*data)),
-				spdk.WithWriter(GinkgoWriter),
-			); err != nil {
+			if err := spdk.Init(spdk.WithSPDKSocket(string(*data))); err != nil {
 				return err
 			}
 		}
@@ -104,13 +99,15 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// Run only on Ginkgo node 1
 	var data []byte
 
+	log.L().Info("checking config")
+
 	if err := setupProviderConfig(&data); err != nil {
 		framework.Failf("Failed to setup provider config: %v", err)
 	}
 
 	c, err := framework.LoadClientset()
 	if err != nil {
-		glog.Fatal("Error loading client: ", err)
+		log.L().Fatalf("Error loading client: ", err)
 	}
 
 	// Delete any namespaces except those created by the system. This ensures no
@@ -125,7 +122,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		if err != nil {
 			framework.Failf("Error deleting orphaned namespaces: %v", err)
 		}
-		glog.Infof("Waiting for deletion of the following namespaces: %v", deleted)
+		log.L().Infof("Waiting for deletion of the following namespaces: %v", deleted)
 		if err := framework.WaitForNamespacesDeleted(c, deleted, framework.NamespaceCleanupTimeout); err != nil {
 			framework.Failf("Failed to delete orphaned namespaces %v: %v", deleted, err)
 		}
@@ -284,12 +281,12 @@ func RunE2ETests(t *testing.T) {
 		// TODO: we should probably only be trying to create this directory once
 		// rather than once-per-Ginkgo-node.
 		if err := os.MkdirAll(framework.TestContext.ReportDir, 0755); err != nil {
-			glog.Errorf("Failed creating report directory: %v", err)
+			log.L().Errorf("Failed creating report directory: %v", err)
 		} else {
 			r = append(r, reporters.NewJUnitReporter(path.Join(framework.TestContext.ReportDir, fmt.Sprintf("junit_%v%02d.xml", framework.TestContext.ReportPrefix, config.GinkgoConfig.ParallelNode))))
 		}
 	}
-	glog.Infof("Starting e2e run %q on Ginkgo node %d", framework.RunId, config.GinkgoConfig.ParallelNode)
+	log.L().Infof("Starting e2e run %q on Ginkgo node %d", framework.RunId, config.GinkgoConfig.ParallelNode)
 
 	ginkgo.RunSpecsWithDefaultAndCustomReporters(t, "Kubernetes e2e suite", r)
 }

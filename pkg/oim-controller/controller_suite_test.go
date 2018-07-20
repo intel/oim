@@ -7,11 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package oimcontroller_test
 
 import (
-	"log"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"github.com/intel/oim/pkg/log"
 )
 
 func init() {

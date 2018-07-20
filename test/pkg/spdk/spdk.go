@@ -22,6 +22,7 @@ import (
 	"github.com/nightlyone/lockfile"
 	"github.com/pkg/errors"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	// . "github.com/onsi/ginkgo"
@@ -55,23 +56,10 @@ var (
 
 type opts struct {
 	controller bool
-	logger     oimcommon.SimpleLogger
 	socket     string
 }
 
 type Option func(*opts)
-
-func WithLogger(logger oimcommon.SimpleLogger) Option {
-	return func(o *opts) {
-		o.logger = logger
-	}
-}
-
-func WithWriter(writer io.Writer) Option {
-	return func(o *opts) {
-		o.logger = oimcommon.WrapWriter(writer)
-	}
-}
 
 func WithVHostSCSI() Option {
 	return func(o *opts) {
@@ -94,16 +82,13 @@ func WithSPDKSocket(path string) Option {
 // Init connects to SPDK and creates a VHost SCSI controller.
 // Must be matched by a Finalize call, even after a failure.
 func Init(options ...Option) error {
-	o = opts{
-		logger: oimcommon.WrapWriter(os.Stdout),
-	}
 	for _, op := range options {
 		op(&o)
 	}
 
 	// Connect to existing SPDK?
 	if o.socket != "" {
-		s, err := spdk.New(o.socket, o.logger)
+		s, err := spdk.New(o.socket)
 		if err != nil {
 			return err
 		}
@@ -129,10 +114,10 @@ func Init(options ...Option) error {
 			tmpDir = t
 		}
 		spdkSock = filepath.Join(tmpDir, "spdk.sock")
-		spdkOut = oimcommon.LogWriter(o.logger, "spdk: ")
+		spdkOut = oimcommon.LogWriter(log.L().With("at", "spdk"))
 		var done <-chan interface{}
 		{
-			o.logger.Logf("Starting %s", spdkApp)
+			log.L().Infof("Starting %s", spdkApp)
 			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock,
 				// Use less precious huge pages. 64MB
 				// and 128MB are not enough and cause
@@ -207,7 +192,7 @@ func Init(options ...Option) error {
 	}
 	lock = &l
 
-	s, err := spdk.New(spdkSock, o.logger)
+	s, err := spdk.New(spdkSock)
 	if err != nil {
 		return err
 	}
@@ -251,9 +236,9 @@ func Finalize() error {
 			// We try to clean up, but that can fail when someone left a disk attached
 			// to the controller ("Trying to remove non-empty controller").
 			// Just log such errors and proceed, as we'll kill the process anyway.
-			o.logger.Logf("Removing VHost SCSI controller %s", VHost)
+			log.L().Infof("Removing VHost SCSI controller %s", VHost)
 			if err := spdk.RemoveVHostController(context.Background(), SPDK, args); err != nil {
-				o.logger.Logf("RemoveVHostController: %s", err)
+				log.L().Errorw("RemoveVHostController failed", "error", err)
 			}
 			VHostPath = ""
 		}
@@ -263,11 +248,11 @@ func Finalize() error {
 	if spdkCmd != nil {
 		// Kill the process group to catch both child (sudo) and grandchild (SPDK).
 		timer := time.AfterFunc(30*time.Second, func() {
-			o.logger.Logf("Killing SPDK vhost %d", spdkCmd.Process.Pid)
+			log.L().Infof("Killing SPDK vhost %d", spdkCmd.Process.Pid)
 			exec.Command("sudo", "--non-interactive", "kill", "-9", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
 		})
 		defer timer.Stop()
-		o.logger.Logf("Stopping SPDK vhost %d", spdkCmd.Process.Pid)
+		log.L().Infof("Stopping SPDK vhost %d", spdkCmd.Process.Pid)
 		exec.Command("sudo", "--non-interactive", "kill", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
 		spdkCmd.Wait()
 		spdkCmd = nil

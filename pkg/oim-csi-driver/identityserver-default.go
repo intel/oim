@@ -10,7 +10,6 @@ import (
 	"context"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
-	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,8 +19,6 @@ type DefaultIdentityServer struct {
 }
 
 func (ids *DefaultIdentityServer) GetPluginInfo(ctx context.Context, req *csi.GetPluginInfoRequest) (*csi.GetPluginInfoResponse, error) {
-	glog.V(5).Infof("Using default GetPluginInnfo")
-
 	if ids.Driver.name == "" {
 		return nil, status.Error(codes.Unavailable, "Driver name not configured")
 	}
@@ -41,7 +38,6 @@ func (ids *DefaultIdentityServer) Probe(ctx context.Context, req *csi.ProbeReque
 }
 
 func (ids *DefaultIdentityServer) GetPluginCapabilities(ctx context.Context, req *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
-	glog.V(5).Infof("Using default capabilities")
 	return &csi.GetPluginCapabilitiesResponse{
 		Capabilities: []*csi.PluginCapability{
 			{

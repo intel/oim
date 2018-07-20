@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"github.com/intel/govmm/qemu"
 	"github.com/pkg/errors"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 )
 
@@ -54,20 +54,19 @@ func (err StartError) Error() string {
 type QMPLog struct{}
 
 func (ql QMPLog) V(int32) bool {
-	// TODO: decide what we want to log (see https://github.com/intel/govmm/issues/20)
 	return true
 }
 
 func (ql QMPLog) Infof(format string, v ...interface{}) {
-	log.Printf("GOVMM INFO "+format, v...)
+	log.L().Infof("GOVMM "+format, v...)
 }
 
 func (ql QMPLog) Warningf(format string, v ...interface{}) {
-	log.Printf("GOVMM WARNING "+format, v...)
+	log.L().Warnf("GOVMM "+format, v...)
 }
 
 func (ql QMPLog) Errorf(format string, v ...interface{}) {
-	log.Printf("GOVMM ERROR "+format, v...)
+	log.L().Errorf("GOVMM "+format, v...)
 }
 
 // UseQEMU sets up a VM instance so that SSH commands can be issued.
@@ -123,7 +122,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 		"-qmp", "unix:" + qmpSocket + ",server,nowait",
 	}
 	args = append(args, qemuOptions...)
-	log.Printf("QEMU command: %q", args)
+	log.L().Debugf("QEMU command: %q", args)
 	vm.Cmd = exec.Command(args[0], args[1:]...)
 	vm.Cmd.Stderr = &vm.Stderr
 
@@ -240,10 +239,10 @@ func (vm *VirtualMachine) String() string {
 // any exit error. Beware that (as usual) ssh will cocatenate the arguments
 // and run the result in a shell, so complex scripts may break.
 func (vm *VirtualMachine) SSH(args ...string) (string, error) {
-	log.Printf("Running SSH %s %s\n", vm.SSHCmd, args)
+	log.L().Debugf("Running SSH %s %s\n", vm.SSHCmd, args)
 	cmd := exec.Command(vm.SSHCmd, args...)
 	out, err := cmd.CombinedOutput()
-	log.Printf("Exit error: %v\nOutput: %s\n", err, string(out))
+	log.L().Debugf("Exit error: %v\nOutput: %s\n", err, string(out))
 	return string(out), err
 }
 
@@ -268,13 +267,13 @@ func (vm *VirtualMachine) StopQEMU() error {
 	// Give VM some time to power down, then kill it.
 	if vm.Cmd != nil && vm.Cmd.Process != nil {
 		timer := time.AfterFunc(10*time.Second, func() {
-			log.Printf("Cancelling")
+			log.L().Debugf("Cancelling")
 			vm.Cmd.Process.Kill()
 		})
 		defer timer.Stop()
-		log.Printf("Powering down QEMU")
+		log.L().Debugf("Powering down QEMU")
 		vm.Cmd.Process.Signal(os.Interrupt)
-		log.Printf("Waiting for completion")
+		log.L().Debugf("Waiting for completion")
 		err = vm.Cmd.Wait()
 		vm.Cmd = nil
 	}
@@ -298,26 +297,26 @@ type forwardPort struct {
 // Unix domaain sockets).
 //
 // Optionally a command can be run. If none is given, ssh is invoked with -N.
-func (vm *VirtualMachine) ForwardPort(logger oimcommon.SimpleLogger, from interface{}, to interface{}, cmd ...string) (io.Closer, <-chan interface{}, error) {
+func (vm *VirtualMachine) ForwardPort(logger log.Logger, from interface{}, to interface{}, cmd ...string) (io.Closer, <-chan interface{}, error) {
 	fromStr := portToString(from)
 	toStr := portToString(to)
 	args := []string{
 		"-L", fmt.Sprintf("%s:%s", fromStr, toStr),
 	}
-	prefix := fmt.Sprintf("%.8s->%.8s: ", fromStr, toStr)
+	what := fmt.Sprintf("%.8s->%.8s", fromStr, toStr)
 	if len(cmd) == 0 {
 		args = append(args, "-N")
-		prefix = prefix + "ssh "
+		what = what + "ssh"
 	} else {
 		args = append(args, cmd...)
-		prefix = filepath.Base(cmd[0]) + " " + prefix
+		what = filepath.Base(cmd[0]) + " " + what
 	}
 	fp := forwardPort{
 		// ssh closes all extra file descriptors, thus defeating our
 		// CmdMonitor. Instead we wait for completion in a goroutine.
 		ssh: exec.Command(vm.SSHCmd, args...),
 	}
-	out := oimcommon.LogWriter(logger, prefix)
+	out := oimcommon.LogWriter(logger.With("at", what))
 	fp.ssh.Stdout = out
 	fp.ssh.Stderr = out
 	fp.logWriter = out

@@ -18,8 +18,9 @@ package generated
 
 //go:generate ../../../hack/generate-bindata.sh
 
-import "github.com/golang/glog"
 import "errors"
+
+import "github.com/intel/oim/pkg/log"
 
 /*
 ReadOrDie reads a file from gobindata.
@@ -30,8 +31,8 @@ func ReadOrDie(filePath string) []byte {
 	fileBytes, err := []byte{}, errors.New("gobindata not vendored")
 	if err != nil {
 		gobindataMsg := "An error occurred, possibly gobindata doesn't know about the file you're opening. For questions on maintaining gobindata, contact the sig-testing group."
-		glog.Infof("Available gobindata files: %v ", "none")
-		glog.Fatalf("Failed opening %v , with error %v.  %v.", filePath, err, gobindataMsg)
+		log.L().Infof("Available gobindata files: %v ", "none")
+		log.L().Fatalf("Failed opening %v , with error %v.  %v.", filePath, err, gobindataMsg)
 	}
 	return fileBytes
 }

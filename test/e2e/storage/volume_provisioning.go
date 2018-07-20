@@ -26,6 +26,7 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/intel/oim/test/e2e/framework"
 	"k8s.io/api/core/v1"
 	storage "k8s.io/api/storage/v1"
 	storagebeta "k8s.io/api/storage/v1beta1"
@@ -34,7 +35,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	storageutil "k8s.io/kubernetes/pkg/apis/storage/v1/util"
-	"github.com/intel/oim/test/e2e/framework"
 )
 
 type storageClassTest struct {

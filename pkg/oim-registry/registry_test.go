@@ -19,6 +19,7 @@ import (
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
 	"github.com/intel/oim/pkg/spec/oim/v0"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -90,7 +91,7 @@ var _ = Describe("OIM Registry", func() {
 			Expect(err).NotTo(HaveOccurred())
 			registryAddress := "unix://" + filepath.Join(tmpDir, "registry.sock")
 			registryServer, service := oimregistry.Server(registryAddress, registry)
-			err = registryServer.Start(service)
+			err = registryServer.Start(ctx, service)
 			Expect(err).NotTo(HaveOccurred())
 
 			opts := oimcommon.ChooseDialOpts(registryAddress, grpc.WithBlock())
@@ -101,8 +102,8 @@ var _ = Describe("OIM Registry", func() {
 
 		AfterEach(func() {
 			if registryServer != nil {
-				registryServer.ForceStop()
-				registryServer.Wait()
+				registryServer.ForceStop(ctx)
+				registryServer.Wait(ctx)
 			}
 			if tmpDir != "" {
 				os.RemoveAll(tmpDir)
@@ -130,7 +131,7 @@ var _ = Describe("OIM Registry", func() {
 				controller = &MockController{}
 				controllerAddress := "unix://" + filepath.Join(tmpDir, "controller.sock")
 				controllerServer, service := oimcontroller.Server(controllerAddress, controller)
-				err = controllerServer.Start(service)
+				err = controllerServer.Start(ctx, service)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Register this controller.
@@ -143,8 +144,8 @@ var _ = Describe("OIM Registry", func() {
 
 			AfterEach(func() {
 				if controllerServer != nil {
-					controllerServer.ForceStop()
-					controllerServer.Wait()
+					controllerServer.ForceStop(ctx)
+					controllerServer.Wait(ctx)
 				}
 			})
 

@@ -108,6 +108,13 @@ force_test: clean_testcache test
 clean_testcache:
 	go clean -testcache
 
+# oim-registry and oim-controller should not contain glog, while
+# oim-csi-driver still does (via Kubernetes).
+.PHONY: test_no_glog
+test: test_no_glog
+test_no_glog: oim-controller oim-registry
+	@ for i in $+; do if _output/$$i --help 2>&1 | grep -q -e -alsologtostderr; then echo "ERROR: $$i contains glog!"; exit 1; fi; done
+
 .PHONY: coverage
 coverage:
 	mkdir -p _work

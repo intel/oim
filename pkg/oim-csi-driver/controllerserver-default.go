@@ -10,7 +10,6 @@ import (
 	"context"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
-	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -36,8 +35,6 @@ func (cs *DefaultControllerServer) ControllerUnpublishVolume(ctx context.Context
 }
 
 func (cs *DefaultControllerServer) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
-	glog.V(5).Infof("Using default ValidateVolumeCapabilities")
-
 	for _, c := range req.GetVolumeCapabilities() {
 		found := false
 		for _, c1 := range cs.Driver.vc {
@@ -70,24 +67,19 @@ func (cs *DefaultControllerServer) GetCapacity(ctx context.Context, req *csi.Get
 // ControllerGetCapabilities implements the default GRPC callout.
 // Default supports all capabilities
 func (cs *DefaultControllerServer) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
-	glog.V(5).Infof("Using default ControllerGetCapabilities")
-
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: cs.Driver.cap,
 	}, nil
 }
 
 func (cs *DefaultControllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
-	glog.V(5).Infof("Using default CreateSnapshot")
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
 func (cs *DefaultControllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
-	glog.V(5).Infof("Using default DeleteSnapshot")
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
 func (cs *DefaultControllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
-	glog.V(5).Infof("Using default ListSnapshot")
 	return nil, status.Error(codes.Unimplemented, "")
 }

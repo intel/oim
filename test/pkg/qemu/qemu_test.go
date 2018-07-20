@@ -32,9 +32,10 @@ func (m *MemLogger) Logf(format string, args ...interface{}) {
 }
 
 func TestQEMU(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	var err error
 
-	err = testqemu.Init(testqemu.WithLogger(t))
+	err = testqemu.Init()
 	defer testqemu.Finalize()
 	require.NoError(t, err)
 	if testqemu.VM == nil {
@@ -131,6 +132,7 @@ echo 'hello | world'
 }
 
 func TestQEMUFailure(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	start := time.Now()
 	_, err := qemu.StartQEMU("no-such-image")
 	end := time.Now()

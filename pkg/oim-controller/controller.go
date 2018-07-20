@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
@@ -32,7 +33,6 @@ type Controller struct {
 	SPDK            *spdk.Client
 	vhostSCSI       string
 	vhostDev        string
-	logger          oimcommon.SimpleLogger
 
 	wg   sync.WaitGroup
 	stop chan<- interface{}
@@ -69,7 +69,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		}
 	} else {
 		// BDev with the intended name already exists. Assume that it is the right one.
-		oimcommon.Infof(1, ctx, "Reusing existing BDev %s", volumeID)
+		log.FromContext(ctx).Infof("reusing existing BDev %s", volumeID)
 	}
 
 	var err error
@@ -278,13 +278,6 @@ func WithVHostDev(dev string) Option {
 	}
 }
 
-func WithLogger(logger oimcommon.SimpleLogger) Option {
-	return func(c *Controller) error {
-		c.logger = logger
-		return nil
-	}
-}
-
 func New(options ...Option) (*Controller, error) {
 	c := Controller{
 		controllerID:  "unset-controller-id",
@@ -296,12 +289,9 @@ func New(options ...Option) (*Controller, error) {
 			return nil, err
 		}
 	}
-	if c.logger == nil {
-		c.logger = oimcommon.DiscardLogger{}
-	}
 
 	if c.spdkPath != "" {
-		client, err := spdk.New(c.spdkPath, c.logger)
+		client, err := spdk.New(c.spdkPath)
 		if err != nil {
 			return nil, err
 		}
@@ -359,12 +349,12 @@ func (c *Controller) register(ctx context.Context) {
 	// will fail permanently and b) we don't want to keep
 	// a permanent connection from each controller to
 	// the registry.
-	c.logger.Logf("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
+	log.L().Infof("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
 	// TODO: secure connection
 	opts := oimcommon.ChooseDialOpts(c.registryAddress, grpc.WithInsecure())
 	conn, err := grpc.DialContext(ctx, c.registryAddress, opts...)
 	if err != nil {
-		c.logger.Logf("error connecting to OIM registry: %s", err)
+		log.L().Infow("connecting to OIM registry", "error", err)
 	}
 	defer conn.Close()
 	registry := oim.NewRegistryClient(conn)

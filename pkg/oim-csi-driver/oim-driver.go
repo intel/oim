@@ -8,6 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 package oimcsidriver
 
 import (
+	"context"
 	"errors"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
@@ -146,7 +147,7 @@ func NewNodeServer(od *oimDriver) *nodeServer {
 // We need to decide between a) serializing all calls or b) serializing
 // only those calls related to the same item (bdev?).
 
-func (od *oimDriver) Start() (*oimcommon.NonBlockingGRPCServer, error) {
+func (od *oimDriver) Start(ctx context.Context) (*oimcommon.NonBlockingGRPCServer, error) {
 	// Initialize default library driver
 	od.driver = NewCSIDriver(od.driverName, vendorVersion, od.nodeID)
 	if od.driver == nil {
@@ -163,7 +164,7 @@ func (od *oimDriver) Start() (*oimcommon.NonBlockingGRPCServer, error) {
 	s := oimcommon.NonBlockingGRPCServer{
 		Endpoint: od.csiEndpoint,
 	}
-	s.Start(func(s *grpc.Server) {
+	s.Start(ctx, func(s *grpc.Server) {
 		csi.RegisterIdentityServer(s, od.ids)
 		csi.RegisterNodeServer(s, od.ns)
 		csi.RegisterControllerServer(s, od.cs)
@@ -171,11 +172,11 @@ func (od *oimDriver) Start() (*oimcommon.NonBlockingGRPCServer, error) {
 	return &s, nil
 }
 
-func (od *oimDriver) Run() error {
-	s, err := od.Start()
+func (od *oimDriver) Run(ctx context.Context) error {
+	s, err := od.Start(ctx)
 	if err != nil {
 		return err
 	}
-	s.Wait()
+	s.Wait(ctx)
 	return nil
 }

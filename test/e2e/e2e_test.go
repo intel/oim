@@ -19,10 +19,10 @@ package e2e
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"testing"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
@@ -32,12 +32,6 @@ import (
 )
 
 func init() {
-	// Show glog output by default, and print all of it.
-	// TODO: get rid of glog and logging to stdout,
-	// because the output is not captured such that it belongs
-	// to the current test.
-	flag.Set("logtostderr", "true")
-	flag.Set("v", "100")
 	log.SetOutput(GinkgoWriter)
 
 	framework.ViperizeFlags()

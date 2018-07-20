@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/intel/oim/pkg/log"
+	"github.com/intel/oim/pkg/log/level"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
 	"github.com/intel/oim/pkg/oim-registry"
@@ -26,7 +28,8 @@ import (
 
 var _ = Describe("OIM Controller", func() {
 	var (
-		c *oimcontroller.Controller
+		c   *oimcontroller.Controller
+		ctx context.Context
 	)
 
 	Describe("registration", func() {
@@ -40,12 +43,18 @@ var _ = Describe("OIM Controller", func() {
 		BeforeEach(func() {
 			var err error
 
+			ctx = log.WithLogger(context.Background(),
+				log.NewSimpleLogger(log.SimpleConfig{
+					Level:  level.Debug,
+					Output: GinkgoWriter,
+				}).With("at", "oim-registry"))
+
 			// Spin up registry.
 			db = &oimregistry.MemRegistryDB{}
 			registry, err = oimregistry.New(oimregistry.DB(db))
 			Expect(err).NotTo(HaveOccurred())
 			registryServer, service := oimregistry.Server("tcp4://:0", registry)
-			err = registryServer.Start(service)
+			err = registryServer.Start(ctx, service)
 			Expect(err).NotTo(HaveOccurred())
 			addr := registryServer.Addr()
 			Expect(addr).NotTo(BeNil())
@@ -55,8 +64,8 @@ var _ = Describe("OIM Controller", func() {
 
 		AfterEach(func() {
 			if registryServer != nil {
-				registryServer.ForceStop()
-				registryServer.Wait()
+				registryServer.ForceStop(ctx)
+				registryServer.Wait(ctx)
 			}
 		})
 
@@ -135,13 +144,16 @@ var _ = Describe("OIM Controller", func() {
 		BeforeEach(func() {
 			var err error
 
-			err = testspdk.Init(testspdk.WithWriter(GinkgoWriter),
-				testspdk.WithVHostSCSI())
+			err = testspdk.Init(testspdk.WithVHostSCSI())
 			Expect(err).NotTo(HaveOccurred())
 			if testspdk.SPDK == nil {
 				Skip("No SPDK vhost.")
 			}
 
+			// TODO: add logging wrapper around service.
+			// Otherwise function calls into this
+			// controller are not getting logged because
+			// we are not using gRPC.
 			c, err = oimcontroller.New(oimcontroller.WithSPDK(testspdk.SPDKPath),
 				oimcontroller.WithVHostDev(testspdk.VHostDev),
 				oimcontroller.WithVHostController(testspdk.VHostPath))
@@ -208,7 +220,9 @@ var _ = Describe("OIM Controller", func() {
 					Malloc: &oim.MallocParams{},
 				},
 			}
+			log.L().Info("before MapVolume")
 			reply, err := c.MapVolume(context.Background(), &add)
+			log.L().Info("after MapVolume")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(reply).To(Equal(&oim.MapVolumeReply{
 				Device: testspdk.VHostDev,
@@ -277,7 +291,7 @@ var _ = Describe("OIM Controller", func() {
 
 		Context("with QEMU", func() {
 			BeforeEach(func() {
-				err := qemu.Init(qemu.WithWriter(GinkgoWriter))
+				err := qemu.Init()
 				Expect(err).NotTo(HaveOccurred())
 				if qemu.VM == nil {
 					Skip("No QEMU image.")

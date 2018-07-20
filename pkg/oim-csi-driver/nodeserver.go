@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +27,7 @@ import (
 	"gopkg.in/fsnotify/fsnotify.v1"
 	"k8s.io/kubernetes/pkg/util/mount"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
@@ -87,14 +87,19 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	attrib := req.GetVolumeAttributes()
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
 
-	oimcommon.Infof(4, ctx, "target %v\nfstype %v\nreadonly %v\nattributes %v\n mountflags %v\n",
-		targetPath, fsType, readOnly, volumeID, attrib, mountFlags)
+	log.FromContext(ctx).Infow("mounting",
+		"target", targetPath,
+		"fstype", fsType,
+		"read-only", readOnly,
+		"volumeid", volumeID,
+		"attributes", attrib,
+		"flags", mountFlags,
+	)
 
 	device := ""
 	if ns.od.vhostEndpoint != "" {
 		// Connect to SPDK.
-		// TODO: log JSON traffic
-		client, err := spdk.New(ns.od.vhostEndpoint, nil)
+		client, err := spdk.New(ns.od.vhostEndpoint)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}
@@ -106,7 +111,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			return nil, err
 		}
 		if nbdDevice != "" {
-			oimcommon.Infof(4, ctx, "Reusing already started NBD disk: %s", nbdDevice)
+			log.FromContext(ctx).Infof("Reusing already started NBD disk: %s", nbdDevice)
 		} else {
 			var nbdError error
 			// Find a free NBD device node and start a NBD disk there.
@@ -229,7 +234,11 @@ const (
 )
 
 func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string, int, int, error) {
-	log.Printf("Waiting for %s entry with substring '%s' and SCSI unit '%s'", sys, blockDev, blockSCSI)
+	log.FromContext(ctx).Infow("waiting for block device",
+		"sys", sys,
+		"substr", blockDev,
+		"scsi", blockSCSI,
+	)
 	watcher, err := fsnotify.NewWatcher()
 	watcher.Add(sys)
 	if err != nil {
@@ -250,7 +259,7 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 	}
 
 	for {
-		dev, major, minor, err := findDev(sys, blockDev, blockSCSI)
+		dev, major, minor, err := findDev(doneCtx, sys, blockDev, blockSCSI)
 		if err != nil {
 			// None of the operations should have failed. Give up.
 			return "", 0, 0, status.Error(codes.Internal, err.Error())
@@ -263,10 +272,14 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device '%s', SCSI unit '%s'", blockDev, blockSCSI)
 		case <-watcher.Events:
 			// Try again.
-			log.Printf("%s changed.", sys)
+			log.FromContext(ctx).Debugw("changed",
+				"sys", sys,
+			)
 		case <-time.After(5 * time.Second):
 			// Sometimes inotify seems to miss events. Recover by checking from time to time.
-			log.Printf("Checking %s after timeout.", sys)
+			log.FromContext(ctx).Debugw("checking after timeout",
+				"sys", sys,
+			)
 		case err := <-watcher.Errors:
 			return "", 0, 0, status.Errorf(codes.Internal, "watching %s: %s", sys, err.Error())
 		}
@@ -277,7 +290,7 @@ var (
 	majorMinor = regexp.MustCompile("^(\\d+):(\\d+)$")
 )
 
-func findDev(sys, blockDev, blockSCSI string) (string, int, int, error) {
+func findDev(ctx context.Context, sys, blockDev, blockSCSI string) (string, int, int, error) {
 	files, err := ioutil.ReadDir(sys)
 	if err != nil {
 		return "", 0, 0, err
@@ -291,7 +304,10 @@ func findDev(sys, blockDev, blockSCSI string) (string, int, int, error) {
 		// target is expected to have this format:
 		// ../../devices/pci0000:00/0000:00:15.0/virtio3/host0/target0:0:7/0:0:7:0/block/sda
 		// for PCI address 0x15, SCSI target 7 and LUN 0.
-		log.Printf("%s -> %s", fullpath, target)
+		log.FromContext(ctx).Debugw("symlink",
+			"from", fullpath,
+			"to", target,
+		)
 		if strings.Contains(target, blockDev) &&
 			(blockSCSI == "" || strings.Contains(target, ":"+blockSCSI+block)) {
 			// Because Readdir sorted the entries, we are guaranteed to find
@@ -299,7 +315,10 @@ func findDev(sys, blockDev, blockSCSI string) (string, int, int, error) {
 			sep := strings.LastIndex(target, block)
 			if sep != -1 {
 				dev := target[sep+len(block):]
-				log.Printf("Found block device %s = %s", entry.Name(), dev)
+				log.FromContext(ctx).Debugw("found block device",
+					"entry", entry.Name(),
+					"dev", dev,
+				)
 				parts := majorMinor.FindStringSubmatch(entry.Name())
 				if parts == nil {
 					return "", 0, 0, fmt.Errorf("Unexpected entry in %s, not a major:minor symlink: %s", sys, entry.Name())
@@ -326,15 +345,17 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 
 	// Unmounting the image
 	// TODO: check whether this really is still a mount point. We might have removed it already.
+	log.FromContext(ctx).Infow("unmount",
+		"target", targetPath,
+		"volumeid", volumeID,
+	)
 	if err := mount.New("").Unmount(req.GetTargetPath()); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	oimcommon.Infof(4, ctx, "volume %s/%s has been unmounted.", targetPath, volumeID)
 
 	if ns.od.vhostEndpoint != "" {
 		// Connect to SPDK.
-		// TODO: log JSON traffic
-		client, err := spdk.New(ns.od.vhostEndpoint, nil)
+		client, err := spdk.New(ns.od.vhostEndpoint)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}

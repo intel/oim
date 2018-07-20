@@ -17,6 +17,7 @@ limitations under the License.
 package storage
 
 import (
+	"context"
 	"math/rand"
 	"time"
 
@@ -26,9 +27,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	clientset "k8s.io/client-go/kubernetes"
 	"github.com/intel/oim/test/e2e/framework"
 	"github.com/intel/oim/test/e2e/storage/utils"
+	clientset "k8s.io/client-go/kubernetes"
 
 	e2eutils "github.com/intel/oim/test/e2e/utils"
 	"github.com/intel/oim/test/pkg/spdk"
@@ -189,6 +190,7 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 		ns     *v1.Namespace
 		node   v1.Node
 		config framework.VolumeTestConfig
+		ctx    = context.Background()
 	)
 
 	BeforeEach(func() {
@@ -262,7 +264,7 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 				Skip("No SPDK vhost.")
 			}
 
-			controlPlane.StartOIMControlPlane()
+			controlPlane.StartOIMControlPlane(ctx)
 
 			By("deploying CSI OIM pods")
 			clusterRole = csiClusterRole(cs, config, false)
@@ -281,7 +283,7 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			serviceAccount = csiServiceAccount(cs, config, true)
 			clusterRole = csiClusterRole(cs, config, true)
 
-			controlPlane.StopOIMControlPlane()
+			controlPlane.StopOIMControlPlane(ctx)
 		})
 
 		It("should provision storage", func() {

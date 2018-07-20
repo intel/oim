@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package storage
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 	"os"
@@ -15,7 +16,7 @@ import (
 
 	"github.com/kubernetes-csi/csi-test/pkg/sanity"
 
-	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/qemu"
 
 	. "github.com/onsi/ginkgo"
@@ -43,6 +44,7 @@ var _ = Describe("OIM CSI driver", func() {
 		}
 		port         io.Closer
 		controlPlane OIMControlPlane
+		ctx          = context.Background()
 	)
 
 	BeforeEach(func() {
@@ -52,7 +54,7 @@ var _ = Describe("OIM CSI driver", func() {
 			Skip("TEST_OIM_CSI_DRIVER_BINARY not set")
 		}
 
-		controlPlane.StartOIMControlPlane()
+		controlPlane.StartOIMControlPlane(ctx)
 		localTmp, err = ioutil.TempDir("", "oim-csi-sanity")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -75,10 +77,11 @@ var _ = Describe("OIM CSI driver", func() {
 		config.Address = "unix://" + localSock
 		config.TargetPath = filepath.Join(targetTmp, "target")
 		config.StagingPath = filepath.Join(targetTmp, "staging")
-		p, _, err := qemu.VM.ForwardPort(oimcommon.WrapWriter(GinkgoWriter),
+		p, _, err := qemu.VM.ForwardPort(log.L(),
 			localSock, csiSock,
 			driverPath,
-			"--v=5",
+			"--v=5", // TODO: remove glog
+			"--log.level=DEBUG",
 			"--endpoint", csiEndpoint,
 			"--nodeid=csi-sanity-node",
 			"--oim-registry-address", controlPlane.registryAddress,
@@ -99,7 +102,7 @@ var _ = Describe("OIM CSI driver", func() {
 		_, err = qemu.VM.SSH("rm", "-rf", targetTmp)
 		Expect(err).NotTo(HaveOccurred())
 
-		controlPlane.StopOIMControlPlane()
+		controlPlane.StopOIMControlPlane(ctx)
 	})
 
 	Describe("sanity", func() {

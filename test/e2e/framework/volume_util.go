@@ -50,9 +50,10 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
-	"github.com/golang/glog"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"github.com/intel/oim/pkg/log"
 )
 
 const (
@@ -341,7 +342,7 @@ func VolumeTestCleanup(f *Framework, config VolumeTestConfig) {
 	if err != nil {
 		// Log the error before failing test: if the test has already failed,
 		// framework.ExpectNoError() won't print anything to logs!
-		glog.Warningf("Failed to delete client pod: %v", err)
+		log.L().Warnf("Failed to delete client pod: %v", err)
 		ExpectNoError(err, "Failed to delete client pod: %v", err)
 	}
 
@@ -356,7 +357,7 @@ func VolumeTestCleanup(f *Framework, config VolumeTestConfig) {
 
 		err = podClient.Delete(config.Prefix+"-server", nil)
 		if err != nil {
-			glog.Warningf("Failed to delete server pod: %v", err)
+			log.L().Warnf("Failed to delete server pod: %v", err)
 			ExpectNoError(err, "Failed to delete server pod: %v", err)
 		}
 	}

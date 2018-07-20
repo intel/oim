@@ -13,124 +13,193 @@ import (
 	"io"
 	"strings"
 
-	"github.com/golang/glog"
 	"google.golang.org/grpc"
 
+	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	"github.com/opentracing/opentracing-go"
 	otlog "github.com/opentracing/opentracing-go/log"
 	jaegercfg "github.com/uber/jaeger-client-go/config"
+
+	"github.com/intel/oim/pkg/log"
 )
 
-type logIndentKeyType struct{}
+// PayloadFormatter is responsible for turning a gRPC request or response
+// into a string.
+type PayloadFormatter interface {
+	// Sprint serializes the gRPC request or response as string.
+	Sprint(payload interface{}) string
+}
 
-var logIndentKey logIndentKeyType
+// CompletePayloadFormatter dumps the entire request or response as
+// string. Beware that this may include sensitive information!
+type CompletePayloadFormatter struct{}
 
-// logIndentIncrement specifies the number of spaces that log messages
-// get indented while handling gRPC calls.
-var logIndentIncrement = 2
-
-// logIndent returns the current indention associated with a context,
-// zero if none.
-func logIndent(ctx context.Context) int {
-	if v := ctx.Value(logIndentKey); v != nil {
-		return v.(int)
+// Sprint uses fmt.Sprint("%+v") to format the entire payload.
+func (c CompletePayloadFormatter) Sprint(payload interface{}) string {
+	result := fmt.Sprintf("%+v", payload)
+	if result == "" {
+		// Seeing "response:" in a gRPC trace is confusing.
+		// Show something instead that confirms that really
+		// nothing was sent or received.
+		return "<empty>"
 	}
-	return 0
+	return result
 }
 
-// logSpaces returns a string containing enough spaces for the
-// current indent.
-func logSpaces(ctx context.Context) string {
-	indent := logIndent(ctx)
-	return strings.Repeat(" ", indent)
+// NullPayloadFormatter just produces "nil" or "<filtered>".
+type NullPayloadFormatter struct{}
+
+// Sprint just produces "nil" or "<filtered>".
+func (n NullPayloadFormatter) Sprint(payload interface{}) string {
+	if payload == nil {
+		return "nil"
+	}
+	return "<filtered>"
 }
 
-// LogGRPCServer logs the server-side call information via glog.
+// delayedFormatter takes a formatter and a payload and
+// formats as string when needed.
+type delayedFormatter struct {
+	formatter PayloadFormatter
+	payload   interface{}
+}
+
+func (d *delayedFormatter) String() string {
+	return d.formatter.Sprint(d.payload)
+}
+
+// LogGRPCServer returns a gRPC interceptor for a gRPC server which
+// logs the server-side call information via the provided logger.
+// Method names are printed at the "Debug" level, with detailed
+// request and response information if (and only if!) a formatter for
+// those is provided. That's because sensitive information may
+// be included in those data structures. Failed method calls
+// are printed at the "Error" level.
 //
-// Warning: at log levels >= 5 the recorded information includes all
-// parameters, which potentially contains sensitive information like
-// the secrets.
-func LogGRPCServer(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	innerCtx, indent := logGRPCPre(ctx, info.FullMethod, req)
-	resp, err := handler(innerCtx, req)
-	logGRPCPost(indent, info.FullMethod, err, resp)
-	return resp, err
+// If this interceptor is invoked after the otgrpc.OpenTracingServerInterceptor,
+// then it will install a logger which adds log events to the span in
+// addition to passing them on to the original logger.
+func LogGRPCServer(logger log.Logger, formatter PayloadFormatter) grpc.UnaryServerInterceptor {
+	if formatter == nil {
+		// Always print some information about the payload.
+		formatter = NullPayloadFormatter{}
+	}
+
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		ctx = logGRPCPre(ctx, logger, formatter, "received", info.FullMethod, req)
+		innerCtx := ctx
+		if sp := opentracing.SpanFromContext(ctx); sp != nil {
+			l := log.FromContext(ctx)
+			l = newSpanLogger(sp, l)
+			innerCtx = log.WithLogger(ctx, l)
+		}
+		resp, err := handler(innerCtx, req)
+		logGRPCPost(ctx, formatter, "sending", err, resp)
+		return resp, err
+	}
 }
 
 // LogGRPCClient does the same as LogGRPCServer, only on the client side.
-// TODO: indent nested calls
-func LogGRPCClient(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	innerCtx, indent := logGRPCPre(ctx, method, req)
-	err := invoker(innerCtx, method, req, reply, cc, opts...)
-	logGRPCPost(indent, method, err, reply)
-	return err
+// There is no need for a logger because that gets passed in.
+func LogGRPCClient(formatter PayloadFormatter) grpc.UnaryClientInterceptor {
+	if formatter == nil {
+		// Always print some information about the payload.
+		formatter = NullPayloadFormatter{}
+	}
+
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx = logGRPCPre(ctx, log.FromContext(ctx), formatter, "sending", method, req)
+		innerCtx := ctx
+		if sp := opentracing.SpanFromContext(ctx); sp != nil {
+			logger := log.FromContext(ctx)
+			logger = newSpanLogger(sp, logger)
+			innerCtx = log.WithLogger(ctx, logger)
+		}
+		err := invoker(innerCtx, method, req, reply, cc, opts...)
+		logGRPCPost(ctx, formatter, "received", err, reply)
+		return err
+	}
 }
 
-func logGRPCPre(ctx context.Context, method string, req interface{}) (context.Context, int) {
+func logGRPCPre(ctx context.Context, logger log.Logger, formatter PayloadFormatter, msg, method string, req interface{}) context.Context {
 	// Determine indention level based on context and increment it by
 	// by one for future logging.
-	indent := logIndent(ctx)
-	if glog.V(5) {
-		glog.Infof("%*sGRPC call: %s %s", indent, "", method, req)
-	} else if glog.V(3) {
-		glog.Infof("%*sGRPC call: %s", indent, "", method)
-	}
-	return context.WithValue(ctx, logIndentKey, indent+logIndentIncrement), indent
+	logger = logger.With("method", method)
+	logger.Debugw(msg, "request", &delayedFormatter{formatter, req})
+	return log.WithLogger(ctx, logger)
 }
 
-func logGRPCPost(indent int, method string, err error, reply interface{}) {
-	// We need to include the method name here because
-	// a) the preamble might have been logged quite a while
-	//    ago with more log entries since then
-	// b) logging of the preamble might have been skipped due
-	//    to the lower log level
+func logGRPCPost(ctx context.Context, formatter PayloadFormatter, msg string, err error, reply interface{}) {
 	if err != nil {
-		glog.Errorf("%*sGRPC error: %s: %v", indent, "", method, err)
+		log.FromContext(ctx).Errorw(msg, "error", err)
 	} else {
-		glog.V(5).Infof("%*sGRPC response: %s: %+v", indent, "", method, reply)
+		log.FromContext(ctx).Debugw(msg, "response", &delayedFormatter{formatter, reply})
 	}
 }
 
-// TraceGRPCPayload adds the request and response as tags
-// to the call's span, if the log level is five or higher.
-// Warning: this may include sensitive information like the
-// secrets.
-func TraceGRPCPayload(sp opentracing.Span, method string, req, reply interface{}, err error) {
-	if glog.V(5) {
-		sp.SetTag("request", req)
-		if err == nil {
-			sp.SetTag("response", reply)
+// TraceGRPCPayload returns a span decorator which adds the request
+// and response as tags to the call's span if (and only if) a
+// formatter is given.
+func TraceGRPCPayload(formatter PayloadFormatter) otgrpc.SpanDecoratorFunc {
+	return func(sp opentracing.Span, method string, req, reply interface{}, err error) {
+		if formatter != nil {
+			sp.SetTag("request", &delayedFormatter{formatter, req})
+			if err == nil {
+				sp.SetTag("response", &delayedFormatter{formatter, reply})
+			}
 		}
 	}
 }
 
-// Infof logs with glog.V(level).Infof() and in addition, always adds
-// a log message to the current tracing span if the context has
-// one. This ensures that spans which get recorded (not all do) have
-// the full information.
-func Infof(level glog.Level, ctx context.Context, format string, args ...interface{}) {
-	if glog.V(level) {
-		glog.InfoDepth(1, fmt.Sprintf(logSpaces(ctx)+format, args...))
-	}
-	sp := opentracing.SpanFromContext(ctx)
-	if sp != nil {
-		sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
-			fv.EmitString("message", fmt.Sprintf(format, args...))
-		}))
-	}
+type spanLogger struct {
+	log.LoggerBase
+	sp     opentracing.Span
+	logger log.Logger
 }
 
-// Errorf does the same as Infof for error messages, except that
-// it ignores the current log level.
-func Errorf(ctx context.Context, format string, args ...interface{}) {
-	glog.ErrorDepth(1, fmt.Sprintf(logSpaces(ctx)+format, args...))
-	sp := opentracing.SpanFromContext(ctx)
-	if sp != nil {
-		sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
-			fv.EmitString("event", "error")
-			fv.EmitString("message", fmt.Sprintf(format, args...))
-		}))
-	}
+func newSpanLogger(sp opentracing.Span, logger log.Logger) log.Logger {
+	l := &spanLogger{sp: sp, logger: logger}
+	l.LoggerBase.Init(l)
+	return l
+}
+
+func (sl *spanLogger) Output(threshold log.Threshold, args ...interface{}) {
+	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+		fv.EmitString("event", strings.ToLower(threshold.String()))
+		fv.EmitString("message", fmt.Sprint(args...))
+	}))
+	sl.logger.Output(threshold, args...)
+}
+
+func (sl *spanLogger) Outputf(threshold log.Threshold, format string, args ...interface{}) {
+	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+		fv.EmitString("event", strings.ToLower(threshold.String()))
+		fv.EmitString("message", fmt.Sprintf(format, args...))
+	}))
+	sl.logger.Outputf(threshold, format, args...)
+}
+
+func (sl *spanLogger) Outputw(threshold log.Threshold, msg string, keysAndValues ...interface{}) {
+	sl.sp.LogFields(otlog.Lazy(func(fv otlog.Encoder) {
+		fv.EmitString("event", strings.ToLower(threshold.String()))
+		fv.EmitString("message", msg)
+		for i := 0; i+1 < len(keysAndValues); i += 2 {
+			// We rely in reflection inside emitObject
+			// here instead of trying to switch by the
+			// type of the value ourselves, like
+			// otlog.InterleavedKVToFields does.
+			fv.EmitObject(fmt.Sprintf("%s", keysAndValues[i]),
+				keysAndValues[i+1])
+		}
+	}))
+	sl.logger.Outputw(threshold, msg, keysAndValues...)
+}
+
+// With creates a new instance with the same span and a logger
+// which has the additional fields added.
+func (sl *spanLogger) With(keysAndValues ...interface{}) log.Logger {
+	return newSpanLogger(sl.sp,
+		sl.logger.With(keysAndValues...))
 }
 
 // InitTracer initializes the global OpenTracing tracer, using Jaeger

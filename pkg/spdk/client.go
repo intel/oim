@@ -52,7 +52,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/log"
 )
 
 // From SPDK's include/spdk/jsonrpc.h:
@@ -227,35 +227,33 @@ type Client struct {
 
 type logConn struct {
 	net.Conn
-	logger oimcommon.SimpleLogger
+	logger log.Logger
 }
 
 func (lc *logConn) Read(b []byte) (int, error) {
 	n, err := lc.Conn.Read(b)
-	if err != nil {
-		lc.logger.Logf("SPDK read error: %s", err)
-	} else {
-		lc.logger.Logf("<-SPDK: %s", string(b[:n]))
+	if err == nil {
+		lc.logger.Debugw("read", "data", log.LineBuffer(b[:n]))
+	} else if err != io.EOF {
+		lc.logger.Errorw("read error", "error", err)
 	}
 	return n, err
 }
 func (lc *logConn) Write(b []byte) (int, error) {
-	lc.logger.Logf("->SPDK: %s", string(b))
+	lc.logger.Debugw("write", "data", log.LineBuffer(b))
 	n, err := lc.Conn.Write(b)
 	if err != nil {
-		lc.logger.Logf("SPDK write error: %s", err)
+		lc.logger.Errorw("write error", "error", err)
 	}
 	return n, err
 }
 
-func New(path string, logger oimcommon.SimpleLogger) (*Client, error) {
+func New(path string) (*Client, error) {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
 	}
-	if logger != nil {
-		conn = &logConn{conn, logger}
-	}
+	conn = &logConn{conn, log.L().With("at", "spdk-rpc")}
 	client := rpc.NewClientWithCodec(newClientCodec(conn))
 	return &Client{client: client}, nil
 }

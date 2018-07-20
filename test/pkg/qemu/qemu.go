@@ -10,7 +10,6 @@ package qemu
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +18,7 @@ import (
 
 	"github.com/nightlyone/lockfile"
 
-	"github.com/intel/oim/pkg/oim-common"
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/spdk"
 )
 
@@ -34,22 +33,9 @@ var (
 
 type opts struct {
 	kubernetes bool
-	logger     oimcommon.SimpleLogger
 }
 
 type Option func(*opts)
-
-func WithLogger(logger oimcommon.SimpleLogger) Option {
-	return func(o *opts) {
-		o.logger = logger
-	}
-}
-
-func WithWriter(writer io.Writer) Option {
-	return func(o *opts) {
-		o.logger = oimcommon.WrapWriter(writer)
-	}
-}
 
 func WithKubernetes() Option {
 	return func(o *opts) {
@@ -64,9 +50,7 @@ func Init(options ...Option) error {
 		return nil
 	}
 
-	o = opts{
-		logger: oimcommon.WrapWriter(os.Stdout),
-	}
+	o = opts{}
 	for _, op := range options {
 		op(&o)
 	}
@@ -81,13 +65,13 @@ func Init(options ...Option) error {
 				break
 			}
 			if !delayed {
-				o.logger.Logf("Waiting for availability of %s", qemuImage)
+				log.L().Infof("Waiting for availability of %s", qemuImage)
 				delayed = true
 			}
 			time.Sleep(time.Second)
 		}
 		if delayed {
-			o.logger.Logf("Got access to %s", qemuImage)
+			log.L().Infof("Got access to %s", qemuImage)
 		}
 	}
 	if err != nil {
@@ -108,7 +92,7 @@ func Init(options ...Option) error {
 			"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15",
 		)
 	}
-	o.logger.Logf("Starting %s with: %v", qemuImage, opts)
+	log.L().Infof("Starting %s with: %v", qemuImage, opts)
 	vm, err := StartQEMU(qemuImage, opts...)
 	if err != nil {
 		procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
@@ -121,14 +105,14 @@ func Init(options ...Option) error {
 		return nil
 	}
 	kube := filepath.Join(filepath.Dir(qemuImage), "kube-"+strings.TrimSuffix(filepath.Base(qemuImage), ".img"))
-	o.logger.Logf("Starting Kubernetes with: %s", kube)
+	log.L().Infof("Starting Kubernetes with: %s", kube)
 	cmd := exec.Command(kube)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("Starting Kubernetes with %s failed: %s\n%s", kube, err, out)
 	}
 
-	o.logger.Log("VM and Kubernetes ready.")
+	log.L().Info("VM and Kubernetes ready.")
 	return nil
 }
 
@@ -163,7 +147,7 @@ func Finalize() error {
 	// We must shut down QEMU first, otherwise
 	// SPDK refuses to remove the controller.
 	if VM != nil {
-		o.logger.Logf("Stopping QEMU %s", VM)
+		log.L().Infof("Stopping QEMU %s", VM)
 		VM.StopQEMU()
 		VM = nil
 	}

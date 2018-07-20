@@ -10,7 +10,6 @@ import (
 	"context"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
-	"github.com/golang/glog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -28,24 +27,18 @@ func (ns *DefaultNodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.N
 }
 
 func (ns *DefaultNodeServer) NodeGetId(ctx context.Context, req *csi.NodeGetIdRequest) (*csi.NodeGetIdResponse, error) {
-	glog.V(5).Infof("Using default NodeGetId")
-
 	return &csi.NodeGetIdResponse{
 		NodeId: ns.Driver.nodeID,
 	}, nil
 }
 
 func (ns *DefaultNodeServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
-	glog.V(5).Infof("Using default NodeGetInfo")
-
 	return &csi.NodeGetInfoResponse{
 		NodeId: ns.Driver.nodeID,
 	}, nil
 }
 
 func (ns *DefaultNodeServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
-	glog.V(5).Infof("Using default NodeGetCapabilities")
-
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
 			{

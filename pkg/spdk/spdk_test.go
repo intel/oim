@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/intel/oim/pkg/log/testlog"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	testspdk "github.com/intel/oim/test/pkg/spdk"
@@ -24,7 +25,7 @@ import (
 func connect(t *testing.T) *spdk.Client {
 	var err error
 
-	err = testspdk.Init(testspdk.WithLogger(t))
+	err = testspdk.Init()
 	require.NoError(t, err)
 	if testspdk.SPDK == nil {
 		t.Skip("No SPDK vhost.")
@@ -33,6 +34,7 @@ func connect(t *testing.T) *spdk.Client {
 }
 
 func TestGetBDevs(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	defer testspdk.Finalize()
 	client := connect(t)
 	response, err := spdk.GetBDevs(context.Background(), client, spdk.GetBDevsArgs{})
@@ -42,6 +44,7 @@ func TestGetBDevs(t *testing.T) {
 }
 
 func TestError(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	defer testspdk.Finalize()
 	client := connect(t)
 
@@ -53,6 +56,7 @@ func TestError(t *testing.T) {
 }
 
 func TestMallocBDev(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)
@@ -116,6 +120,7 @@ func TestMallocBDev(t *testing.T) {
 }
 
 func TestNBDDev(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)
@@ -186,6 +191,7 @@ loop:
 }
 
 func TestSCSI(t *testing.T) {
+	defer testlog.SetGlobal(t)()
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)

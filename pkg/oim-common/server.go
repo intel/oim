@@ -7,18 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 package oimcommon
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/golang/glog"
-	"google.golang.org/grpc"
-
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pkg/errors"
+	"google.golang.org/grpc"
+
+	"github.com/intel/oim/pkg/log"
 )
 
 // ParseEndpoint splits a string of the format (unix|tcp)://<address> and returns
@@ -51,17 +53,16 @@ type RegisterService func(*grpc.Server)
 
 // Start listens on the configured endpoint and runs a gRPC server with
 // the given services in the background.
-func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
-
+func (s *NonBlockingGRPCServer) Start(ctx context.Context, services ...RegisterService) error {
 	proto, addr, err := ParseEndpoint(s.Endpoint)
 	if err != nil {
-		glog.Fatal(err.Error())
+		return errors.Wrap(err, "parse endpoint")
 	}
 
 	if proto == "unix" {
 		addr = "/" + addr
 		if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
-			return err
+			return errors.Wrap(err, "remove Unix socket")
 		}
 	}
 
@@ -71,11 +72,14 @@ func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
 	}
 	s.addr = listener.Addr()
 
+	logger := log.FromContext(ctx)
+	formatter := CompletePayloadFormatter{}
+
 	interceptor := grpc_middleware.ChainUnaryServer(
 		otgrpc.OpenTracingServerInterceptor(
 			opentracing.GlobalTracer(),
-			otgrpc.SpanDecorator(TraceGRPCPayload)),
-		LogGRPCServer)
+			otgrpc.SpanDecorator(TraceGRPCPayload(formatter))),
+		LogGRPCServer(logger, formatter))
 	opts := []grpc.ServerOption{
 		grpc.UnaryInterceptor(interceptor),
 	}
@@ -87,7 +91,7 @@ func (s *NonBlockingGRPCServer) Start(services ...RegisterService) error {
 		service(server)
 	}
 
-	glog.Infof("Listening for connections on address: %#v", listener.Addr())
+	logger.Infow("listening for connections", "address", listener.Addr())
 
 	s.wg.Add(1)
 	go func() {
@@ -104,26 +108,26 @@ func (s *NonBlockingGRPCServer) Addr() net.Addr {
 }
 
 // Wait for completion of the background server.
-func (s *NonBlockingGRPCServer) Wait() {
+func (s *NonBlockingGRPCServer) Wait(ctx context.Context) {
 	s.wg.Wait()
 	s.addr = nil
 }
 
 // Stop the background server, allowing it to finish current requests.
-func (s *NonBlockingGRPCServer) Stop() {
+func (s *NonBlockingGRPCServer) Stop(ctx context.Context) {
 	s.server.GracefulStop()
 }
 
 // ForceStop stops the background server immediately.
-func (s *NonBlockingGRPCServer) ForceStop() {
+func (s *NonBlockingGRPCServer) ForceStop(ctx context.Context) {
 	s.server.Stop()
 }
 
 // Run combines Start and Wait.
-func (s *NonBlockingGRPCServer) Run(services ...RegisterService) error {
-	if err := s.Start(services...); err != nil {
+func (s *NonBlockingGRPCServer) Run(ctx context.Context, services ...RegisterService) error {
+	if err := s.Start(ctx, services...); err != nil {
 		return err
 	}
-	s.Wait()
+	s.Wait(ctx)
 	return nil
 }

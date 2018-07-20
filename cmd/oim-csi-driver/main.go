@@ -8,15 +8,16 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
-	"os"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-csi-driver"
 )
 
 func init() {
+	// TODO: get rid of glog
 	flag.Set("logtostderr", "true")
 }
 
@@ -27,14 +28,18 @@ var (
 	spdkSocket         = flag.String("spdk-socket", "", "SPDK VHost socket path. If set, then the driver will controll that SPDK instance directly.")
 	oimRegistryAddress = flag.String("oim-registry-address", "", "OIM registry address in the format expected by grpc.Dial. If set, then the driver will use a OIM controller via the registry instead of a local SPDK daemon.")
 	controllerID       = flag.String("controller-id", "", "The ID under which the OIM controller can be found in the registry.")
+	_                  = log.InitSimpleFlags()
 )
 
 func main() {
 	flag.Parse()
+
+	logger := log.NewSimpleLogger(log.NewSimpleConfig())
+	log.Set(logger)
+
 	closer, err := oimcommon.InitTracer(*driverName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize tracer: %s\n", err)
-		os.Exit(1)
+		logger.Fatalf("Failed to initialize tracer: %s\n", err)
 	}
 	defer closer.Close()
 
@@ -48,8 +53,7 @@ func main() {
 	}
 	driver, err := oimcsidriver.New(options...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize driver: %s\n", err)
-		os.Exit(1)
+		logger.Fatalf("Failed to initialize driver: %s\n", err)
 	}
-	driver.Run()
+	driver.Run(context.Background())
 }
