@@ -1141,7 +1141,7 @@
   revision = "kubernetes-1.10.5"
 
 [[projects]]
-  digest = "1:4673246589bd86a84efe1ffb7b5fb17b567b4c22f4f978428ed988b51d7b7cc8"
+  digest = "1:5577637fadddd876419eac5e764f6825a0a74014dbb7efaeb28251282356f9c9"
   name = "k8s.io/apiserver"
   packages = [
     "pkg/admission",
@@ -1222,7 +1222,6 @@
     "pkg/util/feature",
     "pkg/util/flag",
     "pkg/util/flushwriter",
-    "pkg/util/logs",
     "pkg/util/trace",
     "pkg/util/webhook",
     "pkg/util/wsstream",
@@ -1633,8 +1632,6 @@
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/nightlyone/lockfile",
     "github.com/onsi/ginkgo",
-    "github.com/onsi/ginkgo/config",
-    "github.com/onsi/ginkgo/reporters",
     "github.com/onsi/gomega",
     "github.com/onsi/gomega/types",
     "github.com/opentracing/opentracing-go",
@@ -1694,7 +1691,6 @@
     "k8s.io/apiserver/pkg/authentication/serviceaccount",
     "k8s.io/apiserver/pkg/util/feature",
     "k8s.io/apiserver/pkg/util/flag",
-    "k8s.io/apiserver/pkg/util/logs",
     "k8s.io/client-go/discovery",
     "k8s.io/client-go/discovery/cached",
     "k8s.io/client-go/dynamic",

@@ -18,27 +18,20 @@ package e2e
 
 import (
 	"errors"
-	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"testing"
 	"time"
 
 	"github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/config"
-	"github.com/onsi/ginkgo/reporters"
 	"github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	runtimeutils "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apiserver/pkg/util/logs"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/version"
 	// commontest "github.com/intel/oim/test/e2e/common"
 	"github.com/intel/oim/test/e2e/framework"
 	"github.com/intel/oim/test/e2e/framework/ginkgowrapper"
-	"github.com/intel/oim/test/e2e/framework/metrics"
 	"github.com/intel/oim/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
 
@@ -215,80 +208,17 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 }, func() {
 	// Run only Ginkgo on node 1
 	framework.Logf("Running AfterSuite actions on node 1")
-	if framework.TestContext.ReportDir != "" {
-		framework.CoreDump(framework.TestContext.ReportDir)
-	}
-	if framework.TestContext.GatherSuiteMetricsAfterTest {
-		if err := gatherTestSuiteMetrics(); err != nil {
-			framework.Logf("Error gathering metrics: %v", err)
-		}
-	}
 	qemu.Finalize()
 	spdk.Finalize()
 })
 
-func gatherTestSuiteMetrics() error {
-	framework.Logf("Gathering metrics")
-	c, err := framework.LoadClientset()
-	if err != nil {
-		return fmt.Errorf("error loading client: %v", err)
-	}
-
-	// Grab metrics for apiserver, scheduler, controller-manager, kubelet (for non-kubemark case) and cluster autoscaler (optionally).
-	grabber, err := metrics.NewMetricsGrabber(c, nil, !framework.ProviderIs("kubemark"), true, true, true, framework.TestContext.IncludeClusterAutoscalerMetrics)
-	if err != nil {
-		return fmt.Errorf("failed to create MetricsGrabber: %v", err)
-	}
-
-	received, err := grabber.Grab()
-	if err != nil {
-		return fmt.Errorf("failed to grab metrics: %v", err)
-	}
-
-	metricsForE2E := (*framework.MetricsForE2E)(&received)
-	metricsJSON := metricsForE2E.PrintJSON()
-	if framework.TestContext.ReportDir != "" {
-		filePath := path.Join(framework.TestContext.ReportDir, "MetricsForE2ESuite_"+time.Now().Format(time.RFC3339)+".json")
-		if err := ioutil.WriteFile(filePath, []byte(metricsJSON), 0644); err != nil {
-			return fmt.Errorf("error writing to %q: %v", filePath, err)
-		}
-	} else {
-		framework.Logf("\n\nTest Suite Metrics:\n%s\n", metricsJSON)
-	}
-
-	return nil
-}
-
 // RunE2ETests checks configuration parameters (specified through flags) and then runs
 // E2E tests using the Ginkgo runner.
-// If a "report directory" is specified, one or more JUnit test reports will be
-// generated in this directory, and cluster logs will also be saved.
 // This function is called on each Ginkgo node in parallel mode.
 func RunE2ETests(t *testing.T) {
-	runtimeutils.ReallyCrash = true
-	logs.InitLogs()
-	defer logs.FlushLogs()
-
+	// TODO: with "ginkgo ./test/e2e" we shouldn't get verbose output, but somehow we do.
 	gomega.RegisterFailHandler(ginkgowrapper.Fail)
-	// Disable skipped tests unless they are explicitly requested.
-	if config.GinkgoConfig.FocusString == "" && config.GinkgoConfig.SkipString == "" {
-		config.GinkgoConfig.SkipString = `\[Flaky\]|\[Feature:.+\]`
-	}
-
-	// Run tests through the Ginkgo runner with output to console + JUnit for Jenkins
-	var r []ginkgo.Reporter
-	if framework.TestContext.ReportDir != "" {
-		// TODO: we should probably only be trying to create this directory once
-		// rather than once-per-Ginkgo-node.
-		if err := os.MkdirAll(framework.TestContext.ReportDir, 0755); err != nil {
-			log.L().Errorf("Failed creating report directory: %v", err)
-		} else {
-			r = append(r, reporters.NewJUnitReporter(path.Join(framework.TestContext.ReportDir, fmt.Sprintf("junit_%v%02d.xml", framework.TestContext.ReportPrefix, config.GinkgoConfig.ParallelNode))))
-		}
-	}
-	log.L().Infof("Starting e2e run %q on Ginkgo node %d", framework.RunId, config.GinkgoConfig.ParallelNode)
-
-	ginkgo.RunSpecsWithDefaultAndCustomReporters(t, "Kubernetes e2e suite", r)
+	ginkgo.RunSpecs(t, "OIM E2E suite")
 }
 
 // Run a test container to try and contact the Kubernetes api-server from a pod, wait for it
