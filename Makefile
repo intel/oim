@@ -51,7 +51,7 @@ update:
 
 # If Ginkgo is available, then testing can be sped up by using
 # TEST_CMD=ginkgo -p.
-TEST_CMD=go test -v
+TEST_CMD=go test -timeout 0
 TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e
 TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(_TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
