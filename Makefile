@@ -62,6 +62,21 @@ test: all vet run_tests
 vet:
 	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
 
+# golint may sometimes be too strict and intentionally has
+# no way to suppress uninteded warnings, but it finds real
+# issues, so we try to become complete free of warnings.
+# Right now only some parts of the code pass, so the test
+# target only checks those to avoid regressions.
+#
+# golint might not be installed, so we skip the test if
+# that is the case.
+.PHONY: lint test_lint
+test: test_lint
+lint:
+	golint $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
+test_lint:
+	@ golint -help >/dev/null 2>&1; if [ $$? -eq 2 ]; then echo "running golint..."; golint -set_exit_status $(IMPORT_PATH)/pkg/log; fi
+
 # Check resp. fix formatting.
 .PHONY: test_fmt fmt
 test: test_fmt
