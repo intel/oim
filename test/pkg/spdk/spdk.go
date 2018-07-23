@@ -118,7 +118,7 @@ func Init(options ...Option) error {
 		var done <-chan interface{}
 		{
 			log.L().Infof("Starting %s", spdkApp)
-			cmd := exec.Command("sudo", spdkApp, "-S", tmpDir, "-r", spdkSock,
+			cmd := exec.Command("sudo", spdkApp, "-R", "-S", tmpDir, "-r", spdkSock,
 				// Use less precious huge pages. 64MB
 				// and 128MB are not enough and cause
 				// out-of-memory errors for various
