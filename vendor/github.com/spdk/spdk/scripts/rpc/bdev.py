@@ -74,6 +74,49 @@ def delete_null_bdev(client, name):
     return client.call('delete_null_bdev', params)
 
 
+def get_raid_bdevs(client, category):
+    """Get list of raid bdevs based on category
+
+    Args:
+        category: any one of all or online or configuring or offline
+
+    Returns:
+        List of raid bdev names
+    """
+    params = {'category': category}
+    return client.call('get_raid_bdevs', params)
+
+
+def construct_raid_bdev(client, name, strip_size, raid_level, base_bdevs):
+    """Construct pooled device
+
+    Args:
+        name: user defined raid bdev name
+        strip_size: strip size of raid bdev in KB, supported values like 8, 16, 32, 64, 128, 256, 512, 1024 etc
+        raid_level: raid level of raid bdev, supported values 0
+        base_bdevs: Space separated names of Nvme bdevs in double quotes, like "Nvme0n1 Nvme1n1 Nvme2n1"
+
+    Returns:
+        None
+    """
+    params = {'name': name, 'strip_size': strip_size, 'raid_level': raid_level, 'base_bdevs': base_bdevs}
+
+    return client.call('construct_raid_bdev', params)
+
+
+def destroy_raid_bdev(client, name):
+    """Destroy pooled device
+
+    Args:
+        name: raid bdev name
+
+    Returns:
+        None
+    """
+    params = {'name': name}
+    return client.call('destroy_raid_bdev', params)
+
+
 def construct_aio_bdev(client, filename, name, block_size=None):
     """Construct a Linux AIO block device.
 
@@ -104,6 +147,47 @@ def delete_aio_bdev(client, name):
     return client.call('delete_aio_bdev', params)
 
 
+def set_bdev_nvme_options(client, action_on_timeout=None, timeout_us=None, retry_count=None, nvme_adminq_poll_period_us=None):
+    """Set options for the bdev nvme. This is startup command.
+
+    Args:
+        action_on_timeout:  action to take on command time out. Valid values are: none, reset, abort (optional)
+        timeout_us: Timeout for each command, in microseconds. If 0, don't track timeouts (optional)
+        retry_count: The number of attempts per I/O when an I/O fails (optional)
+        nvme_adminq_poll_period_us: how often the admin queue is polled for asynchronous events in microsecon (optional)
+    """
+    params = {}
+
+    if action_on_timeout:
+        params['action_on_timeout'] = action_on_timeout
+
+    if timeout_us:
+        params['timeout_us'] = timeout_us
+
+    if retry_count:
+        params['retry_count'] = retry_count
+
+    if nvme_adminq_poll_period_us:
+        params['nvme_adminq_poll_period_us'] = nvme_adminq_poll_period_us
+
+    return client.call('set_bdev_nvme_options', params)
+
+
+def set_bdev_nvme_hotplug(client, enable, period_us=None):
+    """Set options for the bdev nvme. This is startup command.
+
+    Args:
+       enable: True to enable hotplug, False to disable.
+       period_us: how often the hotplug is processed for insert and remove events. Set 0 to reset to default. (optional)
+    """
+    params = {'enable': enable}
+
+    if period_us:
+        params['period_us'] = period_us
+
+    return client.call('set_bdev_nvme_hotplug', params)
+
+
 def construct_nvme_bdev(client, name, trtype, traddr, adrfam=None, trsvcid=None, subnqn=None):
     """Construct NVMe namespace block device.
 
@@ -132,6 +216,17 @@ def construct_nvme_bdev(client, name, trtype, traddr, adrfam=None, trsvcid=None,
         params['subnqn'] = subnqn
 
     return client.call('construct_nvme_bdev', params)
+
+
+def delete_nvme_controller(client, name):
+    """Remove NVMe controller from the system.
+
+    Args:
+        name: controller name
+    """
+
+    params = {'name': name}
+    return client.call('delete_nvme_controller', params)
 
 
 def construct_rbd_bdev(client, pool_name, rbd_name, block_size, name=None):
@@ -377,6 +472,20 @@ def bdev_inject_error(client, name, io_type, error_type, num=1):
     }
 
     return client.call('bdev_inject_error', params)
+
+
+def set_bdev_qd_sampling_period(client, name, period):
+    """Enable queue depth tracking on a specified bdev.
+
+    Args:
+        name: name of a bdev on which to track queue depth.
+        period: period (in microseconds) at which to update the queue depth reading. If set to 0, polling will be disabled.
+    """
+
+    params = {}
+    params['name'] = name
+    params['period'] = period
+    return client.call('set_bdev_qd_sampling_period', params)
 
 
 def set_bdev_qos_limit_iops(client, name, ios_per_sec):

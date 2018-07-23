@@ -85,7 +85,6 @@ struct spdk_lvol_store {
 	struct spdk_blob		*super_blob;
 	spdk_blob_id			super_blob_id;
 	struct spdk_uuid		uuid;
-	struct spdk_lvs_req		*destruct_req;
 	int				lvol_count;
 	int				lvols_opened;
 	bool				destruct;
@@ -105,7 +104,6 @@ struct spdk_lvol {
 	char				name[SPDK_LVOL_NAME_MAX];
 	struct spdk_uuid		uuid;
 	char				uuid_str[SPDK_UUID_STRING_LEN];
-	bool				close_only;
 	bool				thin_provision;
 	struct spdk_bdev		*bdev;
 	int				ref_count;

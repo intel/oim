@@ -261,8 +261,27 @@ modern_setup_queue(struct virtio_dev *dev, struct virtqueue *vq)
 	struct virtio_hw *hw = dev->ctx;
 	uint64_t desc_addr, avail_addr, used_addr;
 	uint16_t notify_off;
+	void *queue_mem;
+	uint64_t queue_mem_phys_addr;
+
+	/* To ensure physical address contiguity we make the queue occupy
+	 * only a single hugepage (2MB). As of Virtio 1.0, the queue size
+	 * always falls within this limit.
+	 */
+	if (vq->vq_ring_size > 0x200000) {
+		return -ENOMEM;
+	}
+
+	queue_mem = spdk_dma_zmalloc(vq->vq_ring_size, 0x200000, &queue_mem_phys_addr);
+	if (queue_mem == NULL) {
+		return -ENOMEM;
+	}
+
+	vq->vq_ring_mem = queue_mem_phys_addr;
+	vq->vq_ring_virt_mem = queue_mem;
 
 	if (!check_vq_phys_addr_ok(vq)) {
+		spdk_dma_free(queue_mem);
 		return -1;
 	}
 
@@ -311,6 +330,8 @@ modern_del_queue(struct virtio_dev *dev, struct virtqueue *vq)
 			   &hw->common_cfg->queue_used_hi);
 
 	spdk_mmio_write_2(&hw->common_cfg->queue_enable, 0);
+
+	spdk_dma_free(vq->vq_ring_virt_mem);
 }
 
 static void

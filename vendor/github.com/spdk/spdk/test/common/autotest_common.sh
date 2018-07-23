@@ -43,6 +43,7 @@ fi
 : ${SPDK_TEST_ISCSI=1}; export SPDK_TEST_ISCSI
 : ${SPDK_TEST_ISCSI_INITIATOR=1}; export SPDK_TEST_ISCSI_INITIATOR
 : ${SPDK_TEST_NVME=1}; export SPDK_TEST_NVME
+: ${SPDK_TEST_NVME_CLI=1}; export SPDK_TEST_NVME_CLI
 : ${SPDK_TEST_NVMF=1}; export SPDK_TEST_NVMF
 : ${SPDK_TEST_RBD=1}; export SPDK_TEST_RBD
 : ${SPDK_TEST_VHOST=1}; export SPDK_TEST_VHOST
@@ -72,6 +73,16 @@ if [ $SPDK_RUN_VALGRIND -eq 0 ]; then
 fi
 
 config_params='--enable-debug --enable-werror'
+
+if echo -e "#include <libunwind.h>\nint main(int argc, char *argv[]) {return 0;}\n" | \
+	gcc -o /dev/null -lunwind -x c - 2>/dev/null; then
+	config_params+=' --enable-log-bt=ERROR'
+fi
+
+# RAID is marked experimental and not built by default currently, since it does not
+#  support iov (meaning vhost will not work).  But enable it in the build here, to make
+#  sure it gets built and run against a limited set of use cases for now.
+config_params+=' --with-raid'
 
 export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1:abort_on_error=1'
 
@@ -159,6 +170,10 @@ if [ -d /usr/include/iscsi ]; then
 	fi
 else
 	export SPDK_TEST_ISCSI_INITIATOR=0
+fi
+
+if [ ! -d "${DEPENDENCY_DIR}/nvme-cli" ]; then
+	export SPDK_TEST_NVME_CLI=0
 fi
 
 export config_params
@@ -484,6 +499,8 @@ function part_dev_by_gpt () {
 			# clear the partition table
 			dd if=/dev/zero of=$nbd_path bs=4096 count=8 oflag=direct
 		fi
+
+		$rootdir/scripts/rpc.py -s "$rpc_server" stop_nbd_disk $nbd_path
 
 		killprocess $nbd_pid
 		rm -f ${conf}.gpt

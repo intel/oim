@@ -41,6 +41,7 @@
 
 #include "spdk/stdinc.h"
 
+#include "spdk/bdev.h"
 #include "spdk/queue.h"
 
 #ifdef __cplusplus
@@ -140,11 +141,15 @@ struct spdk_scsi_task {
 	TAILQ_ENTRY(spdk_scsi_task) scsi_link;
 
 	uint32_t abort_id;
+	struct spdk_bdev_io_wait_entry bdev_io_wait;
 };
 
 struct spdk_scsi_port;
 struct spdk_scsi_dev;
 struct spdk_scsi_lun;
+struct spdk_scsi_desc;
+
+typedef void (*spdk_scsi_remove_cb_t)(struct spdk_scsi_lun *, void *);
 
 /**
  * Initialize SCSI layer.
@@ -184,6 +189,15 @@ const char *spdk_scsi_lun_get_bdev_name(const struct spdk_scsi_lun *lun);
  * \return the SCSI device associated with the logical unit.
  */
 const struct spdk_scsi_dev *spdk_scsi_lun_get_dev(const struct spdk_scsi_lun *lun);
+
+/**
+ * Check if the logical unit is hot removing.
+ *
+ * \param lun Logical unit
+ *
+ * \return true if removing, false otherwise.
+ */
+bool spdk_scsi_lun_is_removing(const struct spdk_scsi_lun *lun);
 
 /**
  * Get the name of the given SCSI device.
@@ -458,20 +472,43 @@ void spdk_scsi_task_copy_status(struct spdk_scsi_task *dst, struct spdk_scsi_tas
 void spdk_scsi_task_process_null_lun(struct spdk_scsi_task *task);
 
 /**
+ * Open a logical unit for I/O operations.
+ *
+ * The registered callback function must get all tasks from the upper layer
+ *  (e.g. iSCSI) to the LUN done, free the IO channel of the LUN if allocated,
+ *  and then close the LUN.
+ *
+ * \param lun Logical unit to open.
+ * \param hotremove_cb Callback function for hot removal of the logical unit.
+ * \param hotremove_ctx Param for hot removal callback function.
+ * \param desc Output parameter for the descriptor when operation is successful.
+ * \return 0 if operation is successful, suitable errno value otherwise
+ */
+int spdk_scsi_lun_open(struct spdk_scsi_lun *lun, spdk_scsi_remove_cb_t hotremove_cb,
+		       void *hotremove_ctx, struct spdk_scsi_desc **desc);
+
+/**
+ * Close an opened logical unit.
+ *
+ * \param desc Descriptor of the logical unit.
+ */
+void spdk_scsi_lun_close(struct spdk_scsi_desc *desc);
+
+/**
  * Allocate I/O channel for the LUN
  *
- * \param lun Logical unit.
+ * \param desc Descriptor of the logical unit.
  *
  * \return 0 on success, -1 on failure.
  */
-int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun);
+int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_desc *desc);
 
 /**
  * Free I/O channel from the logical unit
  *
- * \param lun Logical unit.
+ * \param desc Descriptor of the logical unit.
  */
-void spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun);
+void spdk_scsi_lun_free_io_channel(struct spdk_scsi_desc *desc);
 
 #ifdef __cplusplus
 }

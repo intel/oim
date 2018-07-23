@@ -42,6 +42,19 @@
 
 #define NVME_MAX_CONTROLLERS 1024
 
+enum spdk_bdev_timeout_action {
+	SPDK_BDEV_NVME_TIMEOUT_ACTION_NONE = 0,
+	SPDK_BDEV_NVME_TIMEOUT_ACTION_RESET,
+	SPDK_BDEV_NVME_TIMEOUT_ACTION_ABORT,
+};
+
+struct spdk_bdev_nvme_opts {
+	enum spdk_bdev_timeout_action action_on_timeout;
+	uint64_t timeout_us;
+	uint32_t retry_count;
+	uint64_t nvme_adminq_poll_period_us;
+};
+
 struct nvme_ctrlr {
 	/**
 	 * points to pinned, physically contiguous memory region;
@@ -70,10 +83,23 @@ struct nvme_bdev {
 	struct spdk_nvme_ns	*ns;
 };
 
+void spdk_bdev_nvme_get_opts(struct spdk_bdev_nvme_opts *opts);
+int spdk_bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts);
+int spdk_bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_thread_fn cb, void *cb_ctx);
+
 int spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 			  const char *base_name,
 			  const char **names, size_t *count,
 			  const char *hostnqn);
 struct spdk_nvme_ctrlr *spdk_bdev_nvme_get_ctrlr(struct spdk_bdev *bdev);
+
+/**
+ * Delete NVMe controller with all bdevs on top of it.
+ * Requires to pass name of NVMe controller.
+ *
+ * \param name NVMe controller name
+ * \return zero on success, -EINVAL on wrong parameters or -ENODEV if controller is not found
+ */
+int spdk_bdev_nvme_delete(const char *name);
 
 #endif // SPDK_BDEV_NVME_H

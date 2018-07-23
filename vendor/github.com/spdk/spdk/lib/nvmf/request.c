@@ -45,6 +45,35 @@
 #include "spdk_internal/assert.h"
 #include "spdk_internal/log.h"
 
+static void
+spdk_nvmf_qpair_request_cleanup(struct spdk_nvmf_qpair *qpair)
+{
+	if (qpair->state == SPDK_NVMF_QPAIR_DEACTIVATING) {
+		assert(qpair->state_cb != NULL);
+
+		if (TAILQ_EMPTY(&qpair->outstanding)) {
+			qpair->state_cb(qpair->state_cb_arg, 0);
+		}
+	} else {
+		assert(qpair->state == SPDK_NVMF_QPAIR_ACTIVE);
+	}
+}
+
+int
+spdk_nvmf_request_free(struct spdk_nvmf_request *req)
+{
+	struct spdk_nvmf_qpair *qpair = req->qpair;
+
+	TAILQ_REMOVE(&qpair->outstanding, req, link);
+	if (spdk_nvmf_transport_req_free(req)) {
+		SPDK_ERRLOG("Unable to free transport level request resources.\n");
+	}
+
+	spdk_nvmf_qpair_request_cleanup(qpair);
+
+	return 0;
+}
+
 int
 spdk_nvmf_request_complete(struct spdk_nvmf_request *req)
 {
@@ -67,15 +96,7 @@ spdk_nvmf_request_complete(struct spdk_nvmf_request *req)
 		SPDK_ERRLOG("Transport request completion error!\n");
 	}
 
-	if (qpair->state == SPDK_NVMF_QPAIR_DEACTIVATING) {
-		assert(qpair->state_cb != NULL);
-
-		if (TAILQ_EMPTY(&qpair->outstanding)) {
-			qpair->state_cb(qpair->state_cb_arg, 0);
-		}
-	} else {
-		assert(qpair->state == SPDK_NVMF_QPAIR_ACTIVE);
-	}
+	spdk_nvmf_qpair_request_cleanup(qpair);
 
 	return 0;
 }
@@ -135,6 +156,8 @@ spdk_nvmf_request_exec(struct spdk_nvmf_request *req)
 	if (qpair->state != SPDK_NVMF_QPAIR_ACTIVE) {
 		req->rsp->nvme_cpl.status.sct = SPDK_NVME_SCT_GENERIC;
 		req->rsp->nvme_cpl.status.sc = SPDK_NVME_SC_COMMAND_SEQUENCE_ERROR;
+		/* Place the request on the outstanding list so we can keep track of it */
+		TAILQ_INSERT_TAIL(&qpair->outstanding, req, link);
 		spdk_nvmf_request_complete(req);
 		return;
 	}

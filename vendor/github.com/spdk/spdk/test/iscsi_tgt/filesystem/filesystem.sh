@@ -13,22 +13,28 @@ rpc_py="python $rootdir/scripts/rpc.py"
 function remove_backends()
 {
 	echo "INFO: Removing lvol bdev"
-	$rpc_py delete_bdev "lvs_0/lbd_0"
+	$rpc_py destroy_lvol_bdev "lvs_0/lbd_0"
 
 	echo "INFO: Removing lvol stores"
 	$rpc_py destroy_lvol_store -l lvs_0
+
+	echo "INFO: Removing NVMe"
+	$rpc_py delete_nvme_controller Nvme0
+
 	return 0
 }
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -c $testdir/iscsi.conf -m $ISCSI_TEST_CORE_MASK &
+$ISCSI_APP -m $ISCSI_TEST_CORE_MASK -w &
 pid=$!
 echo "Process pid: $pid"
 
 trap "killprocess $pid; exit 1" SIGINT SIGTERM EXIT
 
 waitforlisten $pid
+$rpc_py set_iscsi_options -o 30 -a 16
+$rpc_py start_subsystem_init
 echo "iscsi_tgt is listening. Running tests..."
 
 timing_exit start_iscsi_tgt

@@ -356,6 +356,7 @@ virtio_user_setup_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 	struct virtio_user_dev *dev = vdev->ctx;
 	struct vhost_vring_state state;
 	uint16_t queue_idx = vq->vq_queue_index;
+	void *queue_mem;
 	uint64_t desc_addr, avail_addr, used_addr;
 	int callfd;
 	int kickfd;
@@ -382,6 +383,16 @@ virtio_user_setup_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 		return -1;
 	}
 
+	queue_mem = spdk_dma_zmalloc(vq->vq_ring_size, VIRTIO_PCI_VRING_ALIGN, NULL);
+	if (queue_mem == NULL) {
+		close(kickfd);
+		close(callfd);
+		return -ENOMEM;
+	}
+
+	vq->vq_ring_mem = SPDK_VTOPHYS_ERROR;
+	vq->vq_ring_virt_mem = queue_mem;
+
 	state.index = vq->vq_queue_index;
 	state.num = 0;
 
@@ -389,6 +400,7 @@ virtio_user_setup_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 	    dev->ops->send_request(dev, VHOST_USER_SET_VRING_ENABLE, &state) < 0) {
 		SPDK_ERRLOG("failed to send VHOST_USER_SET_VRING_ENABLE: %s\n",
 			    spdk_strerror(errno));
+		spdk_dma_free(queue_mem);
 		return -1;
 	}
 
@@ -427,6 +439,8 @@ virtio_user_del_queue(struct virtio_dev *vdev, struct virtqueue *vq)
 	close(dev->kickfds[vq->vq_queue_index]);
 	dev->callfds[vq->vq_queue_index] = -1;
 	dev->kickfds[vq->vq_queue_index] = -1;
+
+	spdk_dma_free(vq->vq_ring_virt_mem);
 }
 
 static void

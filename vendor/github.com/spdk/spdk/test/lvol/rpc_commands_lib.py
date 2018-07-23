@@ -111,12 +111,14 @@ class Commands_Rpc(object):
         output = self.rpc.construct_malloc_bdev(total_size, block_size)[0]
         return output.rstrip('\n')
 
-    def construct_lvol_store(self, base_name, lvs_name, cluster_size):
+    def construct_lvol_store(self, base_name, lvs_name, cluster_size=None):
         print("INFO: RPC COMMAND construct_lvol_store")
-        output = self.rpc.construct_lvol_store(
-            base_name,
-            lvs_name,
-            "-c {cluster_sz}".format(cluster_sz=cluster_size))[0]
+        if cluster_size:
+            output = self.rpc.construct_lvol_store(base_name,
+                                                   lvs_name,
+                                                   "-c {cluster_sz}".format(cluster_sz=cluster_size))[0]
+        else:
+            output = self.rpc.construct_lvol_store(base_name, lvs_name)[0]
         return output.rstrip('\n')
 
     def construct_lvol_bdev(self, uuid, lbd_name, size, thin=False):
@@ -150,6 +152,11 @@ class Commands_Rpc(object):
     def delete_malloc_bdev(self, base_name):
         print("INFO: RPC COMMAND delete_malloc_bdev")
         output, rc = self.rpc.delete_malloc_bdev(base_name)
+        return rc
+
+    def delete_nvme_controller(self, controller_name):
+        print("INFO: RPC COMMAND delete_nvme_controller")
+        output, rc = self.rpc.delete_nvme_controller(controller_name)
         return rc
 
     def destroy_lvol_bdev(self, bdev_name):
@@ -224,4 +231,9 @@ class Commands_Rpc(object):
     def inflate_lvol_bdev(self, clone_name):
         print("INFO: RPC COMMAND inflate_lvol_bdev")
         output, rc = self.rpc.inflate_lvol_bdev(clone_name)
+        return rc
+
+    def decouple_parent_lvol_bdev(self, clone_name):
+        print("INFO: RPC COMMAND decouple_parent_lvol_bdev")
+        output, rc = self.rpc.decouple_parent_lvol_bdev(clone_name)
         return rc

@@ -42,6 +42,7 @@
 #include "spdk/assert.h"
 #include "spdk/queue.h"
 #include "spdk/util.h"
+#include "spdk/thread.h"
 
 #define SPDK_NVMF_MAX_SGL_ENTRIES	16
 
@@ -56,10 +57,12 @@ enum spdk_nvmf_subsystem_state {
 };
 
 enum spdk_nvmf_qpair_state {
-	SPDK_NVMF_QPAIR_INACTIVE = 0,
+	SPDK_NVMF_QPAIR_UNINITIALIZED = 0,
+	SPDK_NVMF_QPAIR_INACTIVE,
 	SPDK_NVMF_QPAIR_ACTIVATING,
 	SPDK_NVMF_QPAIR_ACTIVE,
 	SPDK_NVMF_QPAIR_DEACTIVATING,
+	SPDK_NVMF_QPAIR_ERROR,
 };
 
 typedef void (*spdk_nvmf_state_change_done)(void *cb_arg, int status);
@@ -251,6 +254,8 @@ struct spdk_nvmf_subsystem {
 	TAILQ_ENTRY(spdk_nvmf_subsystem)	entries;
 };
 
+typedef void(*spdk_nvmf_poll_group_mod_done)(void *cb_arg, int status);
+
 struct spdk_nvmf_transport *spdk_nvmf_tgt_get_transport(struct spdk_nvmf_tgt *tgt,
 		enum spdk_nvme_transport_type);
 
@@ -258,15 +263,17 @@ int spdk_nvmf_poll_group_add_transport(struct spdk_nvmf_poll_group *group,
 				       struct spdk_nvmf_transport *transport);
 int spdk_nvmf_poll_group_update_subsystem(struct spdk_nvmf_poll_group *group,
 		struct spdk_nvmf_subsystem *subsystem);
-int spdk_nvmf_poll_group_add_subsystem(struct spdk_nvmf_poll_group *group,
-				       struct spdk_nvmf_subsystem *subsystem);
-int spdk_nvmf_poll_group_remove_subsystem(struct spdk_nvmf_poll_group *group,
-		struct spdk_nvmf_subsystem *subsystem);
-int spdk_nvmf_poll_group_pause_subsystem(struct spdk_nvmf_poll_group *group,
-		struct spdk_nvmf_subsystem *subsystem);
-int spdk_nvmf_poll_group_resume_subsystem(struct spdk_nvmf_poll_group *group,
-		struct spdk_nvmf_subsystem *subsystem);
+void spdk_nvmf_poll_group_add_subsystem(struct spdk_nvmf_poll_group *group,
+					struct spdk_nvmf_subsystem *subsystem,
+					spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg);
+void spdk_nvmf_poll_group_remove_subsystem(struct spdk_nvmf_poll_group *group,
+		struct spdk_nvmf_subsystem *subsystem, spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg);
+void spdk_nvmf_poll_group_pause_subsystem(struct spdk_nvmf_poll_group *group,
+		struct spdk_nvmf_subsystem *subsystem, spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg);
+void spdk_nvmf_poll_group_resume_subsystem(struct spdk_nvmf_poll_group *group,
+		struct spdk_nvmf_subsystem *subsystem, spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg);
 void spdk_nvmf_request_exec(struct spdk_nvmf_request *req);
+int spdk_nvmf_request_free(struct spdk_nvmf_request *req);
 int spdk_nvmf_request_complete(struct spdk_nvmf_request *req);
 
 void spdk_nvmf_get_discovery_log_page(struct spdk_nvmf_tgt *tgt,
@@ -290,6 +297,21 @@ void spdk_nvmf_subsystem_remove_ctrlr(struct spdk_nvmf_subsystem *subsystem,
 struct spdk_nvmf_ctrlr *spdk_nvmf_subsystem_get_ctrlr(struct spdk_nvmf_subsystem *subsystem,
 		uint16_t cntlid);
 int spdk_nvmf_ctrlr_async_event_ns_notice(struct spdk_nvmf_ctrlr *ctrlr);
+
+/*
+ * Abort aer is sent on a per controller basis and sends a completion for the aer to the host.
+ * This function should be called when attempting to recover in error paths when it is OK for
+ * the host to send a subsequent AER.
+ */
+void spdk_nvmf_ctrlr_abort_aer(struct spdk_nvmf_ctrlr *ctrlr);
+
+/*
+ * Free aer simply frees the rdma resources for the aer without informing the host.
+ * This function should be called when deleting a qpair when one wants to make sure
+ * the qpair is completely empty before freeing the request. The reason we free the
+ * AER without sending a completion is to prevent the host from sending another AER.
+ */
+void spdk_nvmf_qpair_free_aer(struct spdk_nvmf_qpair *qpair);
 
 static inline struct spdk_nvmf_ns *
 _spdk_nvmf_subsystem_get_ns(struct spdk_nvmf_subsystem *subsystem, uint32_t nsid)

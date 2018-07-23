@@ -51,10 +51,6 @@ rte_eal_get_configuration(void)
 }
 
 #if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0)
-typedef void (*rte_mem_event_callback_t)(enum rte_mem_event event_type,
-		const void *addr, size_t len, void *arg);
-typedef int (*rte_memseg_contig_walk_t)(const struct rte_memseg_list *msl,
-					const struct rte_memseg *ms, size_t len, void *arg);
 DEFINE_STUB(rte_mem_event_callback_register, int, (const char *name, rte_mem_event_callback_t clb,
 		void *arg), 0);
 DEFINE_STUB(rte_memseg_contig_walk, int, (rte_memseg_contig_walk_t func, void *arg), 0);
@@ -180,6 +176,22 @@ test_mem_map_translation(void)
 	/* Get translation for the third page */
 	addr = spdk_mem_map_translate(map, 2 * VALUE_2MB, VALUE_2MB);
 	CU_ASSERT(addr == default_translation);
+
+	/* Set translation for the last valid 2MB region */
+	rc = spdk_mem_map_set_translation(map, 0xffffffe00000ULL, VALUE_2MB, 0x1234);
+	CU_ASSERT(rc == 0);
+
+	/* Verify translation for last valid 2MB region */
+	addr = spdk_mem_map_translate(map, 0xffffffe00000ULL, VALUE_2MB);
+	CU_ASSERT(addr == 0x1234);
+
+	/* Attempt to set translation for the first invalid address */
+	rc = spdk_mem_map_set_translation(map, 0x1000000000000ULL, VALUE_2MB, 0x5678);
+	CU_ASSERT(rc == -EINVAL);
+
+	/* Attempt to set translation starting at a valid address but exceeding the valid range */
+	rc = spdk_mem_map_set_translation(map, 0xffffffe00000ULL, VALUE_2MB * 2, 0x123123);
+	CU_ASSERT(rc != 0);
 
 	spdk_mem_map_free(&map);
 	CU_ASSERT(map == NULL);

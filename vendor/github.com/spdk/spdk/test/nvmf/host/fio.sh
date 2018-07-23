@@ -25,12 +25,14 @@ fi
 timing_enter fio
 timing_enter start_nvmf_tgt
 
-$NVMF_APP -c $testdir/../nvmf.conf &
+$NVMF_APP -m 0xF -w &
 nvmfpid=$!
 
 trap "killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
 
 waitforlisten $nvmfpid
+$rpc_py set_nvmf_target_options -u 8192 -p 4
+$rpc_py start_subsystem_init
 timing_exit start_nvmf_tgt
 
 bdevs="$bdevs $($rpc_py construct_malloc_bdev 64 512)"
@@ -70,7 +72,7 @@ if [ $RUN_NIGHTLY -eq 1 ]; then
 	$rpc_py destroy_lvol_store -l lvs_n_0
 	$rpc_py destroy_lvol_bdev "$lb_guid"
 	$rpc_py destroy_lvol_store -l lvs_0
-	$rpc_py delete_bdev "Nvme0n1"
+	$rpc_py delete_nvme_controller Nvme0
 fi
 
 trap - SIGINT SIGTERM EXIT

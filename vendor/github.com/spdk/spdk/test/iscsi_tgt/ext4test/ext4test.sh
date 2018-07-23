@@ -11,21 +11,21 @@ fi
 
 timing_enter ext4test
 
-cp $testdir/iscsi.conf.in $testdir/iscsi.conf
-$rootdir/scripts/gen_nvme.sh >> $testdir/iscsi.conf
-
-
 rpc_py="python $rootdir/scripts/rpc.py"
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -c $testdir/iscsi.conf &
+$ISCSI_APP -w &
 pid=$!
 echo "Process pid: $pid"
 
-trap "killprocess $pid; exit 1" SIGINT SIGTERM EXIT
+trap "$rpc_py destruct_split_vbdev Name0n1 || true; killprocess $pid; rm -f $testdir/iscsi.conf; exit 1" SIGINT SIGTERM EXIT
 
 waitforlisten $pid
+$rpc_py set_iscsi_options -o 30 -a 4 -b "iqn.2013-06.com.intel.ch.spdk"
+$rpc_py start_subsystem_init
+$rootdir/scripts/gen_nvme.sh --json | $rpc_py load_subsystem_config
+$rpc_py construct_malloc_bdev 512 4096 --name Malloc0
 echo "iscsi_tgt is listening. Running tests..."
 
 timing_exit start_iscsi_tgt
@@ -43,7 +43,7 @@ iscsiadm -m discovery -t sendtargets -p $TARGET_IP:$ISCSI_PORT
 iscsiadm -m node --login -p $TARGET_IP:$ISCSI_PORT
 
 trap 'for new_dir in `dir -d /mnt/*dir`; do umount $new_dir; rm -rf $new_dir; done; \
-	iscsicleanup; killprocess $pid; exit 1' SIGINT SIGTERM EXIT
+	iscsicleanup; killprocess $pid; rm -f $testdir/iscsi.conf; exit 1' SIGINT SIGTERM EXIT
 
 sleep 1
 
@@ -58,7 +58,6 @@ if [ $? -eq 0 ]; then
 	echo "mkfs successful - expected failure"
 	iscsicleanup
 	killprocess $pid
-	rm -f $testdir/iscsi.conf
 	exit 1
 else
 	echo "mkfs failed as expected"
@@ -71,7 +70,8 @@ echo "Error injection test done"
 iscsicleanup
 
 if [ -z "$NO_NVME" ]; then
-$rpc_py construct_target_node Target1 Target1_alias Nvme0n1:0 1:2 64 -d
+	$rpc_py construct_split_vbdev Nvme0n1 2 -s 10000
+	$rpc_py construct_target_node Target1 Target1_alias Nvme0n1p0:0 1:2 64 -d
 fi
 
 iscsiadm -m discovery -t sendtargets -p $TARGET_IP:$ISCSI_PORT
@@ -115,9 +115,14 @@ done
 
 trap - SIGINT SIGTERM EXIT
 
-rm -f $testdir/iscsi.conf
 iscsicleanup
+$rpc_py destruct_split_vbdev Nvme0n1
 $rpc_py delete_error_bdev EE_Malloc0
+
+if [ -z "$NO_NVME" ]; then
+	$rpc_py delete_nvme_controller Nvme0
+fi
+
 killprocess $pid
 report_test_completion "nightly_iscsi_ext4test"
 timing_exit ext4test

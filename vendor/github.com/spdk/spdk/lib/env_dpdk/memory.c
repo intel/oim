@@ -55,7 +55,7 @@
 #define FN_4KB_TO_2MB(fn)	(fn >> (SHIFT_2MB - SHIFT_4KB))
 
 #define MAP_256TB_IDX(vfn_2mb)	((vfn_2mb) >> (SHIFT_1GB - SHIFT_2MB))
-#define MAP_1GB_IDX(vfn_2mb)	((vfn_2mb) & ((1ULL << (SHIFT_1GB - SHIFT_2MB + 1)) - 1))
+#define MAP_1GB_IDX(vfn_2mb)	((vfn_2mb) & ((1ULL << (SHIFT_1GB - SHIFT_2MB)) - 1))
 
 /* Translation of a single 2MB page. */
 struct map_2mb {
@@ -67,14 +67,14 @@ struct map_2mb {
  * been retrieved yet.
  */
 struct map_1gb {
-	struct map_2mb map[1ULL << (SHIFT_1GB - SHIFT_2MB + 1)];
+	struct map_2mb map[1ULL << (SHIFT_1GB - SHIFT_2MB)];
 };
 
 /* Top-level map table indexed by bits [30..46] of the virtual address.
  * Each entry points to a second-level map table or NULL.
  */
 struct map_256tb {
-	struct map_1gb *map[1ULL << (SHIFT_256TB - SHIFT_1GB + 1)];
+	struct map_1gb *map[1ULL << (SHIFT_256TB - SHIFT_1GB)];
 };
 
 /* Page-granularity memory address translation */
@@ -360,6 +360,10 @@ spdk_mem_map_get_map_1gb(struct spdk_mem_map *map, uint64_t vfn_2mb)
 	uint64_t idx_256tb = MAP_256TB_IDX(vfn_2mb);
 	size_t i;
 
+	if (spdk_unlikely(idx_256tb >= SPDK_COUNTOF(map->map_256tb.map))) {
+		return NULL;
+	}
+
 	map_1gb = map->map_256tb.map[idx_256tb];
 
 	if (!map_1gb) {
@@ -398,12 +402,12 @@ spdk_mem_map_set_translation(struct spdk_mem_map *map, uint64_t vaddr, uint64_t 
 	uint64_t idx_1gb;
 	struct map_2mb *map_2mb;
 
-	/* For now, only 2 MB-aligned registrations are supported */
 	if ((uintptr_t)vaddr & ~MASK_256TB) {
 		DEBUG_PRINT("invalid usermode virtual address %lu\n", vaddr);
 		return -EINVAL;
 	}
 
+	/* For now, only 2 MB-aligned registrations are supported */
 	if (((uintptr_t)vaddr & MASK_2MB) || (size & MASK_2MB)) {
 		DEBUG_PRINT("invalid %s parameters, vaddr=%lu len=%ju\n",
 			    __func__, vaddr, size);
@@ -438,12 +442,12 @@ spdk_mem_map_clear_translation(struct spdk_mem_map *map, uint64_t vaddr, uint64_
 	uint64_t idx_1gb;
 	struct map_2mb *map_2mb;
 
-	/* For now, only 2 MB-aligned registrations are supported */
 	if ((uintptr_t)vaddr & ~MASK_256TB) {
 		DEBUG_PRINT("invalid usermode virtual address %lu\n", vaddr);
 		return -EINVAL;
 	}
 
+	/* For now, only 2 MB-aligned registrations are supported */
 	if (((uintptr_t)vaddr & MASK_2MB) || (size & MASK_2MB)) {
 		DEBUG_PRINT("invalid %s parameters, vaddr=%lu len=%ju\n",
 			    __func__, vaddr, size);

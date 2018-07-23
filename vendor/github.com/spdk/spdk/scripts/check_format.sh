@@ -10,6 +10,10 @@ rc=0
 
 if hash astyle; then
 	echo -n "Checking coding style..."
+	if [ "$(astyle -V)" \< "Artistic Style Version 3" ]
+	then
+		echo -n " Your astyle version is too old. This may cause failure on patch verification performed by CI. Please update astyle to at least 3.0.1 version..."
+	fi
 	rm -f astyle.log
 	touch astyle.log
 	# Exclude rte_vhost code imported from DPDK - we want to keep the original code
@@ -86,6 +90,18 @@ else
 	echo " OK"
 fi
 rm -f badfunc.log
+
+echo -n "Checking for use of forbidden CUnit macros..."
+
+git grep --line-number -w 'CU_ASSERT_FATAL' -- 'test/*' ':!test/spdk_cunit.h' > badcunit.log || true
+if [ -s badcunit.log ]; then
+	echo " Forbidden CU_ASSERT_FATAL usage detected - use SPDK_CU_ASSERT_FATAL instead"
+	cat badcunit.log
+	rc=1
+else
+	echo " OK"
+fi
+rm -f badcunit.log
 
 echo -n "Checking blank lines at end of file..."
 

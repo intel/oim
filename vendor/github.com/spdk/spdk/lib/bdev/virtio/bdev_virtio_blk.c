@@ -229,6 +229,7 @@ virtio_blk_dev_unregister_cb(void *io_device)
 
 	virtio_dev_stop(vdev);
 	virtio_dev_destruct(vdev);
+	spdk_bdev_destruct_done(&bvdev->bdev, 0);
 	free(bvdev);
 }
 
@@ -238,6 +239,25 @@ bdev_virtio_disk_destruct(void *ctx)
 	struct virtio_blk_dev *bvdev = ctx;
 
 	spdk_io_device_unregister(bvdev, virtio_blk_dev_unregister_cb);
+	return 1;
+}
+
+int
+bdev_virtio_blk_dev_remove(const char *name, bdev_virtio_remove_cb cb_fn, void *cb_arg)
+{
+	struct spdk_bdev *bdev;
+
+	bdev = spdk_bdev_get_by_name(name);
+	if (bdev == NULL) {
+		return -ENODEV;
+	}
+
+	if (bdev->module != &virtio_blk_if) {
+		return -ENODEV;
+	}
+
+	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
+
 	return 0;
 }
 

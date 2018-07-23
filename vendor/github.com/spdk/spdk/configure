@@ -16,6 +16,8 @@ function usage()
 	echo " --prefix=path             Configure installation prefix (default: /usr/local)"
 	echo ""
 	echo " --enable-debug            Configure for debug builds"
+	echo " --enable-log-bt=lvl       Show backtrace using libunwind when logging message at level <= lvl."
+	echo "                           Valid values are: ERROR, WARN, NOTICE, DEBUG."
 	echo " --enable-werror           Treat compiler warnings as errors"
 	echo " --enable-asan             Enable address sanitizer"
 	echo " --enable-ubsan            Enable undefined behavior sanitizer"
@@ -31,6 +33,8 @@ function usage()
 	echo "                           disable features and components."
 	echo ""
 	echo "Valid dependencies are listed below."
+	echo " crypto                    Required to build vbdev crypto module."
+	echo "                           No path required."
 	echo " dpdk                      Optional.  Uses dpdk submodule in spdk tree if not specified."
 	echo "                           example: /usr/share/dpdk/x86_64-default-linuxapp-gcc"
 	echo " fio                       Required to build fio_plugin."
@@ -48,6 +52,8 @@ function usage()
 	echo " rdma                      [disabled]"
 	echo "                           No path required."
 	echo " iscsi-initiator           [disabled]"
+	echo "                           No path required."
+	echo " raid                      [disabled]"
 	echo "                           No path required."
 	echo " vtune                     Required to profile I/O under Intel VTune Amplifier XE."
 	echo "                           example: /opt/intel/vtune_amplifier_xe_version"
@@ -84,6 +90,9 @@ for i in "$@"; do
 			;;
 		--disable-debug)
 			CONFIG_DEBUG=n
+			;;
+		--enable-log-bt=*)
+			CONFIG_LOG_BACKTRACE=${i#*=}
 			;;
 		--enable-asan)
 			CONFIG_ASAN=y
@@ -136,6 +145,13 @@ for i in "$@"; do
 		--without-rbd)
 			CONFIG_RBD=n
 			;;
+		--with-raid)
+			CONFIG_RAID=y
+			echo "Warning: vhost will not work with RAID module as multiple IOV support is not there"
+			;;
+		--without-raid)
+			CONFIG_RAID=n
+			;;
 		--with-rdma)
 			CONFIG_RDMA=y
 			;;
@@ -154,6 +170,12 @@ for i in "$@"; do
 			;;
 		--without-dpdk)
 			CONFIG_DPDK_DIR=
+			;;
+		--with-crypto)
+			CONFIG_CRYPTO=y
+			;;
+		--without-crypto)
+			CONFIG_CRYPTO=n
 			;;
 		--with-vhost)
 			CONFIG_VHOST=y
@@ -228,6 +250,17 @@ if [ -z "$CONFIG_ENV" ]; then
 		fi
 		CONFIG_DPDK_DIR="$rootdir"/dpdk/build
 	fi
+else
+	if [ "$CONFIG_VHOST" = "y" ]; then
+		echo "Vhost is only supported when using the default DPDK environment. Disabling it."
+	fi
+	# Always disable vhost, but only print the error message if the user explicitly turned it on.
+	CONFIG_VHOST="n"
+	if [ "$CONFIG_VIRTIO" = "y" ]; then
+		echo "Virtio is only supported when using the default DPDK environment. Disabling it."
+	fi
+	# Always disable virtio, but only print the error message if the user explicitly turned it on.
+	CONFIG_VIRTIO="n"
 fi
 
 if [ "$CONFIG_FIO_PLUGIN" = "y" ]; then
@@ -267,6 +300,9 @@ fi
 if [ -n "$CONFIG_DEBUG" ]; then
 	echo "CONFIG_DEBUG?=$CONFIG_DEBUG" >> CONFIG.local
 fi
+if [ -n "$CONFIG_LOG_BACKTRACE" ]; then
+	echo "CONFIG_LOG_BACKTRACE?=$CONFIG_LOG_BACKTRACE" >> CONFIG.local
+fi
 if [ -n "$CONFIG_WERROR" ]; then
 	echo "CONFIG_WERROR?=$CONFIG_WERROR" >> CONFIG.local
 fi
@@ -293,6 +329,9 @@ if [ -n "$CONFIG_ENV" ]; then
 fi
 if [ -n "$CONFIG_DPDK_DIR" ]; then
 	echo "CONFIG_DPDK_DIR?=$CONFIG_DPDK_DIR" >> CONFIG.local
+fi
+if [ -n "$CONFIG_CRYPTO" ]; then
+	echo "CONFIG_CRYPTO?=$CONFIG_CRYPTO" >> CONFIG.local
 fi
 if [ -n "$CONFIG_VHOST" ]; then
 	echo "CONFIG_VHOST?=$CONFIG_VHOST" >> CONFIG.local
@@ -326,6 +365,9 @@ if [ -n "$CONFIG_ISCSI_INITIATOR" ]; then
 fi
 if [ -n "$CONFIG_RBD" ]; then
 	echo "CONFIG_RBD?=$CONFIG_RBD" >> CONFIG.local
+fi
+if [ -n "$CONFIG_RAID" ]; then
+	echo "CONFIG_RAID?=$CONFIG_RAID" >> CONFIG.local
 fi
 if [ -n "$CONFIG_VTUNE" ]; then
 	echo "CONFIG_VTUNE?=$CONFIG_VTUNE" >> CONFIG.local

@@ -207,8 +207,18 @@ spdk_scsi_lun_check_io_channel(void *arg)
 static void
 spdk_scsi_lun_notify_hot_remove(struct spdk_scsi_lun *lun)
 {
+	struct spdk_scsi_desc *desc, *tmp;
+
 	if (lun->hotremove_cb) {
 		lun->hotremove_cb(lun, lun->hotremove_ctx);
+	}
+
+	TAILQ_FOREACH_SAFE(desc, &lun->open_descs, link, tmp) {
+		if (desc->hotremove_cb) {
+			desc->hotremove_cb(lun, desc->hotremove_ctx);
+		} else {
+			spdk_scsi_lun_close(desc);
+		}
 	}
 
 	if (lun->io_channel) {
@@ -311,6 +321,7 @@ spdk_scsi_lun_construct(struct spdk_bdev *bdev,
 	lun->io_channel = NULL;
 	lun->hotremove_cb = hotremove_cb;
 	lun->hotremove_ctx = hotremove_ctx;
+	TAILQ_INIT(&lun->open_descs);
 
 	return lun;
 }
@@ -321,7 +332,41 @@ spdk_scsi_lun_destruct(struct spdk_scsi_lun *lun)
 	spdk_scsi_lun_hot_remove(lun);
 }
 
-int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
+int
+spdk_scsi_lun_open(struct spdk_scsi_lun *lun, spdk_scsi_remove_cb_t hotremove_cb,
+		   void *hotremove_ctx, struct spdk_scsi_desc **_desc)
+{
+	struct spdk_scsi_desc *desc;
+
+	desc = calloc(1, sizeof(*desc));
+	if (desc == NULL) {
+		SPDK_ERRLOG("calloc() failed for LUN descriptor.\n");
+		return -ENOMEM;
+	}
+
+	TAILQ_INSERT_TAIL(&lun->open_descs, desc, link);
+
+	desc->lun = lun;
+	desc->hotremove_cb = hotremove_cb;
+	desc->hotremove_ctx = hotremove_ctx;
+	*_desc = desc;
+
+	return 0;
+}
+
+void
+spdk_scsi_lun_close(struct spdk_scsi_desc *desc)
+{
+	struct spdk_scsi_lun *lun = desc->lun;
+
+	TAILQ_REMOVE(&lun->open_descs, desc, link);
+	free(desc);
+
+	assert(!TAILQ_EMPTY(&lun->open_descs) || lun->io_channel == NULL);
+}
+
+int
+_spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
 {
 	if (lun->io_channel != NULL) {
 		if (spdk_get_thread() == spdk_io_channel_get_thread(lun->io_channel)) {
@@ -341,7 +386,8 @@ int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
 	return 0;
 }
 
-void spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun)
+void
+_spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun)
 {
 	if (lun->io_channel == NULL) {
 		return;
@@ -357,6 +403,22 @@ void spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun)
 		spdk_put_io_channel(lun->io_channel);
 		lun->io_channel = NULL;
 	}
+}
+
+int
+spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_desc *desc)
+{
+	struct spdk_scsi_lun *lun = desc->lun;
+
+	return _spdk_scsi_lun_allocate_io_channel(lun);
+}
+
+void
+spdk_scsi_lun_free_io_channel(struct spdk_scsi_desc *desc)
+{
+	struct spdk_scsi_lun *lun = desc->lun;
+
+	_spdk_scsi_lun_free_io_channel(lun);
 }
 
 int
@@ -381,4 +443,10 @@ bool
 spdk_scsi_lun_has_pending_tasks(const struct spdk_scsi_lun *lun)
 {
 	return !TAILQ_EMPTY(&lun->tasks);
+}
+
+bool
+spdk_scsi_lun_is_removing(const struct spdk_scsi_lun *lun)
+{
+	return lun->removed;
 }

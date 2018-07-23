@@ -72,6 +72,13 @@ struct spdk_scsi_dev {
 	uint8_t			protocol_id;
 };
 
+struct spdk_scsi_desc {
+	struct spdk_scsi_lun		*lun;
+	spdk_scsi_remove_cb_t		hotremove_cb;
+	void				*hotremove_ctx;
+	TAILQ_ENTRY(spdk_scsi_desc)	link;
+};
+
 struct spdk_scsi_lun {
 	/** LUN id for this logical unit. */
 	int id;
@@ -103,7 +110,11 @@ struct spdk_scsi_lun {
 	/** Argument for hotremove_cb */
 	void *hotremove_ctx;
 
-	TAILQ_HEAD(tasks, spdk_scsi_task) tasks;			/* pending tasks */
+	/** List of open descriptors for this LUN. */
+	TAILQ_HEAD(, spdk_scsi_desc) open_descs;
+
+	/** pending tasks */
+	TAILQ_HEAD(tasks, spdk_scsi_task) tasks;
 };
 
 struct spdk_lun_db_entry {
@@ -128,6 +139,8 @@ int spdk_scsi_lun_task_mgmt_execute(struct spdk_scsi_task *task, enum spdk_scsi_
 void spdk_scsi_lun_complete_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
 void spdk_scsi_lun_complete_mgmt_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
 bool spdk_scsi_lun_has_pending_tasks(const struct spdk_scsi_lun *lun);
+int _spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun);
+void _spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun);
 
 struct spdk_scsi_dev *spdk_scsi_dev_get_list(void);
 
@@ -136,7 +149,7 @@ int spdk_scsi_port_construct(struct spdk_scsi_port *port, uint64_t id,
 void spdk_scsi_port_destruct(struct spdk_scsi_port *port);
 
 int spdk_bdev_scsi_execute(struct spdk_scsi_task *task);
-int spdk_bdev_scsi_reset(struct spdk_scsi_task *task);
+void spdk_bdev_scsi_reset(struct spdk_scsi_task *task);
 
 struct spdk_scsi_globals {
 	pthread_mutex_t mutex;

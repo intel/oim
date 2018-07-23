@@ -49,7 +49,8 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_rpc_methods(args):
-        print_dict(rpc.get_rpc_methods(args.client, args))
+        print_dict(rpc.get_rpc_methods(args.client,
+                                       current=args.current))
 
     p = subparsers.add_parser('get_rpc_methods', help='Get list of supported RPC methods')
     p.add_argument('-c', '--current', help='Get list of RPC methods only callable in the current state.', action='store_true')
@@ -57,7 +58,9 @@ if __name__ == "__main__":
 
     @call_cmd
     def save_config(args):
-        rpc.save_config(args.client, args)
+        rpc.save_config(args.client,
+                        filename=args.filename,
+                        indent=args.indent)
 
     p = subparsers.add_parser('save_config', help="""Write current (live) configuration of SPDK subsystems and targets.
     If no filename is given write configuration to stdout.""")
@@ -68,7 +71,8 @@ if __name__ == "__main__":
 
     @call_cmd
     def load_config(args):
-        rpc.load_config(args.client, args)
+        rpc.load_config(args.client,
+                        filename=args.filename)
 
     p = subparsers.add_parser('load_config', help="""Configure SPDK subsystems and tagets using JSON RPC. If no file is
     provided or file is '-' read configuration from stdin.""")
@@ -77,7 +81,10 @@ if __name__ == "__main__":
 
     @call_cmd
     def save_subsystem_config(args):
-        rpc.save_subsystem_config(args.client, args)
+        rpc.save_subsystem_config(args.client,
+                                  filename=args.filename,
+                                  indent=args.indent,
+                                  name=args.name)
 
     p = subparsers.add_parser('save_subsystem_config', help="""Write current (live) configuration of SPDK subsystem.
     If no filename is given write configuration to stdout.""")
@@ -89,7 +96,8 @@ if __name__ == "__main__":
 
     @call_cmd
     def load_subsystem_config(args):
-        rpc.load_subsystem_config(args.client, args)
+        rpc.load_subsystem_config(args.client,
+                                  filename=args.filename)
 
     p = subparsers.add_parser('load_subsystem_config', help="""Configure SPDK subsystem using JSON RPC. If no file is
     provided or file is '-' read configuration from stdin.""")
@@ -137,7 +145,7 @@ if __name__ == "__main__":
     def construct_malloc_bdev(args):
         num_blocks = (args.total_size * 1024 * 1024) // args.block_size
         print(rpc.bdev.construct_malloc_bdev(args.client,
-                                             num_blocks=num_blocks,
+                                             num_blocks=int(num_blocks),
                                              block_size=args.block_size,
                                              name=args.name,
                                              uuid=args.uuid))
@@ -147,7 +155,7 @@ if __name__ == "__main__":
     p.add_argument('-b', '--name', help="Name of the bdev")
     p.add_argument('-u', '--uuid', help="UUID of the bdev")
     p.add_argument(
-        'total_size', help='Size of malloc bdev in MB (int > 0)', type=int)
+        'total_size', help='Size of malloc bdev in MB (float > 0)', type=float)
     p.add_argument('block_size', help='Block size for this bdev', type=int)
     p.set_defaults(func=construct_malloc_bdev)
 
@@ -211,6 +219,38 @@ if __name__ == "__main__":
     p.set_defaults(func=delete_aio_bdev)
 
     @call_cmd
+    def set_bdev_nvme_options(args):
+        rpc.bdev.set_bdev_nvme_options(args.client,
+                                       action_on_timeout=args.action_on_timeout,
+                                       timeout_s=args.timeout_s,
+                                       retry_count=args.retry_count,
+                                       nvme_adminq_poll_period_us=args.nvme_adminq_poll_period_us)
+
+    p = subparsers.add_parser('set_bdev_nvme_options',
+                              help='Set options for the bdev nvme type. This is startup command.')
+    p.add_argument('-a', '--action-on-timeout',
+                   help="Action to take on command time out. Valid valies are: none, reset, abort")
+    p.add_argument('-t', '--timeout-us',
+                   help="Timeout for each command, in microseconds. If 0, don't track timeouts.", type=int)
+    p.add_argument('-n', '--retry-count',
+                   help='the number of attempts per I/O when an I/O fails', type=int)
+    p.add_argument('-p', '--nvme-adminq-poll-period-us',
+                   help='How often the admin queue is polled for asynchronous events', type=int)
+    p.set_defaults(func=set_bdev_nvme_options)
+
+    @call_cmd
+    def set_bdev_nvme_hotplug(args):
+        rpc.bdev.set_bdev_nvme_hotplug(args.client, enable=args.enable, period_us=args.period_us)
+
+    p = subparsers.add_parser('set_bdev_nvme_hotplug',
+                              help='Set hotplug options for bdev nvme type.')
+    p.add_argument('-d', '--disable', dest='enable', default=False, action='store_false', help="Disable hotplug (default)")
+    p.add_argument('-e', '--enable', dest='enable', action='store_true', help="Enable hotplug")
+    p.add_argument('-r', '--period-us',
+                   help='How often the hotplug is processed for insert and remove events', type=int)
+    p.set_defaults(func=set_bdev_nvme_hotplug)
+
+    @call_cmd
     def construct_nvme_bdev(args):
         print_array(rpc.bdev.construct_nvme_bdev(args.client,
                                                  name=args.name,
@@ -233,6 +273,16 @@ if __name__ == "__main__":
                    help='NVMe-oF target trsvcid: e.g., a port number')
     p.add_argument('-n', '--subnqn', help='NVMe-oF target subnqn')
     p.set_defaults(func=construct_nvme_bdev)
+
+    @call_cmd
+    def delete_nvme_controller(args):
+        rpc.bdev.delete_nvme_controller(args.client,
+                                        name=args.name)
+
+    p = subparsers.add_parser('delete_nvme_controller',
+                              help='Delete a NVMe controller using controller name')
+    p.add_argument('name', help="Name of the controller")
+    p.set_defaults(func=delete_nvme_controller)
 
     @call_cmd
     def construct_rbd_bdev(args):
@@ -383,6 +433,19 @@ if __name__ == "__main__":
     p.set_defaults(func=delete_bdev)
 
     @call_cmd
+    def set_bdev_qd_sampling_period(args):
+        rpc.bdev.set_bdev_qd_sampling_period(args.client,
+                                             name=args.name,
+                                             period=args.period)
+
+    p = subparsers.add_parser('set_bdev_qd_sampling_period', help="Enable or disable tracking of a bdev's queue depth.")
+    p.add_argument('name', help='Blockdev name. Example: Malloc0')
+    p.add_argument('period', help='Period with which to poll the block device queue depth in microseconds.'
+                   ' If set to 0, polling will be disabled.',
+                   type=int)
+    p.set_defaults(func=set_bdev_qd_sampling_period)
+
+    @call_cmd
     def set_bdev_qos_limit_iops(args):
         rpc.bdev.set_bdev_qos_limit_iops(args.client,
                                          name=args.name,
@@ -422,6 +485,7 @@ if __name__ == "__main__":
     p.set_defaults(func=apply_firmware)
 
     # iSCSI
+    @call_cmd
     def set_iscsi_options(args):
         rpc.iscsi.set_iscsi_options(
             args.client,
@@ -434,13 +498,14 @@ if __name__ == "__main__":
             req_discovery_auth_mutual=args.req_discovery_auth_mutual,
             discovery_auth_group=args.discovery_auth_group,
             max_sessions=args.max_sessions,
+            max_queue_depth=args.max_queue_depth,
             max_connections_per_session=args.max_connections_per_session,
             default_time2wait=args.default_time2wait,
             default_time2retain=args.default_time2retain,
             immediate_data=args.immediate_data,
             error_recovery_level=args.error_recovery_level,
             allow_duplicated_isid=args.allow_duplicated_isid,
-            min_connections_per_session=args.min_connections_per_session)
+            min_connections_per_core=args.min_connections_per_core)
 
     p = subparsers.add_parser('set_iscsi_options', help="""Set options of iSCSI subsystem""")
     p.add_argument('-f', '--auth-file', help='Path to CHAP shared secret file for discovery session')
@@ -455,13 +520,14 @@ if __name__ == "__main__":
     p.add_argument('-g', '--discovery-auth-group', help="""Authentication group ID for discovery session.
     *** Authentication group must be precreated ***""", type=int)
     p.add_argument('-a', '--max-sessions', help='Maximum number of sessions in the host.', type=int)
+    p.add_argument('-q', '--max-queue-depth', help='Max number of outstanding I/Os per queue.', type=int)
     p.add_argument('-c', '--max-connections-per-session', help='Negotiated parameter, MaxConnections.', type=int)
     p.add_argument('-w', '--default-time2wait', help='Negotiated parameter, DefaultTime2Wait.', type=int)
     p.add_argument('-v', '--default-time2retain', help='Negotiated parameter, DefaultTime2Retain.', type=int)
     p.add_argument('-i', '--immediate-data', help='Negotiated parameter, ImmediateData.', action='store_true')
     p.add_argument('-l', '--error-recovery-level', help='Negotiated parameter, ErrorRecoveryLevel', type=int)
     p.add_argument('-p', '--allow-duplicated-isid', help='Allow duplicated initiator session ID.', action='store_true')
-    p.add_argument('-u', '--min-connections-per-session', help='Allocation unit of connections per core', type=int)
+    p.add_argument('-u', '--min-connections-per-core', help='Allocation unit of connections per core', type=int)
     p.set_defaults(func=set_iscsi_options)
 
     @call_cmd
@@ -903,7 +969,7 @@ if __name__ == "__main__":
 
     p = subparsers.add_parser('decouple_parent_lvol_bdev', help='Decouple parent of lvol')
     p.add_argument('name', help='lvol bdev name')
-    p.set_defaults(func=inflate_lvol_bdev)
+    p.set_defaults(func=decouple_parent_lvol_bdev)
 
     @call_cmd
     def resize_lvol_bdev(args):
@@ -946,6 +1012,45 @@ if __name__ == "__main__":
     p.add_argument('-u', '--uuid', help='lvol store UUID', required=False)
     p.add_argument('-l', '--lvs-name', help='lvol store name', required=False)
     p.set_defaults(func=get_lvol_stores)
+
+    @call_cmd
+    def get_raid_bdevs(args):
+        print_array(rpc.bdev.get_raid_bdevs(args.client,
+                                            category=args.category))
+
+    p = subparsers.add_parser('get_raid_bdevs', help="""This is used to list all the raid bdev names based on the input category
+    requested. Category should be one of 'all', 'online', 'configuring' or 'offline'. 'all' means all the raid bdevs whether
+    they are online or configuring or offline. 'online' is the raid bdev which is registered with bdev layer. 'configuring'
+    is the raid bdev which does not have full configuration discovered yet. 'offline' is the raid bdev which is not registered
+    with bdev as of now and it has encountered any error or user has requested to offline the raid bdev""")
+    p.add_argument('category', help='all or online or configuring or offline')
+    p.set_defaults(func=get_raid_bdevs)
+
+    @call_cmd
+    def construct_raid_bdev(args):
+        base_bdevs = []
+        for u in args.base_bdevs.strip().split(" "):
+            base_bdevs.append(u)
+
+        rpc.bdev.construct_raid_bdev(args.client,
+                                     name=args.name,
+                                     strip_size=args.strip_size,
+                                     raid_level=args.raid_level,
+                                     base_bdevs=base_bdevs)
+    p = subparsers.add_parser('construct_raid_bdev', help='Construct new raid bdev')
+    p.add_argument('-n', '--name', help='raid bdev name', required=True)
+    p.add_argument('-s', '--strip-size', help='strip size in KB', type=int, required=True)
+    p.add_argument('-r', '--raid-level', help='raid level, only raid level 0 is supported', type=int, required=True)
+    p.add_argument('-b', '--base-bdevs', help='base bdevs name, whitespace separated list in quotes', required=True)
+    p.set_defaults(func=construct_raid_bdev)
+
+    @call_cmd
+    def destroy_raid_bdev(args):
+        rpc.bdev.destroy_raid_bdev(args.client,
+                                   name=args.name)
+    p = subparsers.add_parser('destroy_raid_bdev', help='Destroy existing raid bdev')
+    p.add_argument('name', help='raid bdev name')
+    p.set_defaults(func=destroy_raid_bdev)
 
     # split
     @call_cmd
@@ -1463,9 +1568,19 @@ if __name__ == "__main__":
                                           name=args.name)
 
     p = subparsers.add_parser('remove_virtio_scsi_bdev', help="""Remove a Virtio-SCSI device
-    This will delete all bdevs exposed by this device""")
+    This will delete all bdevs exposed by this device (this call is deprecated - please use remove_virtio_bdev call instead).""")
     p.add_argument('name', help='Virtio device name. E.g. VirtioUser0')
     p.set_defaults(func=remove_virtio_scsi_bdev)
+
+    @call_cmd
+    def remove_virtio_bdev(args):
+        rpc.vhost.remove_virtio_bdev(args.client,
+                                     name=args.name)
+
+    p = subparsers.add_parser('remove_virtio_bdev', help="""Remove a Virtio device
+    This will delete all bdevs exposed by this device""")
+    p.add_argument('name', help='Virtio device name. E.g. VirtioUser0')
+    p.set_defaults(func=remove_virtio_bdev)
 
     @call_cmd
     def construct_virtio_user_blk_bdev(args):

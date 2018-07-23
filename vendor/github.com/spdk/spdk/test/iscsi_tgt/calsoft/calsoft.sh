@@ -4,6 +4,11 @@ rootdir=$(readlink -f $testdir/../../..)
 source $rootdir/test/common/autotest_common.sh
 source $rootdir/test/iscsi_tgt/common.sh
 
+delete_tmp_conf_files() {
+	rm -f /usr/local/etc/its.conf
+	rm -f /usr/local/etc/auth.conf
+}
+
 if [ ! -d /usr/local/calsoft ]; then
 	echo "skipping calsoft tests"
 	exit 0
@@ -27,13 +32,15 @@ echo "IP=$TARGET_IP" >> /usr/local/etc/its.conf
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -c $testdir/iscsi.conf -m 0x1 &
+$ISCSI_APP -m 0x1 -w &
 pid=$!
 echo "Process pid: $pid"
 
-trap "killprocess $pid; exit 1 " SIGINT SIGTERM EXIT
+trap "killprocess $pid; delete_tmp_conf_files; exit 1 " SIGINT SIGTERM EXIT
 
 waitforlisten $pid
+$rpc_py load_subsystem_config -f $testdir/iscsi.json
+$rpc_py start_subsystem_init
 echo "iscsi_tgt is listening. Running tests..."
 
 timing_exit start_iscsi_tgt
@@ -59,5 +66,6 @@ fi
 trap - SIGINT SIGTERM EXIT
 
 killprocess $pid
+delete_tmp_conf_files
 timing_exit calsoft
 exit $failed

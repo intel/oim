@@ -2,6 +2,13 @@
 
 ## v18.07: (Upcoming Release)
 
+### RAID module
+A new bdev module called "raid" has been added as experimental module which
+aggregates underlying nvme bdevs and expose a single raid bdev to upper bdev
+layers. Over this LVS/LVOL can be created as per use-cases and they can be
+exposed to NVMe-oF subsystems. Please note that vhost will not work with RAID
+module as RAID module does not support multipe IOV Vectors yet.
+
 ### Log
 
 The debug log component flag has been renamed from `-t` to `-L` to prevent confusion
@@ -14,6 +21,11 @@ New API function spdk_nvme_qpair_add_cmd_error_injection() and
 spdk_nvme_qpair_remove_cmd_error_injection() have been added for NVMe error emulation,
 users can set specified command with specified error status for error emulation.
 
+Change the name `timeout_sec` parameter to `timeout_us` in API function
+spdk_nvme_ctrlr_register_timeout_callback, and also change the type from uint32_t to
+uint64_t. This will give users more fine-grained control over the timeout period for
+calling callback functions.
+
 ### Build System
 
 The build system now generates a combined shared library (libspdk.so) that may be used
@@ -22,6 +34,9 @@ The combined library includes all components of SPDK and is intended to make lin
 against SPDK easier.
 The static libraries are also still provided for users that prefer to link only the
 minimal set of components required.
+
+A new configure option was added `--with-crypto` that, when set, will build the crypto
+vbdev as well as its dependencies.
 
 ### RPC
 
@@ -71,6 +86,19 @@ the `git --no-verify` flag.
 IOAT for copy engine is disabled by default. It can be enabled by specifying the Enable
 option with "Yes" in `[Ioat]` section of the configuration file. The Disable option is
 now deprecated and will be removed in a future release.
+
+### blobfs
+
+Change the return type of spdk_file_truncate from void to int. The purpose is to catch
+the `NOMEM` error condition.
+
+### DPDK 18.05
+
+The DPDK submodule has been rebased on the DPDK 18.05 release.  DPDK 18.05 supports
+dynamic memory allocation, but due to some issues found after the DPDK 18.05 release,
+that support is not enabled for SPDK 18.07.  Therefore, SPDK 18.07 will continue to use
+the legacy memory allocation model.  The plan is to enable dynamic memory allocation
+after the DPDK 18.08 release which should fix these issues.
 
 ## v18.04: Logical Volume Snapshot/Clone, iSCSI Initiator, Bdev QoS, VPP Userspace TCP/IP
 

@@ -96,6 +96,9 @@ if [ $SPDK_TEST_BLOCKDEV -eq 1 ]; then
 	run_test test/bdev/blockdev.sh
 	if [ $(uname -s) = Linux ]; then
 		run_test test/bdev/bdevjson/json_config.sh
+		if modprobe -n nbd; then
+			run_test test/bdev/nbdjson/json_config.sh
+		fi
 	fi
 fi
 
@@ -105,7 +108,9 @@ fi
 
 if [ $SPDK_TEST_NVME -eq 1 ]; then
 	run_test test/nvme/nvme.sh
-	run_test test/nvme/spdk_nvme_cli.sh
+	if [ $SPDK_TEST_NVME_CLI -eq 1 ]; then
+		run_test test/nvme/spdk_nvme_cli.sh
+	fi
 	# Only test hotplug without ASAN enabled. Since if it is
 	# enabled, it catches SEGV earlier than our handler which
 	# breaks the hotplug logic
@@ -124,6 +129,7 @@ timing_exit lib
 
 if [ $SPDK_TEST_ISCSI -eq 1 ]; then
 	run_test ./test/iscsi_tgt/iscsi_tgt.sh posix
+	run_test ./test/iscsi_tgt/iscsijson/json_config.sh
 fi
 
 if [ $SPDK_TEST_BLOBFS -eq 1 ]; then
@@ -133,6 +139,7 @@ fi
 
 if [ $SPDK_TEST_NVMF -eq 1 ]; then
 	run_test ./test/nvmf/nvmf.sh
+	run_test ./test/nvmf/nvmfjson/json_config.sh
 fi
 
 if [ $SPDK_TEST_VHOST -eq 1 ]; then
@@ -187,14 +194,19 @@ if [ $SPDK_TEST_VHOST -eq 1 ]; then
 	run_test ./test/vhost/spdk_vhost.sh --integrity-lvol-blk
 	timing_exit integrity_lvol_blk
 
+	timing_enter spdk_cli
+	run_test ./test/spdkcli/vhost.sh
+	timing_exit spdk_cli
+
 	timing_exit vhost
 fi
 
 if [ $SPDK_TEST_LVOL -eq 1 ]; then
 	timing_enter lvol
 	test_cases="1,50,51,52,53,100,101,102,150,200,201,250,251,252,253,254,255,"
-	test_cases+="300,301,450,451,452,550,600,601,650,651,652,654,655,"
-	test_cases+="700,701,750,751,752,753,754,755,756,757,"
+	test_cases+="300,301,450,451,452,550,551,552,553,"
+	test_cases+="600,601,650,651,652,654,655,"
+	test_cases+="700,701,750,751,752,753,754,755,756,757,758,759,"
 	test_cases+="800,801,802,803,804,10000"
 	run_test ./test/lvol/lvol.sh --test-cases=$test_cases
 	report_test_completion "lvol"
@@ -204,12 +216,19 @@ fi
 if [ $SPDK_TEST_VHOST_INIT -eq 1 ]; then
 	run_test ./test/vhost/initiator/blockdev.sh
 	run_test ./test/vhost/initiator/json_config.sh
+	run_test ./test/spdkcli/virtio.sh
 	report_test_completion "vhost_initiator"
 fi
 
 if [ $SPDK_TEST_PMDK -eq 1 ]; then
 	run_test ./test/pmem/pmem.sh -x
 	run_test ./test/pmem/json_config/json_config.sh
+	run_test ./test/spdkcli/pmem.sh
+fi
+
+if [ $SPDK_TEST_RBD -eq 1 ]; then
+	run_test ./test/bdev/bdevjson/rbd_json_config.sh
+	run_test ./test/spdkcli/rbd.sh
 fi
 
 timing_enter cleanup

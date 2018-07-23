@@ -45,10 +45,10 @@ function migration_tc2_cleanup_vhost_config()
 
 	notice "Removing vhost devices & controllers via RPC ..."
 	# Delete bdev first to remove all LUNs and SCSI targets
-	$rpc_0 delete_bdev Nvme0n1
+	$rpc_0 delete_nvme_controller Nvme0
 	$rpc_0 remove_vhost_controller $incoming_vm_ctrlr
 
-	$rpc_1 delete_bdev Nvme0n1
+	$rpc_1 delete_nvme_controller Nvme0
 	$rpc_1 remove_vhost_controller $target_vm_ctrlr
 
 	notice "killing vhost app"
@@ -93,12 +93,13 @@ function migration_tc2_configure_vhost()
 	notice "Running nvmf_tgt..."
 	mkdir -p $nvmf_dir
 	rm -f $nvmf_dir/*
-	cp $SPDK_BUILD_DIR/test/nvmf/nvmf.conf $nvmf_dir/nvmf.conf
-	$SPDK_BUILD_DIR/scripts/gen_nvme.sh >> $nvmf_dir/nvmf.conf
-	$SPDK_BUILD_DIR/app/nvmf_tgt/nvmf_tgt -s 512 -m 0x4 -c $nvmf_dir/nvmf.conf -r $nvmf_dir/rpc.sock &
+	$SPDK_BUILD_DIR/app/nvmf_tgt/nvmf_tgt -s 512 -m 0x4 -r $nvmf_dir/rpc.sock -w &
 	local nvmf_tgt_pid=$!
 	echo $nvmf_tgt_pid > $nvmf_dir/nvmf_tgt.pid
 	waitforlisten "$nvmf_tgt_pid" "$nvmf_dir/rpc.sock"
+	$rpc_nvmf set_nvmf_target_options -u 8192 -p 4
+	$rpc_nvmf start_subsystem_init
+	$SPDK_BUILD_DIR/scripts/gen_nvme.sh --json | $rpc_nvmf load_subsystem_config
 	timing_exit start_nvmf_tgt
 
 	spdk_vhost_run --memory=512 --vhost-num=0 --no-pci

@@ -9,6 +9,8 @@ set -xe
 testdir=$(readlink -f $(dirname $0))
 rootdir=$(readlink -f $(dirname $0)/../..)
 
+cd "$rootdir"
+
 # if ASAN is enabled, use it.  If not use valgrind if installed but allow
 # the env variable to override the default shown below.
 if [ -z ${valgrind+x} ]; then
@@ -46,6 +48,7 @@ fi
 $valgrind $testdir/include/spdk/histogram_data.h/histogram_ut
 
 $valgrind $testdir/lib/bdev/bdev.c/bdev_ut
+$valgrind $testdir/lib/bdev/bdev_raid.c/bdev_raid_ut
 $valgrind $testdir/lib/bdev/part.c/part_ut
 $valgrind $testdir/lib/bdev/scsi_nvme.c/scsi_nvme_ut
 $valgrind $testdir/lib/bdev/gpt/gpt.c/gpt_ut
@@ -111,6 +114,7 @@ $valgrind $testdir/lib/iscsi/portal_grp.c/portal_grp_ut $testdir/lib/iscsi/porta
 
 $valgrind $testdir/lib/thread/thread.c/thread_ut
 
+$valgrind $testdir/lib/util/base64.c/base64_ut
 $valgrind $testdir/lib/util/bit_array.c/bit_array_ut
 $valgrind $testdir/lib/util/crc16.c/crc16_ut
 $valgrind $testdir/lib/util/crc32_ieee.c/crc32_ieee_ut
@@ -148,7 +152,7 @@ echo "====================="
 echo "All unit tests passed"
 echo "====================="
 if [ "$cov_avail" = "yes" ]; then
-	echo "Note: coverage report is here: ./$UT_COVERAGE"
+	echo "Note: coverage report is here: $rootdir/$UT_COVERAGE"
 else
 	echo "WARN: lcov not installed or SPDK built without coverage!"
 fi

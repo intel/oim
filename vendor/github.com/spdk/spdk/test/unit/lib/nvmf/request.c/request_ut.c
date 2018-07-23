@@ -45,6 +45,12 @@ void spdk_trace_record(uint16_t tpoint_id, uint16_t poller_id, uint32_t size,
 }
 
 int
+spdk_nvmf_transport_req_free(struct spdk_nvmf_request *req)
+{
+	return 0;
+}
+
+int
 spdk_nvmf_transport_req_complete(struct spdk_nvmf_request *req)
 {
 	return 0;
@@ -112,9 +118,10 @@ struct spdk_nvme_ns *spdk_nvme_ctrlr_get_ns(struct spdk_nvme_ctrlr *ctrlr, uint3
 	return NULL;
 }
 
-void
-spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair)
+int
+spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_cb cb_fn, void *ctx)
 {
+	return 0;
 }
 
 static void

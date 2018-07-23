@@ -39,14 +39,14 @@ def delete_subbdevs(args, bdev, rpc_bdevs):
         if construct_method == 'construct_nvme_bdev':
             for rpc_bdev in rpc_bdevs:
                 if bdev_name in rpc_bdev['name'] and rpc_bdev['product_name'] == "NVMe disk":
-                    args.client.call('delete_bdev', {'name': "%s" % rpc_bdev['name']})
+                    args.client.call('delete_nvme_controller', {'name': "%s" % rpc_bdev['name'].split('n')[0]})
                     ret_value = True
 
     return ret_value
 
 
 def get_bdev_destroy_method(bdev):
-    destroy_method_map = {'construct_nvme_bdev': "delete_bdev",
+    destroy_method_map = {'construct_nvme_bdev': "delete_nvme_controller",
                           'construct_malloc_bdev': "delete_malloc_bdev",
                           'construct_null_bdev': "delete_null_bdev",
                           'construct_rbd_bdev': "delete_rbd_bdev",
@@ -54,21 +54,13 @@ def get_bdev_destroy_method(bdev):
                           'construct_aio_bdev': "delete_aio_bdev",
                           'construct_error_bdev': "delete_error_bdev",
                           'construct_split_vbdev': "destruct_split_vbdev",
-                          'construct_virtio_dev': {
-                              'blk': "delete_bdev",
-                              'scsi': "remove_virtio_scsi_bdev"
-                              }
+                          'construct_virtio_dev': "remove_virtio_bdev"
                           }
     destroy_method = None
     if 'method' in bdev:
         construct_method = bdev['method']
         if construct_method in destroy_method_map.keys():
             destroy_method = destroy_method_map[construct_method]
-            if construct_method == 'construct_virtio_dev':
-                if bdev['params']['dev_type'] == 'blk':
-                    destroy_method = destroy_method['blk']
-                else:
-                    destroy_method = destroy_method['scsi']
 
     return destroy_method
 
@@ -84,21 +76,66 @@ def clear_bdev_subsystem(args, bdev_config):
         if destroy_method:
             args.client.call(destroy_method, {bdev_name_key: bdev_name})
 
+    ''' Disable and reset hotplug '''
+    rpc.bdev.set_bdev_nvme_hotplug(args.client, False)
+
+
+def get_nvmf_destroy_method(nvmf):
+    destroy_method_map = {'construct_nvmf_subsystem': "delete_nvmf_subsystem",
+                          'set_nvmf_target_config': None,
+                          'set_nvmf_target_options': None
+                          }
+    return destroy_method_map[nvmf['method']]
+
 
 def clear_nvmf_subsystem(args, nvmf_config):
-    pass
+    for nvmf in nvmf_config:
+        destroy_method = get_nvmf_destroy_method(nvmf)
+        if destroy_method:
+            args.client.call(destroy_method, {'nqn': nvmf['params']['nqn']})
 
 
-def clear_scsi_subsystem(args, scsi_config):
-    pass
+def get_iscsi_destroy_method(iscsi):
+    destroy_method_map = {'add_portal_group': "delete_portal_group",
+                          'add_initiator_group': "delete_initiator_group",
+                          'construct_target_node': "delete_target_node",
+                          'set_iscsi_options': None
+                          }
+    return destroy_method_map[iscsi['method']]
+
+
+def get_iscsi_name(iscsi):
+    if 'name' in iscsi['params']:
+        return iscsi['params']['name']
+    else:
+        return iscsi['params']['tag']
+
+
+def get_iscsi_name_key(iscsi):
+    if iscsi['method'] == 'construct_target_node':
+        return "name"
+    else:
+        return 'tag'
 
 
 def clear_iscsi_subsystem(args, iscsi_config):
-    pass
+    for iscsi in iscsi_config:
+        destroy_method = get_iscsi_destroy_method(iscsi)
+        if destroy_method:
+            args.client.call(destroy_method, {get_iscsi_name_key(iscsi): get_iscsi_name(iscsi)})
 
 
-def clear_nbd_subsystem(args, scsi_config):
-    pass
+def get_nbd_destroy_method(nbd):
+    destroy_method_map = {'start_nbd_disk': "stop_nbd_disk"
+                          }
+    return destroy_method_map[nbd['method']]
+
+
+def clear_nbd_subsystem(args, nbd_config):
+    for nbd in nbd_config:
+        destroy_method = get_nbd_destroy_method(nbd)
+        if destroy_method:
+            args.client.call(destroy_method, {'nbd_device': nbd['params']['nbd_device']})
 
 
 def clear_net_framework_subsystem(args, net_framework_config):

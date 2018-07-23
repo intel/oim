@@ -3109,8 +3109,7 @@ void spdk_iscsi_task_response(struct spdk_iscsi_conn *conn,
 	uint32_t transfer_len;
 	size_t residual_len;
 	size_t data_len;
-	int o_bit, u_bit, O_bit, U_bit;
-	int bidi_residual_len;
+	int O_bit, U_bit;
 	int rc;
 	struct spdk_iscsi_task *primary;
 
@@ -3133,9 +3132,9 @@ void spdk_iscsi_task_response(struct spdk_iscsi_conn *conn,
 		}
 	}
 
-	o_bit = u_bit = O_bit = U_bit = 0;
-	bidi_residual_len = residual_len = 0;
-	data_len = primary->bytes_completed;
+	O_bit = U_bit = 0;
+	residual_len = 0;
+	data_len = primary->scsi.data_transferred;
 
 	if ((transfer_len != 0) &&
 	    (task->scsi.status == SPDK_SCSI_STATUS_GOOD)) {
@@ -3173,14 +3172,6 @@ void spdk_iscsi_task_response(struct spdk_iscsi_conn *conn,
 	rsph->opcode = ISCSI_OP_SCSI_RSP;
 	rsph->flags |= 0x80; /* bit 0 is default to 1 */
 
-	if (o_bit) {
-		rsph->flags |= ISCSI_SCSI_BIDI_OVERFLOW;
-	}
-
-	if (u_bit) {
-		rsph->flags |= ISCSI_SCSI_BIDI_UNDERFLOW;
-	}
-
 	if (O_bit) {
 		rsph->flags |= ISCSI_SCSI_OVERFLOW;
 	}
@@ -3206,7 +3197,7 @@ void spdk_iscsi_task_response(struct spdk_iscsi_conn *conn,
 	to_be32(&rsph->exp_cmd_sn, conn->sess->ExpCmdSN);
 	to_be32(&rsph->max_cmd_sn, conn->sess->MaxCmdSN);
 
-	to_be32(&rsph->bi_read_res_cnt, bidi_residual_len);
+	to_be32(&rsph->bi_read_res_cnt, 0);
 	to_be32(&rsph->res_cnt, residual_len);
 
 	spdk_iscsi_conn_write_pdu(conn, rsp_pdu);
@@ -3525,9 +3516,28 @@ spdk_add_transfer_task(struct spdk_iscsi_conn *conn,
 	return SPDK_SUCCESS;
 }
 
-void spdk_del_transfer_task(struct spdk_iscsi_conn *conn, uint32_t task_tag)
+/* If there are additional large writes queued for R2Ts, start them now.
+ *  This is called when a large write is just completed or when multiple LUNs
+ *  are attached and large write tasks for the specific LUN are cleared.
+ */
+static void
+spdk_start_queued_transfer_tasks(struct spdk_iscsi_conn *conn)
 {
 	struct spdk_iscsi_task *task, *tmp;
+
+	TAILQ_FOREACH_SAFE(task, &conn->queued_r2t_tasks, link, tmp) {
+		if (conn->pending_r2t < DEFAULT_MAXR2T) {
+			TAILQ_REMOVE(&conn->queued_r2t_tasks, task, link);
+			spdk_add_transfer_task(conn, task);
+		} else {
+			break;
+		}
+	}
+}
+
+void spdk_del_transfer_task(struct spdk_iscsi_conn *conn, uint32_t task_tag)
+{
+	struct spdk_iscsi_task *task;
 	int i;
 
 	for (i = 0; i < conn->pending_r2t; i++) {
@@ -3544,24 +3554,12 @@ void spdk_del_transfer_task(struct spdk_iscsi_conn *conn, uint32_t task_tag)
 		}
 	}
 
-	/*
-	 * A large write was just completed, so if there are additional large
-	 *  writes queued for R2Ts, start them now.  But first check to make
-	 *  sure each of the tasks will fit without the connection's allotment
-	 *  for total R2T tasks.
-	 */
-	TAILQ_FOREACH_SAFE(task, &conn->queued_r2t_tasks, link, tmp) {
-		if (conn->pending_r2t < DEFAULT_MAXR2T) {
-			TAILQ_REMOVE(&conn->queued_r2t_tasks, task, link);
-			spdk_add_transfer_task(conn, task);
-		} else {
-			break;
-		}
-	}
+	spdk_start_queued_transfer_tasks(conn);
 }
 
 static void
-spdk_del_connection_queued_task(void *tailq, struct spdk_scsi_lun *lun)
+spdk_del_connection_queued_task(struct spdk_iscsi_conn *conn, void *tailq,
+				struct spdk_scsi_lun *lun)
 {
 	struct spdk_iscsi_task *task, *task_tmp;
 	/*
@@ -3574,6 +3572,10 @@ spdk_del_connection_queued_task(void *tailq, struct spdk_scsi_lun *lun)
 	TAILQ_FOREACH_SAFE(task, head, link, task_tmp) {
 		if (lun == NULL || lun == task->scsi.lun) {
 			TAILQ_REMOVE(head, task, link);
+			if (lun != NULL && spdk_scsi_lun_is_removing(lun)) {
+				spdk_scsi_task_process_null_lun(&task->scsi);
+				spdk_iscsi_task_response(conn, task);
+			}
 			spdk_iscsi_task_put(task);
 		}
 	}
@@ -3611,8 +3613,10 @@ void spdk_clear_all_transfer_task(struct spdk_iscsi_conn *conn,
 		}
 	}
 
-	spdk_del_connection_queued_task(&conn->active_r2t_tasks, lun);
-	spdk_del_connection_queued_task(&conn->queued_r2t_tasks, lun);
+	spdk_del_connection_queued_task(conn, &conn->active_r2t_tasks, lun);
+	spdk_del_connection_queued_task(conn, &conn->queued_r2t_tasks, lun);
+
+	spdk_start_queued_transfer_tasks(conn);
 }
 
 /* This function is used to handle the r2t snack */

@@ -223,18 +223,21 @@ spdk_poller_register(spdk_poller_fn fn,
 
 	thread = spdk_get_thread();
 	if (!thread) {
-		abort();
+		assert(false);
+		return NULL;
 	}
 
 	if (!thread->start_poller_fn || !thread->stop_poller_fn) {
 		SPDK_ERRLOG("No related functions to start requested poller\n");
-		abort();
+		assert(false);
+		return NULL;
 	}
 
 	poller = thread->start_poller_fn(thread->thread_ctx, fn, arg, period_microseconds);
 	if (!poller) {
 		SPDK_ERRLOG("Unable to start requested poller\n");
-		abort();
+		assert(false);
+		return NULL;
 	}
 
 	return poller;
@@ -490,8 +493,21 @@ _spdk_put_io_channel(void *arg)
 	bool do_remove_dev = true;
 
 	assert(ch->thread == spdk_get_thread());
-	assert(ch->ref == 0);
 
+	if (ch->ref > 0) {
+		/*
+		 * Another reference to the associated io_device was requested
+		 *  after this message was sent but before it had a chance to
+		 *  execute.
+		 */
+		return;
+	}
+
+	pthread_mutex_lock(&g_devlist_mutex);
+	TAILQ_REMOVE(&ch->thread->io_channels, ch, tailq);
+	pthread_mutex_unlock(&g_devlist_mutex);
+
+	/* Don't hold the devlist mutex while the destroy_cb is called. */
 	ch->destroy_cb(ch->dev->io_device, spdk_io_channel_get_ctx(ch));
 
 	pthread_mutex_lock(&g_devlist_mutex);
@@ -519,11 +535,6 @@ spdk_put_io_channel(struct spdk_io_channel *ch)
 	ch->ref--;
 
 	if (ch->ref == 0) {
-		/* If this was the last reference, remove the channel from the list */
-		pthread_mutex_lock(&g_devlist_mutex);
-		TAILQ_REMOVE(&ch->thread->io_channels, ch, tailq);
-		pthread_mutex_unlock(&g_devlist_mutex);
-
 		spdk_thread_send_msg(ch->thread, _spdk_put_io_channel, ch);
 	}
 }

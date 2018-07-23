@@ -49,6 +49,114 @@ struct open_descriptors {
 };
 typedef TAILQ_HEAD(, open_descriptors) open_descriptors_t;
 
+static int
+rpc_decode_action_on_timeout(const struct spdk_json_val *val, void *out)
+{
+	enum spdk_bdev_timeout_action *action = out;
+
+	if (spdk_json_strequal(val, "none") == true) {
+		*action = SPDK_BDEV_NVME_TIMEOUT_ACTION_NONE;
+	} else if (spdk_json_strequal(val, "abort") == true) {
+		*action = SPDK_BDEV_NVME_TIMEOUT_ACTION_ABORT;
+	} else if (spdk_json_strequal(val, "reset") == true) {
+		*action = SPDK_BDEV_NVME_TIMEOUT_ACTION_RESET;
+	} else {
+		SPDK_NOTICELOG("Invalid parameter value: action_on_timeout\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static const struct spdk_json_object_decoder rpc_bdev_nvme_options_decoders[] = {
+	{"action_on_timeout", offsetof(struct spdk_bdev_nvme_opts, action_on_timeout), rpc_decode_action_on_timeout, true},
+	{"timeout_us", offsetof(struct spdk_bdev_nvme_opts, timeout_us), spdk_json_decode_uint64, true},
+	{"retry_count", offsetof(struct spdk_bdev_nvme_opts, retry_count), spdk_json_decode_uint32, true},
+	{"nvme_adminq_poll_period_us", offsetof(struct spdk_bdev_nvme_opts, nvme_adminq_poll_period_us), spdk_json_decode_uint64, true},
+};
+
+static void
+spdk_rpc_set_bdev_nvme_options(struct spdk_jsonrpc_request *request,
+			       const struct spdk_json_val *params)
+{
+	struct spdk_bdev_nvme_opts opts;
+	struct spdk_json_write_ctx *w;
+	int rc;
+
+	spdk_bdev_nvme_get_opts(&opts);
+	if (params && spdk_json_decode_object(params, rpc_bdev_nvme_options_decoders,
+					      SPDK_COUNTOF(rpc_bdev_nvme_options_decoders),
+					      &opts)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		rc = -EINVAL;
+		goto invalid;
+	}
+
+	rc = spdk_bdev_nvme_set_opts(&opts);
+	if (rc) {
+		goto invalid;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w != NULL) {
+		spdk_json_write_bool(w, true);
+		spdk_jsonrpc_end_result(request, w);
+	}
+
+	return;
+invalid:
+	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS, spdk_strerror(-rc));
+}
+SPDK_RPC_REGISTER("set_bdev_nvme_options", spdk_rpc_set_bdev_nvme_options, SPDK_RPC_STARTUP)
+
+struct rpc_bdev_nvme_hotplug {
+	bool enabled;
+	uint64_t period_us;
+};
+
+static const struct spdk_json_object_decoder rpc_bdev_nvme_hotplug_decoders[] = {
+	{"enable", offsetof(struct rpc_bdev_nvme_hotplug, enabled), spdk_json_decode_bool, false},
+	{"period_us", offsetof(struct rpc_bdev_nvme_hotplug, period_us), spdk_json_decode_uint64, true},
+};
+
+static void
+rpc_set_bdev_nvme_hotplug_done(void *ctx)
+{
+	struct spdk_jsonrpc_request *request = ctx;
+	struct spdk_json_write_ctx *w = spdk_jsonrpc_begin_result(request);
+
+	if (w != NULL) {
+		spdk_json_write_bool(w, true);
+		spdk_jsonrpc_end_result(request, w);
+	}
+}
+
+static void
+spdk_rpc_set_bdev_nvme_hotplug(struct spdk_jsonrpc_request *request,
+			       const struct spdk_json_val *params)
+{
+	struct rpc_bdev_nvme_hotplug req = {false, 0};
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_bdev_nvme_hotplug_decoders,
+				    SPDK_COUNTOF(rpc_bdev_nvme_hotplug_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		rc = -EINVAL;
+		goto invalid;
+	}
+
+	rc = spdk_bdev_nvme_set_hotplug(req.enabled, req.period_us, rpc_set_bdev_nvme_hotplug_done,
+					request);
+	if (rc) {
+		goto invalid;
+	}
+
+	return;
+invalid:
+	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS, spdk_strerror(-rc));
+}
+SPDK_RPC_REGISTER("set_bdev_nvme_hotplug", spdk_rpc_set_bdev_nvme_hotplug, SPDK_RPC_RUNTIME)
+
 struct rpc_construct_nvme {
 	char *name;
 	char *trtype;
@@ -159,6 +267,58 @@ invalid:
 	free_rpc_construct_nvme(&req);
 }
 SPDK_RPC_REGISTER("construct_nvme_bdev", spdk_rpc_construct_nvme_bdev, SPDK_RPC_RUNTIME)
+
+struct rpc_delete_nvme {
+	char *name;
+};
+
+static void
+free_rpc_delete_nvme(struct rpc_delete_nvme *req)
+{
+	free(req->name);
+}
+
+static const struct spdk_json_object_decoder rpc_delete_nvme_decoders[] = {
+	{"name", offsetof(struct rpc_delete_nvme, name), spdk_json_decode_string},
+};
+
+static void
+spdk_rpc_delete_nvme_ctrlr(struct spdk_jsonrpc_request *request,
+			   const struct spdk_json_val *params)
+{
+	struct rpc_delete_nvme req = {NULL};
+	struct spdk_json_write_ctx *w;
+	int rc = 0;
+
+	if (spdk_json_decode_object(params, rpc_delete_nvme_decoders,
+				    SPDK_COUNTOF(rpc_delete_nvme_decoders),
+				    &req)) {
+		rc = -EINVAL;
+		goto invalid;
+	}
+
+	rc = spdk_bdev_nvme_delete(req.name);
+	if (rc != 0) {
+		goto invalid;
+	}
+
+	free_rpc_delete_nvme(&req);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+	return;
+
+invalid:
+	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+					 spdk_strerror(-rc));
+	free_rpc_delete_nvme(&req);
+}
+SPDK_RPC_REGISTER("delete_nvme_controller", spdk_rpc_delete_nvme_ctrlr, SPDK_RPC_RUNTIME)
 
 struct rpc_apply_firmware {
 	char *filename;

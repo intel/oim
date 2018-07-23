@@ -2271,6 +2271,59 @@ bs_load(void)
 }
 
 static void
+bs_load_custom_cluster_size(void)
+{
+	struct spdk_bs_dev *dev;
+	struct spdk_bs_super_block *super_block;
+	struct spdk_bs_opts opts;
+	uint32_t custom_cluster_size = 4194304; /* 4MiB */
+	uint32_t cluster_sz;
+	uint64_t total_clusters;
+
+	dev = init_dev();
+	spdk_bs_opts_init(&opts);
+	opts.cluster_sz = custom_cluster_size;
+	snprintf(opts.bstype.bstype, sizeof(opts.bstype.bstype), "TESTTYPE");
+
+	/* Initialize a new blob store */
+	spdk_bs_init(dev, &opts, bs_op_with_handle_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	SPDK_CU_ASSERT_FATAL(g_bs != NULL);
+	cluster_sz = g_bs->cluster_sz;
+	total_clusters = g_bs->total_clusters;
+
+	/* Unload the blob store */
+	spdk_bs_unload(g_bs, bs_op_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	g_bs = NULL;
+	g_blob = NULL;
+	g_blobid = 0;
+
+	super_block = (struct spdk_bs_super_block *)g_dev_buffer;
+	CU_ASSERT(super_block->clean == 1);
+
+	/* Load an existing blob store */
+	dev = init_dev();
+	spdk_bs_opts_init(&opts);
+	snprintf(opts.bstype.bstype, sizeof(opts.bstype.bstype), "TESTTYPE");
+	spdk_bs_load(dev, &opts, bs_op_with_handle_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	SPDK_CU_ASSERT_FATAL(g_bs != NULL);
+	/* Compare cluster size and number to one after initialization */
+	CU_ASSERT(cluster_sz == g_bs->cluster_sz);
+	CU_ASSERT(total_clusters == g_bs->total_clusters);
+
+	super_block = (struct spdk_bs_super_block *)g_dev_buffer;
+	CU_ASSERT(super_block->clean == 1);
+	CU_ASSERT(super_block->size == dev->blockcnt * dev->blocklen);
+
+	spdk_bs_unload(g_bs, bs_op_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	CU_ASSERT(super_block->clean == 1);
+	g_bs = NULL;
+}
+
+static void
 bs_type(void)
 {
 	struct spdk_bs_dev *dev;
@@ -2488,7 +2541,7 @@ bs_cluster_sz(void)
 
 	/* Initialize a new blob store */
 	spdk_bs_init(dev, &opts, bs_op_with_handle_complete, NULL);
-	CU_ASSERT(g_bserrno == -ENOMEM);
+	CU_ASSERT(g_bserrno == -EINVAL);
 	SPDK_CU_ASSERT_FATAL(g_bs == NULL);
 
 	/* Set cluster size to twice the default */
@@ -3558,6 +3611,24 @@ blob_thin_prov_alloc(void)
 	CU_ASSERT(blob->active.num_clusters == 5);
 	CU_ASSERT(spdk_blob_get_num_clusters(blob) == 5);
 
+	/* Grow it to 1TB - still unallocated */
+	spdk_blob_resize(blob, 262144, blob_op_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	CU_ASSERT(free_clusters == spdk_bs_free_cluster_count(bs));
+	CU_ASSERT(blob->active.num_clusters == 262144);
+	CU_ASSERT(spdk_blob_get_num_clusters(blob) == 262144);
+
+	spdk_blob_sync_md(blob, blob_op_complete, NULL);
+	CU_ASSERT(g_bserrno == 0);
+	/* Sync must not change anything */
+	CU_ASSERT(free_clusters == spdk_bs_free_cluster_count(bs));
+	CU_ASSERT(blob->active.num_clusters == 262144);
+	CU_ASSERT(spdk_blob_get_num_clusters(blob) == 262144);
+	/* Since clusters are not allocated,
+	 * number of metadata pages is expected to be minimal.
+	 */
+	CU_ASSERT(blob->active.num_pages == 1);
+
 	/* Shrink the blob to 3 clusters - still unallocated */
 	spdk_blob_resize(blob, 3, blob_op_complete, NULL);
 	CU_ASSERT(g_bserrno == 0);
@@ -3700,8 +3771,11 @@ blob_thin_prov_rw(void)
 	struct spdk_blob_opts opts;
 	spdk_blob_id blobid;
 	uint64_t free_clusters;
+	uint64_t page_size;
 	uint8_t payload_read[10 * 4096];
 	uint8_t payload_write[10 * 4096];
+	uint64_t write_bytes;
+	uint64_t read_bytes;
 
 	dev = init_dev();
 
@@ -3710,6 +3784,7 @@ blob_thin_prov_rw(void)
 	SPDK_CU_ASSERT_FATAL(g_bs != NULL);
 	bs = g_bs;
 	free_clusters = spdk_bs_free_cluster_count(bs);
+	page_size = spdk_bs_get_page_size(bs);
 
 	channel = spdk_bs_alloc_io_channel(bs);
 	CU_ASSERT(channel != NULL);
@@ -3748,10 +3823,17 @@ blob_thin_prov_rw(void)
 	CU_ASSERT(g_bserrno == 0);
 	CU_ASSERT(memcmp(zero, payload_read, 10 * 4096) == 0);
 
+	write_bytes = g_dev_write_bytes;
+	read_bytes = g_dev_read_bytes;
+
 	memset(payload_write, 0xE5, sizeof(payload_write));
 	spdk_blob_io_write(blob, channel, payload_write, 4, 10, blob_op_complete, NULL);
 	CU_ASSERT(g_bserrno == 0);
 	CU_ASSERT(free_clusters != spdk_bs_free_cluster_count(bs));
+	/* For thin-provisioned blob we need to write 10 pages plus one page metadata and
+	 * read 0 bytes */
+	CU_ASSERT(g_dev_write_bytes - write_bytes == page_size * 11);
+	CU_ASSERT(g_dev_read_bytes - read_bytes == 0);
 
 	spdk_blob_io_read(blob, channel, payload_read, 4, 10, blob_op_complete, NULL);
 	CU_ASSERT(g_bserrno == 0);
@@ -3983,8 +4065,12 @@ blob_snapshot_rw(void)
 	struct spdk_blob_opts opts;
 	spdk_blob_id blobid, snapshotid;
 	uint64_t free_clusters;
+	uint64_t cluster_size;
+	uint64_t page_size;
 	uint8_t payload_read[10 * 4096];
 	uint8_t payload_write[10 * 4096];
+	uint64_t write_bytes;
+	uint64_t read_bytes;
 
 	dev = init_dev();
 
@@ -3993,6 +4079,8 @@ blob_snapshot_rw(void)
 	SPDK_CU_ASSERT_FATAL(g_bs != NULL);
 	bs = g_bs;
 	free_clusters = spdk_bs_free_cluster_count(bs);
+	cluster_size = spdk_bs_get_cluster_size(bs);
+	page_size = spdk_bs_get_page_size(bs);
 
 	channel = spdk_bs_alloc_io_channel(bs);
 	CU_ASSERT(channel != NULL);
@@ -4039,10 +4127,19 @@ blob_snapshot_rw(void)
 
 	CU_ASSERT(spdk_blob_get_num_clusters(snapshot) == 5)
 
+	write_bytes = g_dev_write_bytes;
+	read_bytes = g_dev_read_bytes;
+
 	memset(payload_write, 0xAA, sizeof(payload_write));
 	spdk_blob_io_write(blob, channel, payload_write, 4, 10, blob_op_complete, NULL);
 	CU_ASSERT(g_bserrno == 0);
 	CU_ASSERT(free_clusters != spdk_bs_free_cluster_count(bs));
+
+	/* For a clone we need to allocate and copy one cluster, update one page of metadata
+	 * and then write 10 pages of payload.
+	 */
+	CU_ASSERT(g_dev_write_bytes - write_bytes == page_size * 11 + cluster_size);
+	CU_ASSERT(g_dev_read_bytes - read_bytes == cluster_size);
 
 	spdk_blob_io_read(blob, channel, payload_read, 4, 10, blob_op_complete, NULL);
 	CU_ASSERT(g_bserrno == 0);
@@ -4871,6 +4968,7 @@ int main(int argc, char **argv)
 		CU_add_test(suite, "blob_iter", blob_iter) == NULL ||
 		CU_add_test(suite, "blob_xattr", blob_xattr) == NULL ||
 		CU_add_test(suite, "bs_load", bs_load) == NULL ||
+		CU_add_test(suite, "bs_load_custom_cluster_size", bs_load_custom_cluster_size) == NULL ||
 		CU_add_test(suite, "bs_unload", bs_unload) == NULL ||
 		CU_add_test(suite, "bs_cluster_sz", bs_cluster_sz) == NULL ||
 		CU_add_test(suite, "bs_usable_clusters", bs_usable_clusters) == NULL ||

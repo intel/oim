@@ -89,17 +89,24 @@ spdk_memzone_reserve_aligned(const char *name, size_t len, int socket_id,
 	}
 }
 
+int ut_spdk_dma_malloc = (int)MOCK_PASS_THRU;
+void *ut_p_spdk_dma_malloc = &ut_spdk_dma_malloc;
 void *
 spdk_dma_malloc(size_t size, size_t align, uint64_t *phys_addr)
 {
-	void *buf = NULL;
-	if (posix_memalign(&buf, align, size)) {
-		return NULL;
+	if (ut_p_spdk_dma_malloc &&
+	    ut_spdk_dma_malloc == (int)MOCK_PASS_THRU) {
+		void *buf = NULL;
+		if (posix_memalign(&buf, align, size)) {
+			return NULL;
+		}
+		if (phys_addr) {
+			*phys_addr = (uint64_t)buf;
+		}
+		return buf;
+	} else {
+		return ut_p_spdk_dma_malloc;
 	}
-	if (phys_addr) {
-		*phys_addr = (uint64_t)buf;
-	}
-	return buf;
 }
 
 int ut_spdk_dma_zmalloc = (int)MOCK_PASS_THRU;
@@ -196,11 +203,16 @@ spdk_mempool_free(struct spdk_mempool *_mp)
 	free(mp);
 }
 
+bool ut_spdk_mempool_get = false;
 void *
 spdk_mempool_get(struct spdk_mempool *_mp)
 {
 	struct test_mempool *mp = (struct test_mempool *)_mp;
 	void *buf;
+
+	if (ut_spdk_mempool_get) {
+		return NULL;
+	}
 
 	if (mp && mp->count == 0) {
 		return NULL;
@@ -214,6 +226,18 @@ spdk_mempool_get(struct spdk_mempool *_mp)
 		}
 		return buf;
 	}
+}
+
+int
+spdk_mempool_get_bulk(struct spdk_mempool *mp, void **ele_arr, size_t count)
+{
+	for (size_t i = 0; i < count; i++) {
+		ele_arr[i] = spdk_mempool_get(mp);
+		if (ele_arr[i] == NULL) {
+			return -1;
+		}
+	}
+	return 0;
 }
 
 void

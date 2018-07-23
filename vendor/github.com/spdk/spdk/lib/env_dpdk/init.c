@@ -100,6 +100,10 @@ _sprintf_alloc(const char *format, ...)
 	return NULL;
 }
 
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0)
+const char *eal_get_runtime_dir(void);
+#endif
+
 static void
 spdk_env_unlink_shared_files(void)
 {
@@ -110,10 +114,34 @@ spdk_env_unlink_shared_files(void)
 		fprintf(stderr, "Unable to unlink shared memory file: %s. Error code: %d\n", buffer, errno);
 	}
 
+#if RTE_VERSION < RTE_VERSION_NUM(18, 05, 0, 0)
 	snprintf(buffer, PATH_MAX, "/var/run/.spdk_pid%d_hugepage_info", getpid());
 	if (unlink(buffer)) {
 		fprintf(stderr, "Unable to unlink shared memory file: %s. Error code: %d\n", buffer, errno);
 	}
+#else
+	DIR *dir;
+	struct dirent *d;
+
+	dir = opendir(eal_get_runtime_dir());
+	if (!dir) {
+		fprintf(stderr, "Failed to open DPDK runtime dir: %s (%d)\n", eal_get_runtime_dir(), errno);
+		return;
+	}
+
+	while ((d = readdir(dir)) != NULL) {
+		if (d->d_type != DT_REG) {
+			continue;
+		}
+
+		snprintf(buffer, PATH_MAX, "%s/%s", eal_get_runtime_dir(), d->d_name);
+		if (unlink(buffer)) {
+			fprintf(stderr, "Unable to unlink shared memory file: %s. Error code: %d\n", buffer, errno);
+		}
+	}
+
+	closedir(dir);
+#endif
 }
 
 void
@@ -250,6 +278,22 @@ spdk_build_eal_cmdline(const struct spdk_env_opts *opts)
 		}
 	}
 
+	/* unlink hugepages after initialization */
+	if (opts->unlink_hugepage) {
+		args = spdk_push_arg(args, &argcount, _sprintf_alloc("--huge-unlink"));
+		if (args == NULL) {
+			return -1;
+		}
+	}
+
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0)
+	/* SPDK holds off with using the new memory management model just yet */
+	args = spdk_push_arg(args, &argcount, _sprintf_alloc("--legacy-mem"));
+	if (args == NULL) {
+		return -1;
+	}
+#endif
+
 	if (opts->num_pci_addr) {
 		size_t i;
 		char bdf[32];
@@ -258,8 +302,9 @@ spdk_build_eal_cmdline(const struct spdk_env_opts *opts)
 
 		for (i = 0; i < opts->num_pci_addr; i++) {
 			spdk_pci_addr_fmt(bdf, 32, &pci_addr[i]);
-			args = spdk_push_arg(args, &argcount, _sprintf_alloc("%s %s",
-					     (opts->pci_blacklist ? "-b" : "-w"), bdf));
+			args = spdk_push_arg(args, &argcount, _sprintf_alloc("%s=%s",
+					     (opts->pci_blacklist ? "--pci-blacklist" : "--pci-whitelist"),
+					     bdf));
 			if (args == NULL) {
 				return -1;
 			}

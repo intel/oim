@@ -3,9 +3,8 @@ set -e
 BASE_DIR=$(readlink -f $(dirname $0))
 [[ -z "$TEST_DIR" ]] && TEST_DIR="$(cd $BASE_DIR/../../ && pwd)"
 
-total_size=64
+total_size=256
 block_size=512
-cluster_sz=1048576 #1MiB
 test_cases=all
 x=""
 
@@ -19,7 +18,6 @@ function usage() {
     echo "-h, --help                print help and exit"
     echo "    --total-size          Size of malloc bdev in MB (int > 0)"
     echo "    --block-size          Block size for this bdev"
-    echo "    --cluster-sz          size of cluster (in bytes)"
     echo "-x                        set -x for script debug"
     echo "    --test-cases=         List test cases which will be run:
                                     1: 'construct_lvs_positive',
@@ -48,8 +46,11 @@ function usage() {
                                     452: 'construct_lvs_name_twice',
                                     500: 'nested_construct_lvol_bdev_on_full_lvol_store',
                                     550: 'delete_bdev_positive',
+                                    551: 'delete_lvol_bdev',
+                                    552: 'destroy_lvol_store_with_clones',
+                                    553: 'unregister_lvol_bdev',
                                     600: 'construct_lvol_store_with_cluster_size_max',
-                                    601 'construct_lvol_store_with_cluster_size_min',
+                                    601: 'construct_lvol_store_with_cluster_size_min',
                                     650: 'thin_provisioning_check_space',
                                     651: 'thin_provisioning_read_empty_bdev',
                                     652: 'thin_provisionind_data_integrity_test',
@@ -66,6 +67,8 @@ function usage() {
                                     755: 'clone_writing_clone',
                                     756: 'clone_and_snapshot_consistency',
                                     757: 'clone_inflate',
+                                    758: 'clone_decouple_parent',
+                                    759: 'clone_decouple_parent_rw',
                                     800: 'rename_positive',
                                     801: 'rename_lvs_nonexistent',
                                     802: 'rename_lvs_EEXIST',
@@ -86,7 +89,6 @@ while getopts 'xh-:' optchar; do
             help) usage $0 && exit 0;;
             total-size=*) total_size="${OPTARG#*=}" ;;
             block-size=*) block_size="${OPTARG#*=}" ;;
-            cluster-sz=*) cluster_sz="${OPTARG#*=}" ;;
             test-cases=*) test_cases="${OPTARG#*=}" ;;
             *) usage $0 "Invalid argument '$OPTARG'" && exit 1 ;;
         esac
@@ -132,7 +134,7 @@ function vhost_kill()
 trap "vhost_kill; exit 1" SIGINT SIGTERM EXIT
 
 vhost_start
-$BASE_DIR/lvol_test.py $rpc_py $total_size $block_size $cluster_sz $BASE_DIR $TEST_DIR/app/vhost "${test_cases[@]}"
+$BASE_DIR/lvol_test.py $rpc_py $total_size $block_size $BASE_DIR $TEST_DIR/app/vhost "${test_cases[@]}"
 
 vhost_kill
 trap - SIGINT SIGTERM EXIT

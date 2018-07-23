@@ -647,11 +647,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:93d10f5ab9d2d502a1be50bcafcf80fb190de9f2816372059ced4db9b705f81e"
+  digest = "1:3ac49f2554044d7f9aceff3ceca78ccb6267fcffa2f84673b52c6f1239ac6405"
   name = "github.com/spdk/spdk"
   packages = ["go"]
   pruneopts = ""
-  revision = "436c0c189bcad16ea58f38d7e71b7b1317f57d64"
+  revision = "120c4f3c05a7dae7000dd70134fb8af21bb56336"
 
 [[projects]]
   digest = "1:37ace7f35375adec11634126944bdc45a673415e2fcc07382d03b75ec76ea94c"

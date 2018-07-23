@@ -36,6 +36,7 @@
 #include "spdk/endian.h"
 #include "spdk/log.h"
 #include "spdk/nvme.h"
+#include "spdk/nvme_ocssd.h"
 #include "spdk/env.h"
 #include "spdk/nvme_intel.h"
 #include "spdk/nvmf_spec.h"
@@ -45,6 +46,8 @@
 #include "spdk/uuid.h"
 
 #define MAX_DISCOVERY_LOG_ENTRIES	((uint64_t)1000)
+
+#define NUM_CHUNK_INFO_ENTRIES		8
 
 static int outstanding_commands;
 
@@ -72,6 +75,10 @@ static struct spdk_nvme_intel_marketing_description_page intel_md_page;
 static struct spdk_nvmf_discovery_log_page *g_discovery_page;
 static size_t g_discovery_page_size;
 static uint64_t g_discovery_page_numrec;
+
+static struct spdk_ocssd_geometry_data geometry_data;
+
+static struct spdk_ocssd_chunk_information g_ocssd_chunk_info_page[NUM_CHUNK_INFO_ENTRIES ];
 
 static bool g_hex_dump = false;
 
@@ -157,6 +164,15 @@ get_log_page_completion(void *cb_arg, const struct spdk_nvme_cpl *cpl)
 	outstanding_commands--;
 }
 
+static void
+get_ocssd_geometry_completion(void *cb_arg, const struct spdk_nvme_cpl *cpl)
+{
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		printf("get ocssd geometry failed\n");
+	}
+	outstanding_commands--;
+}
+
 static int
 get_feature(struct spdk_nvme_ctrlr *ctrlr, uint8_t fid)
 {
@@ -179,11 +195,16 @@ get_features(struct spdk_nvme_ctrlr *ctrlr)
 		SPDK_NVME_FEAT_TEMPERATURE_THRESHOLD,
 		SPDK_NVME_FEAT_ERROR_RECOVERY,
 		SPDK_NVME_FEAT_NUMBER_OF_QUEUES,
+		SPDK_OCSSD_FEAT_MEDIA_FEEDBACK,
 	};
 
 	/* Submit several GET FEATURES commands and wait for them to complete */
 	outstanding_commands = 0;
 	for (i = 0; i < SPDK_COUNTOF(features_to_get); i++) {
+		if (!spdk_nvme_ctrlr_is_ocssd_supported(ctrlr) &&
+		    features_to_get[i] == SPDK_OCSSD_FEAT_MEDIA_FEEDBACK) {
+			continue;
+		}
 		if (get_feature(ctrlr, features_to_get[i]) == 0) {
 			outstanding_commands++;
 		} else {
@@ -379,7 +400,6 @@ get_discovery_log_page(struct spdk_nvme_ctrlr *ctrlr)
 	return 0;
 }
 
-
 static void
 get_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 {
@@ -440,6 +460,49 @@ get_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 	}
 
 	if (get_discovery_log_page(ctrlr) == 0) {
+		outstanding_commands++;
+	}
+
+	while (outstanding_commands) {
+		spdk_nvme_ctrlr_process_admin_completions(ctrlr);
+	}
+}
+
+static int
+get_ocssd_chunk_info_log_page(struct spdk_nvme_ns *ns)
+{
+	struct spdk_nvme_ctrlr *ctrlr = spdk_nvme_ns_get_ctrlr(ns);
+	int nsid = spdk_nvme_ns_get_id(ns);
+	outstanding_commands = 0;
+
+	if (spdk_nvme_ctrlr_cmd_get_log_page(ctrlr, SPDK_OCSSD_LOG_CHUNK_INFO,
+					     nsid, &g_ocssd_chunk_info_page, sizeof(g_ocssd_chunk_info_page), 0,
+					     get_log_page_completion, NULL) == 0) {
+		outstanding_commands++;
+	} else {
+		printf("get_ocssd_chunk_info_log_page() failed\n");
+		return -1;
+	}
+
+	while (outstanding_commands) {
+		spdk_nvme_ctrlr_process_admin_completions(ctrlr);
+	}
+
+	return 0;
+}
+
+static void
+get_ocssd_geometry(struct spdk_nvme_ns *ns, struct spdk_ocssd_geometry_data *geometry_data)
+{
+	struct spdk_nvme_ctrlr *ctrlr = spdk_nvme_ns_get_ctrlr(ns);
+	int nsid = spdk_nvme_ns_get_id(ns);
+	outstanding_commands = 0;
+
+	if (spdk_nvme_ocssd_ctrlr_cmd_geometry(ctrlr, nsid, geometry_data,
+					       sizeof(*geometry_data), get_ocssd_geometry_completion, NULL)) {
+		printf("Get OpenChannel SSD geometry failed\n");
+		exit(1);
+	} else {
 		outstanding_commands++;
 	}
 
@@ -517,6 +580,73 @@ print_ascii_string(const void *buf, size_t size)
 }
 
 static void
+print_ocssd_chunk_info(struct spdk_ocssd_chunk_information *chk_info, int chk_num)
+{
+	int i;
+	char *cs_str, *ct_str;
+
+	printf("OCSSD Chunk Info Glance\n");
+	printf("======================\n");
+
+	for (i = 0; i < chk_num; i++) {
+		cs_str = chk_info[i].cs.free ? "Free" :
+			 chk_info[i].cs.closed ? "Closed" :
+			 chk_info[i].cs.open ? "Open" :
+			 chk_info[i].cs.offline ? "Offline" : "Unknown";
+		ct_str = chk_info[i].ct.seq_write ? "Sequential Write" :
+			 chk_info[i].ct.rnd_write ? "Random Write" : "Unknown";
+
+		printf("------------\n");
+		printf("Chunk index:                    %d\n", i);
+		printf("Chunk state:                    %s(0x%x)\n", cs_str, *(uint8_t *) & (chk_info[i].cs));
+		printf("Chunk type (write mode):        %s\n", ct_str);
+		printf("Chunk type (size_deviate):      %s\n", chk_info[i].ct.size_deviate ? "Yes" : "No");
+		printf("Wear-level Index:               %d\n", chk_info[i].wli);
+		printf("Starting LBA:                   %ld\n", chk_info[i].slba);
+		printf("Number of blocks in chunk:      %ld\n", chk_info[i].cnlb);
+		printf("Write Pointer:                  %ld\n", chk_info[i].wp);
+	}
+}
+
+static void
+print_ocssd_geometry(struct spdk_ocssd_geometry_data *geometry_data)
+{
+	printf("Namespace OCSSD Geometry\n");
+	printf("=======================\n");
+
+	if (geometry_data->mjr < 2) {
+		printf("Open-Channel Spec version is less than 2.0\n");
+		printf("OC version:             maj:%d\n", geometry_data->mjr);
+		return;
+	}
+
+	printf("OC version:                     maj:%d min:%d\n", geometry_data->mjr, geometry_data->mnr);
+	printf("LBA format:\n");
+	printf("  Group bits:                   %d\n", geometry_data->lbaf.grp_len);
+	printf("  PU bits:                      %d\n", geometry_data->lbaf.pu_len);
+	printf("  Chunk bits:                   %d\n", geometry_data->lbaf.chk_len);
+	printf("  Logical block bits:           %d\n", geometry_data->lbaf.lbk_len);
+
+	printf("Media and Controller Capabilities:\n");
+	printf("  Namespace supports Vector Chunk Copy:                 %s\n",
+	       geometry_data->mccap.vec_chk_cpy ? "Supported" : "Not Supported");
+	printf("  Namespace supports multiple resets a free chunk:      %s\n",
+	       geometry_data->mccap.multi_reset ? "Supported" : "Not Supported");
+
+	printf("Wear-level Index Delta Threshold:                       %d\n", geometry_data->wit);
+	printf("Groups (channels):              %d\n", geometry_data->num_grp);
+	printf("PUs (LUNs) per group:           %d\n", geometry_data->num_pu);
+	printf("Chunks per LUN:                 %d\n", geometry_data->num_chk);
+	printf("Logical blks per chunk:         %d\n", geometry_data->clba);
+	printf("MIN write size:                 %d\n", geometry_data->ws_min);
+	printf("OPT write size:                 %d\n", geometry_data->ws_opt);
+	printf("Cache min write size:           %d\n", geometry_data->mw_cunits);
+	printf("Max open chunks:                %d\n", geometry_data->maxoc);
+	printf("Max open chunks per PU:         %d\n", geometry_data->maxocpu);
+	printf("\n");
+}
+
+static void
 print_namespace(struct spdk_nvme_ns *ns)
 {
 	const struct spdk_nvme_ns_data		*nsdata;
@@ -564,6 +694,8 @@ print_namespace(struct spdk_nvme_ns *ns)
 		printf("Metadata Location:           %s\n",
 		       nsdata->dps.md_start ? "First 8 Bytes" : "Last 8 Bytes");
 	}
+	printf("Namespace Sharing Capabilities: %s\n",
+	       nsdata->nmic.can_share ? "Multiple Controllers" : "Private");
 	printf("Size (in LBAs):              %lld (%lldM)\n",
 	       (long long)nsdata->nsze,
 	       (long long)nsdata->nsze / 1024 / 1024);
@@ -611,6 +743,13 @@ print_namespace(struct spdk_nvme_ns *ns)
 		printf("LBA Format #%02d: Data Size: %5d  Metadata Size: %5d\n",
 		       i, 1 << nsdata->lbaf[i].lbads, nsdata->lbaf[i].ms);
 	printf("\n");
+
+	if (spdk_nvme_ctrlr_is_ocssd_supported(spdk_nvme_ns_get_ctrlr(ns))) {
+		get_ocssd_geometry(ns, &geometry_data);
+		print_ocssd_geometry(&geometry_data);
+		get_ocssd_chunk_info_log_page(ns);
+		print_ocssd_chunk_info(g_ocssd_chunk_info_page, NUM_CHUNK_INFO_ENTRIES);
+	}
 }
 
 static const char *
@@ -1163,6 +1302,16 @@ print_controller(struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_transport
 		printf("================\n");
 		printf("Number of I/O Submission Queues:      %u\n", (result & 0xFFFF) + 1);
 		printf("Number of I/O Completion Queues:      %u\n", (result & 0xFFFF0000 >> 16) + 1);
+		printf("\n");
+	}
+
+	if (features[SPDK_OCSSD_FEAT_MEDIA_FEEDBACK].valid) {
+		uint32_t result = features[SPDK_OCSSD_FEAT_MEDIA_FEEDBACK].result;
+
+		printf("OCSSD Media Feedback\n");
+		printf("=======================\n");
+		printf("High ECC status:                %u\n", (result & 0x1));
+		printf("Vector High ECC status:         %u\n", (result & 0x2 >> 1));
 		printf("\n");
 	}
 

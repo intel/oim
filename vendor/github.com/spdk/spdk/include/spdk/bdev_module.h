@@ -1,7 +1,6 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright (C) 2008-2012 Daisuke Aoyama <aoyama@peach.ne.jp>.
  *   Copyright (c) Intel Corporation.
  *   All rights reserved.
  *
@@ -47,6 +46,7 @@
 #include "spdk/queue.h"
 #include "spdk/scsi_spec.h"
 #include "spdk/thread.h"
+#include "spdk/util.h"
 #include "spdk/uuid.h"
 
 /** Block device module */
@@ -99,11 +99,19 @@ struct spdk_bdev_module {
 	int (*get_ctx_size)(void);
 
 	/**
-	 * Notification that a bdev should be examined by a virtual bdev module.
+	 * First notification that a bdev should be examined by a virtual bdev module.
 	 * Virtual bdev modules may use this to examine newly-added bdevs and automatically
-	 * create their own vbdevs.
+	 * create their own vbdevs, but no I/O to device can be send to bdev at this point.
+	 * Only vbdevs based on config files can be created here.
 	 */
-	void (*examine)(struct spdk_bdev *bdev);
+	void (*examine_config)(struct spdk_bdev *bdev);
+
+	/**
+	 * Second notification that a bdev should be examined by a virtual bdev module.
+	 * Virtual bdev modules may use this to examine newly-added bdevs and automatically
+	 * create their own vbdevs. This callback may use I/O operations end finish asynchronously.
+	 */
+	void (*examine_disk)(struct spdk_bdev *bdev);
 
 	/**
 	 * Denotes if the module_init function may complete asynchronously. If set to true,
@@ -219,14 +227,14 @@ struct spdk_bdev {
 	/** Unique product name for this kind of block device. */
 	char *product_name;
 
+	/** write cache enabled, not used at the moment */
+	int write_cache;
+
 	/** Size in bytes of a logical block for the backend */
 	uint32_t blocklen;
 
 	/** Number of blocks */
 	uint64_t blockcnt;
-
-	/** write cache enabled, not used at the moment */
-	int write_cache;
 
 	/**
 	 * This is used to make sure buffers are sector aligned.
@@ -297,6 +305,19 @@ struct spdk_bdev {
 
 		/** points to a reset bdev_io if one is in progress. */
 		struct spdk_bdev_io *reset_in_progress;
+
+		/** poller for tracking the queue_depth of a device, NULL if not tracking */
+		struct spdk_poller *qd_poller;
+
+		/** period at which we poll for queue depth information */
+		uint64_t period;
+
+		/** used to aggregate queue depth while iterating across the bdev's open channels */
+		uint64_t temporary_queue_depth;
+
+		/** queue depth as calculated the last time the telemetry poller checked. */
+		uint64_t measured_queue_depth;
+
 	} internal;
 };
 
@@ -365,6 +386,21 @@ struct spdk_bdev_io {
 	 *  must not read or write to these fields.
 	 */
 	struct __bdev_io_internal_fields {
+		/** The bdev I/O channel that this was handled on. */
+		struct spdk_bdev_channel *ch;
+
+		/** The bdev I/O channel that this was submitted on. */
+		struct spdk_bdev_channel *io_submit_ch;
+
+		/** User function that will be called when this completes */
+		spdk_bdev_io_completion_cb cb;
+
+		/** Context that will be passed to the completion callback */
+		void *caller_ctx;
+
+		/** Current tsc at submit time. Used to calculate latency at completion. */
+		uint64_t submit_tsc;
+
 		/** Error information from a device */
 		union {
 			/** Only valid when status is SPDK_BDEV_IO_STATUS_NVME_ERROR */
@@ -386,21 +422,6 @@ struct spdk_bdev_io {
 				uint8_t ascq;
 			} scsi;
 		} error;
-
-		/** The bdev I/O channel that this was handled on. */
-		struct spdk_bdev_channel *ch;
-
-		/** The bdev I/O channel that this was submitted on. */
-		struct spdk_bdev_channel *io_submit_ch;
-
-		/** User function that will be called when this completes */
-		spdk_bdev_io_completion_cb cb;
-
-		/** Context that will be passed to the completion callback */
-		void *caller_ctx;
-
-		/** Current tsc at submit time. Used to calculate latency at completion. */
-		uint64_t submit_tsc;
 
 		/**
 		 * Set to true while the bdev module submit_request function is in progress.
@@ -594,9 +615,8 @@ void spdk_bdev_io_get_buf(struct spdk_bdev_io *bdev_io, spdk_bdev_io_get_buf_cb 
  * \param buf The buffer to set as the active data buffer.
  * \param len The length of the buffer.
  *
- * \return The usable size of the buffer, after adjustments of alignment.
  */
-size_t spdk_bdev_io_set_buf(struct spdk_bdev_io *bdev_io, void *buf, size_t len);
+void spdk_bdev_io_set_buf(struct spdk_bdev_io *bdev_io, void *buf, size_t len);
 
 /**
  * Complete a bdev_io
@@ -682,8 +702,7 @@ struct spdk_bdev_module *spdk_bdev_module_list_find(const char *name);
 static inline struct spdk_bdev_io *
 spdk_bdev_io_from_ctx(void *ctx)
 {
-	return (struct spdk_bdev_io *)
-	       ((uintptr_t)ctx - offsetof(struct spdk_bdev_io, driver_ctx));
+	return SPDK_CONTAINEROF(ctx, struct spdk_bdev_io, driver_ctx);
 }
 
 struct spdk_bdev_part_base;
