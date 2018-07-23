@@ -375,3 +375,11 @@ PB_GO_FILES := \
 	github.com/googleapis/gnostic/extensions/extension.pb.go \
 	google.golang.org/genproto/googleapis/rpc/status/status.pb.go \
 	google.golang.org/grpc/health/grpc_health_v1/health.pb.go \
+
+.PHONY: test_protobuf
+test: test_protobuf
+test_protobuf:
+	@ if go list -f '{{ join .Deps "\n" }}' $(foreach i,$(OIM_CMDS),./cmd/$(i)) | grep -q github.com/golang/protobuf; then \
+		echo "binaries should not depend on golang/protobuf, use gogo/protobuf instead"; \
+		false; \
+	fi
