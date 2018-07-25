@@ -210,18 +210,18 @@ func (n nopCloser) Close() error { return nil }
 // and the provided name for the current process. Must be called at
 // the start of main(). The result is a function which should be
 // called at the end of main() to clean up.
-func InitTracer(component string) (closer io.Closer, err error) {
+func InitTracer(component string) (io.Closer, error) {
 	// // Add support for the usual env variables, in particular
 	// // JAEGER_AGENT_HOST, which is needed when running only one
 	// // Jaeger agent per cluster.
 	// cfg, err := jaegercfg.FromEnv()
 	// if err != nil {
 	// 	// parsing errors might happen here, such as when we get a string where we expect a number
-	// 	return
+	// 	return nil, err
 	// }
 
 	// // Initialize tracer singleton.
 	// closer, err = cfg.InitGlobalTracer(component)
-	closer = nopCloser{}
-	return
+	closer := nopCloser{}
+	return closer, nil
 }
