@@ -58,6 +58,7 @@ TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(_TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e
 .PHONY: test
 test: all vet run_tests
 
+# TODO: add -shadow
 .PHONY: vet
 vet:
 	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
@@ -144,7 +145,12 @@ $(OIM_CMDS):
 # to the Docker daemon when building images.
 %-container: %
 	cp cmd/$*/Dockerfile _output/Dockerfile.$*
-	cd _output && docker build -t $(IMAGE_TAG) -f Dockerfile.$* .
+	cd _output && \
+	docker build \
+		--build-arg HTTP_PROXY \
+		--build-arg HTTPS_PROXY \
+		--build-arg NO_PROXY \
+		-t $(IMAGE_TAG) -f Dockerfile.$* .
 
 push-%: %-container
 	docker push $(IMAGE_TAG)
@@ -153,6 +159,16 @@ push-%: %-container
 clean:
 	go clean -r -x
 	-rm -rf _output _work
+
+# Sanitize proxy settings (accept upper and lower case, set and export upper
+# case) and add local machine to no_proxy because some tests may use a
+# local Docker registry. Also exclude 0.0.0.0 because otherwise Go
+# tests using that address try to go through the proxy.
+HTTP_PROXY=$(shell echo "$${HTTP_PROXY:-$${http_proxy}}")
+HTTPS_PROXY=$(shell echo "$${HTTPS_PROXY:-$${https_proxy}}")
+NO_PROXY=$(shell echo "$${NO_PROXY:-$${no_proxy}},$$(ip addr | grep inet6 | grep /64 | sed -e 's;.*inet6 \(.*\)/64 .*;\1;' | tr '\n' ','; ip addr | grep -w inet | grep /24 | sed -e 's;.*inet \(.*\)/24 .*;\1;' | tr '\n' ',')",$$(hostname),0.0.0.0)
+export HTTP_PROXY HTTPS_PROXY NO_PROXY
+PROXY_ENV=env 'HTTP_PROXY=$(HTTP_PROXY)' 'HTTPS_PROXY=$(HTTPS_PROXY)' 'NO_PROXY=$(NO_PROXY)'
 
 # Downloads and unpacks the latest Clear Linux KVM image.
 # This intentionally uses a different directory, otherwise
@@ -229,17 +245,17 @@ _work/clear-kvm.img _work/kube-clear-kvm: _work/clear-kvm-original.img _work/OVM
 	IFS= read -d '#' -ru $${COPROC[0]} x && \
 	echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]} && \
 	echo "configuring Kubernetes" && \
-	./ssh-clear-kvm 'swupd bundle-add cloud-native-basic cryptography' && \
+	./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic cryptography" && \
 	./ssh-clear-kvm 'systemctl daemon-reload && systemctl enable rngd' && \
 	./ssh-clear-kvm 'ln -s /usr/share/defaults/etc/hosts /etc/hosts' && \
 	./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/' && \
 	echo "Downloading Kubernetes $(RELEASE)." && \
-	./ssh-clear-kvm	'mkdir -p /opt/bin && cd /opt/bin && for i in kubeadm kubelet kubectl; do curl -L --remote-name-all https://storage.googleapis.com/kubernetes-release/release/$(RELEASE)/bin/linux/amd64/$$i && chmod +x $$i; done' && \
+	./ssh-clear-kvm	'mkdir -p /opt/bin && cd /opt/bin && for i in kubeadm kubelet kubectl; do $(PROXY_ENV) curl -L --remote-name-all https://storage.googleapis.com/kubernetes-release/release/$(RELEASE)/bin/linux/amd64/$$i && chmod +x $$i; done' && \
 	echo "Using a mixture of Clear Linux CNI plugins (/usr/libexec/cni/) and plugins downloaded via pods (/opt/cni/bin)" && \
 	./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --runtime-request-timeout=30m --fail-swap-on=false --cni-bin-dir=/opt/cni/bin --allow-privileged=true --feature-gates=CSIPersistentVolume=true,MountPropagation=true\"'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; echo 'ExecStart='; grep ^ExecStart= /lib/systemd/system/kubelet.service | sed -e 's;/usr/bin/kubelet;/opt/bin/kubelet;' ) >/etc/systemd/system/kubelet.service.d/oim.conf" && \
 	./ssh-clear-kvm 'mkdir -p /opt/cni/bin/; for i in /usr/libexec/cni/*; do ln -s $$i /opt/cni/bin/; done' && \
 	./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/' && \
-	./ssh-clear-kvm "( echo '[Service]'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf" && \
+	./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"HTTP_PROXY=$(HTTP_PROXY)\" \"HTTPS_PROXY=$(HTTPS_PROXY)\" \"NO_PROXY=$(NO_PROXY)\"'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf" && \
 	./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"$$(hostname):5000\"] }' >/etc/docker/daemon.json" && \
 	./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker' && \
 	./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI,KubeletVersion' && \

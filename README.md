@@ -136,6 +136,32 @@ top-level Makefile can be used to produce binaries under _work:
 See the [Makefile](./Makefile) for additional make targets.
 
 
+## Proxy settings
+
+When moving beyond simple building, external resources like images
+from Clear Linux or Docker registries are needed. In a corporate
+environment where proxies have to be used for HTTP, the following
+environment variables will be used to configure proxy usage:
+
+- http_proxy or HTTP_PROXY
+- https_proxy or HTTPS_PROXY
+- no_proxy or NO_PROXY
+
+Note that Go will try to use the HTTP proxy also for local connections
+to `0.0.0.0`, which cannot work. `no_proxy` must contain `0.0.0.0` to
+prevent this. The Makefile will add that automatically, but when
+invoking test commands directly, it has to be added to `no_proxy`
+manually.
+
+When setting up the virtual machine (see below), the proxy env
+variables get copied into the virtual machine's
+`/etc/systemd/system/docker.service.d/oim.conf` file at the time of
+creating the image file. When changing proxy settings later, that file
+has to be updated manually (see below for instructions for starting
+and logging into the virtual machine) or the image must be created
+again after a `make clean`.
+
+
 ## Testing
 
 Simple tests can be run with `make`, `go test` or `dlv test` and don't
@@ -292,3 +318,13 @@ Typically, the user trying to use KVM must part of the `kvm` group.
 A Docker registry is expected to be set up on the localhost. If it runs elsewhere
 or listens on a different port, then `make REGISTRY_NAME=<host:port>`
 can be used to override the default.
+
+### Incomplete `no_proxy`
+
+    INFO oim-registry: listening for connections | address: 0.0.0.0:32793
+    INFO Registering OIM controller controller-registration-test-2 at address foo://bar with OIM registry 0.0.0.0:32793
+    DEBUG sending | method: /oim.v0.Registry/RegisterController request: controller_id:"controller-registration-test-2" address:"foo://bar" 
+    ERROR received | method: /oim.v0.Registry/RegisterController error: rpc error: code = Unavailable desc = all SubConns are in TransientFailure, latest connection error: connection error: desc = "transport: Error while dialing failed to do connect handshake, response: \"HTTP/1.1 403 Forbidden...
+
+`http_proxy` was set but `no_proxy` did not contain `0.0.0.0`, so Go
+tried to connect to the local service via the HTTP proxy.
