@@ -20,6 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 
@@ -200,6 +202,11 @@ func TestMockOIM(t *testing.T) {
 			VolumeCapability: &csi.VolumeCapability{},
 		})
 	if assert.Error(t, err) {
-		assert.Equal(t, "rpc error: code = DeadlineExceeded desc = timed out waiting for device 'this-is-not-the-device-you-are-looking-for', SCSI unit '0:0'", err.Error())
+		// Both gRPC and waitForDevice will abort when the deadline is reached.
+		// Where the expiration is detected first is random, so the exact error
+		// message can vary.
+		//
+		// What we can test reliably is that we get a DeadlineExceeded gRPC code.
+		assert.Equal(t, status.Convert(err).Code(), codes.DeadlineExceeded, fmt.Sprintf("expected DeadlineExceeded, got: %s", err))
 	}
 }

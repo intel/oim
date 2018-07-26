@@ -245,21 +245,8 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 		return "", 0, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	// If the overall call has a deadline, then stop waiting
-	// slightly before that so that we still have a chance to
-	// return a proper error.
-	deadline, ok := ctx.Deadline()
-	var doneCtx context.Context
-	if ok {
-		deadlineCtx, cancel := context.WithDeadline(ctx, deadline.Add(-1*time.Second))
-		defer cancel()
-		doneCtx = deadlineCtx
-	} else {
-		doneCtx = ctx
-	}
-
 	for {
-		dev, major, minor, err := findDev(doneCtx, sys, blockDev, blockSCSI)
+		dev, major, minor, err := findDev(ctx, sys, blockDev, blockSCSI)
 		if err != nil {
 			// None of the operations should have failed. Give up.
 			return "", 0, 0, status.Error(codes.Internal, err.Error())
@@ -268,7 +255,7 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 			return dev, major, minor, nil
 		}
 		select {
-		case <-doneCtx.Done():
+		case <-ctx.Done():
 			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device '%s', SCSI unit '%s'", blockDev, blockSCSI)
 		case <-watcher.Events:
 			// Try again.
