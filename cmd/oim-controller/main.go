@@ -53,10 +53,10 @@ func main() {
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {
-		logger.Fatal("Failed to initialize server: %s\n", err)
+		logger.Fatalf("Failed to initialize server: %s\n", err)
 	}
 	server, service := oimcontroller.Server(*endpoint, controller)
 	if err := server.Run(context.Background(), service); err != nil {
-		logger.Fatal("Failed to run server: %s\n", err)
+		logger.Fatalf("Failed to run server: %s\n", err)
 	}
 }
