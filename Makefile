@@ -188,11 +188,6 @@ PROXY_ENV=env 'HTTP_PROXY=$(HTTP_PROXY)' 'HTTPS_PROXY=$(HTTPS_PROXY)' 'NO_PROXY=
 # at least it avoids extra dependencies.  Inspired by
 # http://wiki.bash-hackers.org/syntax/keywords/coproc
 #
-# rngd gets installed (from the cryptography bundle) and enabled
-# because it was observed that starting docker hangs due to
-# lack of entropy directly after starting a virtual machine.
-# https://github.com/clearlinux/distribution/issues/97
-#
 # A registry on the build host (i.e. localhost:5000) is marked
 # as insecure in Clear Linux under the hostname of the build host.
 # Otherwise pulling images fails.
@@ -245,8 +240,8 @@ _work/clear-kvm.img _work/kube-clear-kvm: _work/clear-kvm-original.img _work/OVM
 	IFS= read -d '#' -ru $${COPROC[0]} x && \
 	echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]} && \
 	echo "configuring Kubernetes" && \
-	./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic cryptography" && \
-	./ssh-clear-kvm 'systemctl daemon-reload && systemctl enable rngd' && \
+	./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic" && \
+	./ssh-clear-kvm 'systemctl daemon-reload' && \
 	./ssh-clear-kvm 'ln -s /usr/share/defaults/etc/hosts /etc/hosts' && \
 	./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/' && \
 	echo "Downloading Kubernetes $(RELEASE)." && \
