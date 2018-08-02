@@ -195,6 +195,28 @@ is done by adding the user to the `kvm` group. The
 section in the Clear Linux documentation contains further information
 about enabling KVM and installing QEMU.
 
+To ensure that QEMU and KVM are working, run this:
+
+    make _work/clear-kvm-original.img _work/start-clear-kvm _work/OVMF.fd
+    cp _work/clear-kvm-original.img _work/clear-kvm-test.img
+    _work/start-clear-kvm _work/clear-kvm-test.img
+
+The result should be login prompt like this:
+
+    [    0.049839] kvm: no hardware support
+    
+    clr-c3f99095d2934d76a8e26d2f6d51cb91 login: 
+
+The message about missing KVM hardware support comes from inside the
+virtual machine and indicates that nested KVM is not enabled. This can
+be ignored because it is not needed.
+
+Now the running QEMU can be killed and the test image removed again:
+
+    killall qemu-system-x86_64 # in a separate shell
+    rm _work/clear-kvm-test.img
+    reset # Clear Linux changes terminal colors, undo that.
+
 Testing with QEMU can be enabled in several different ways. When using
 make, these variables can be set in the environment or via the make
 parameters.
