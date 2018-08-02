@@ -435,15 +435,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:6eb9f98d7a591e496db3c658bf5027e971b7a729f58aacf8d97488ccc070a990"
+  digest = "1:42b6075f2e4aeda0a21e7c9b02edf906205cab66d61e9968546cb3fddc53a769"
   name = "github.com/kubernetes-csi/csi-test"
   packages = [
     "pkg/sanity",
     "utils",
   ]
   pruneopts = "UT"
-  revision = "9cdde952f2e72c8dc2b97f25f1230601b8ac19d2"
-  source = "github.com/pohly/csi-test"
+  revision = "f272f52818d660bf40a9952cbe719ffed9be67e4"
 
 [[projects]]
   digest = "1:c568d7727aa262c32bdf8a3f7db83614f7af0ed661474b24588de635c20024c7"
