@@ -234,6 +234,10 @@ type OIMControlPlane struct {
 func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	var err error
 
+	if spdk.SPDK == nil {
+		Skip("No SPDK vhost.")
+	}
+
 	op.ctx, op.cancel = context.WithCancel(ctx)
 
 	// Spin up registry on the host. We
