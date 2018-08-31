@@ -58,20 +58,20 @@ in output2 via GinkgoWriter
 ------------------------------
 • Failure [xxx]
 Log
-/fast/work/gopath/src/github.com/intel/oim/pkg/log/ginkgo/log_test.go:21
+xxx/pkg/log/ginkgo/log_test.go:21
   output2 [It]
-  /fast/work/gopath/src/github.com/intel/oim/pkg/log/ginkgo/log_test.go:31
+  xxx/pkg/log/ginkgo/log_test.go:31
 
   was asked to fail
 
-  /fast/work/gopath/src/github.com/intel/oim/pkg/log/ginkgo/log_test.go:36
+  xxx/pkg/log/ginkgo/log_test.go:36
 ------------------------------
 S
 
 Summarizing 1 Failure:
 
 [Fail] Log [It] output2 
-/fast/work/gopath/src/github.com/intel/oim/pkg/log/ginkgo/log_test.go:36
+xxx/pkg/log/ginkgo/log_test.go:36
 
 Ran 2 of 3 Specs in xxx
 FAIL! -- 1 Passed | 1 Failed | 0 Pending | 1 Skipped
@@ -84,6 +84,6 @@ FAIL	github.com/intel/oim/pkg/log/ginkgo	xxx
 
 func stripVars(out []byte) string {
 	s := string(out)
-	parts := regexp.MustCompile(`\d+\.\d+(s|ms|m| seconds)|Random Seed: \d+`).Split(s, -1)
+	parts := regexp.MustCompile(`\d+\.\d+(s|ms|m| seconds)|Random Seed: \d+|/[^\n]*/intel/oim`).Split(s, -1)
 	return strings.Join(parts, "xxx")
 }
