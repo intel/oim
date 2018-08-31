@@ -125,7 +125,9 @@ virtio block controllers for each new volume might also be supported.
 All that is needed for building the core OIM components is a recent Go
 toolchain (>= 1.7 should be enough), `bash` and standard POSIX
 tools. Building therefore should work on Linux distros, Mac OS X and
-even Windows when those additional tools are installed.
+even Windows when those additional tools are installed. Testing will
+need additional packages, which will be described in the corresponding
+sections below.
 
 This repository _**must**_ be checked out at
 `$GOPATH/src/github.com/intel/oim`. Then the
@@ -134,7 +136,6 @@ top-level Makefile can be used to produce binaries under _work:
     make all
 
 See the [Makefile](./Makefile) for additional make targets.
-
 
 ## Proxy settings
 
@@ -253,13 +254,20 @@ set up so that normal users can access them, and nbd must be available:
 * `sudo env PCI_WHITELIST="none" vendor/github.com/spdk/spdk/scripts/setup.sh && sudo chmod a+rw /dev/hugepages`
 * `sudo modprobe nbd`
 
-SPDK will be built from known-good source code bundled in the repository
+Building SPDK depends on additional packages. SPDK
+[provides a shell script](https://github.com/spdk/spdk/blob/master/README.md#prerequisites)
+for installing those. In OIM, that script can be invoked as:
+
+    sudo ./vendor/github.com/spdk/spdk/scripts/pkgdep.sh
+
+SPDK will be built automatically from known-good source code bundled in the repository
 when selecting it with:
 
     make test TEST_SPDK_VHOST_BINARY=_work/vhost
 
-Alternatively, one can start SPDK manually and just point to the RPC
-socket. This way one can debug and/or monitor SPDK in more detail:
+Alternatively, one can build and start SPDK manually and then just point
+to the RPC socket. For example, this way one can debug and/or monitor SPDK in
+more detail by wrapping it in `strace`:
 
     sudo app/vhost/vhost -S /tmp -r /tmp/spdk.sock & sleep 1; sudo chmod a+rw /tmp/spdk.sock*; sudo strace -t -v -p `pidof vhost` -e 'trace=!getrusage' -s 256 2>&1 | tee /tmp/full.log | grep -v EAGAIN & fg %-
     make test TEST_SPDK_VHOST_SOCKET=/tmp/spdk.sock
