@@ -134,6 +134,9 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 	if volumeID == "" {
 		return nil, errors.New("empty volume ID")
 	}
+	if c.SPDK == nil {
+		return nil, errors.New("not connected to SPDK")
+	}
 
 	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 	if err != nil {
@@ -179,6 +182,9 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 	if bdevName == "" {
 		return nil, errors.New("empty BDev name")
 	}
+	if c.SPDK == nil {
+		return nil, errors.New("not connected to SPDK")
+	}
 	size := in.Size_
 	if size != 0 {
 		bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
@@ -213,6 +219,9 @@ func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDe
 	bdevName := in.GetBdevName()
 	if bdevName == "" {
 		return nil, errors.New("empty BDev name")
+	}
+	if c.SPDK == nil {
+		return nil, errors.New("not connected to SPDK")
 	}
 
 	bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
