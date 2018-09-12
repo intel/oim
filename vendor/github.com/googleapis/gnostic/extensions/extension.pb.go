@@ -1,1 +1,1 @@
-../../../../../pkg/spec/github.com/googleapis/gnostic/extensions/extension.pb.go
+../../../../../pkg/spec/vendor/github.com/googleapis/gnostic/extensions/extension.pb.go

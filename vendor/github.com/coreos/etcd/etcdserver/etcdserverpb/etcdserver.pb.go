@@ -1,1 +1,1 @@
-../../../../../../pkg/spec/github.com/coreos/etcd/etcdserver/etcdserverpb/etcdserver.pb.go
+../../../../../../pkg/spec/vendor/github.com/coreos/etcd/etcdserver/etcdserverpb/etcdserver.pb.go

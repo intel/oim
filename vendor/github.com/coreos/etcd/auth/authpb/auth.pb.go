@@ -1,1 +1,1 @@
-../../../../../../pkg/spec/github.com/coreos/etcd/auth/authpb/auth.pb.go
+../../../../../../pkg/spec/vendor/github.com/coreos/etcd/auth/authpb/auth.pb.go

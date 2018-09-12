@@ -1,1 +1,1 @@
-../../../../../../pkg/spec/github.com/coreos/etcd/mvcc/mvccpb/kv.pb.go
+../../../../../../pkg/spec/vendor/github.com/coreos/etcd/mvcc/mvccpb/kv.pb.go

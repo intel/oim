@@ -1,1 +1,1 @@
-../../../../../pkg/spec/github.com/googleapis/gnostic/OpenAPIv2/OpenAPIv2.pb.go
+../../../../../pkg/spec/vendor/github.com/googleapis/gnostic/OpenAPIv2/OpenAPIv2.pb.go

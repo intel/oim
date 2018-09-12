@@ -1,1 +1,1 @@
-../../../../../../../../pkg/spec/github.com/container-storage-interface/spec/lib/go/csi/v0/csi.pb.go
+../../../../../../../../pkg/spec/vendor/github.com/container-storage-interface/spec/lib/go/csi/v0/csi.pb.go

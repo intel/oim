@@ -395,6 +395,7 @@ update_spec: $(OIM_PROTO)
 #   update the copy of the upstream .proto files under pkg/spec
 #   (some are not in vendor)
 # - "make update_spec" to re-generate the .pb.go files
+# - "make update_dep" to fix up the vendored sources (gogo/protobuf instead of golang/protobuf)
 update: update_dep
 update_dep:
 	dep ensure -v
@@ -407,7 +408,7 @@ update_dep:
 	       -e 's;"github.com/golang/protobuf/proto";"github.com/gogo/protobuf/proto";' \
 	    $$(grep -r -l github.com/golang/protobuf vendor/ | grep '.go$$')
 	for pbgo in $(PB_GO_FILES); do \
-		ln -sf $$(echo $$pbgo | sed -e 's;[^/]*;;g' -e 's;/;../;g')../pkg/spec/$$pbgo vendor/$$pbgo; \
+		ln -sf $$(echo $$pbgo | sed -e 's;[^/]*;;g' -e 's;/;../;g')../pkg/spec/vendor/$$pbgo vendor/$$pbgo; \
 	done
 
 PB_GO_FILES := \
