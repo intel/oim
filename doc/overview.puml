@@ -1,0 +1,48 @@
+@startuml
+
+'left to right direction
+
+title Volume Provisioning and Mapping
+
+node "Compute Node" as computenode {
+    frame "Host (Linux)" as host {
+        frame "Kubernetes (container)" {
+            rectangle "**OIM CSI driver**" as driver #LightBlue
+        }
+    }
+
+    frame "Accelerator Card (Linux)" as card {
+        rectangle "SPDK vHost" as spdk
+        rectangle "**OIM controller**" as controller #LightBlue {
+
+        }
+
+        spdk <- controller : vhost RPC API
+    }
+
+    host <-- card : **PCI**: virtio-blk, virtio-scsi
+}
+
+cloud "Control Plane" as controlplane {
+    database etcd
+
+    rectangle "OIM registry" as registry #LightBlue {
+        interface Proxy #SteelBlue
+        interface Registration #SteelBlue
+        Proxy -[hidden]-> Registration
+    }
+
+    etcd -- registry
+}
+
+Proxy <- driver : map volume XYZ on host ABC
+Proxy -> controller : map volume XYZ
+
+controlplane -[hidden]> computenode
+
+database "Storage System" as storage
+
+storage <-- driver : provision
+storage --> spdk : IO
+
+@enduml

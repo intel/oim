@@ -14,6 +14,8 @@ performance and lower latency than comparable kernel drivers.
 
 ## Concepts
 
+![overview](doc/overview.png)
+
 ### Control Plane
 
 OIM components may be on different networks. This is important for

@@ -26,6 +26,7 @@ SHELL=bash
 # Ensures that (among others) _work/clear-kvm.img gets deleted when configuring it fails.
 .DELETE_ON_ERROR:
 
+include doc/doc.make
 include test/test.make
 
 # Build main set of components.
