@@ -216,15 +216,18 @@ KUBEADM=/opt/bin/kubeadm
 _work/clear-kvm-original.img:
 	$(DOWNLOAD_CLEAR_IMG)
 
+# This picks the latest available version. Can be overriden via make CLEAR_IMG_VERSION=
+CLEAR_IMG_VERSION = $(shell curl https://download.clearlinux.org/latest)
+
 DOWNLOAD_CLEAR_IMG = true
 DOWNLOAD_CLEAR_IMG += && mkdir -p _work
 DOWNLOAD_CLEAR_IMG += && cd _work
 DOWNLOAD_CLEAR_IMG += && dd if=/dev/random bs=1 count=8 2>/dev/null | od -A n -t x8 >passwd | sed -e 's/ //g'
-DOWNLOAD_CLEAR_IMG += && version=$$(curl https://download.clearlinux.org/image/ 2>&1 | grep clear-.*-kvm.img.xz | sed -e 's/.*clear-\([0-9]*\)-kvm.img.*/\1/' | sort -u -n | tail -1)
+DOWNLOAD_CLEAR_IMG += && version=$(CLEAR_IMG_VERSION)
 DOWNLOAD_CLEAR_IMG += && [ "$$version" ]
-DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/image/clear-$$version-kvm.img.xz
-DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/image/clear-$$version-kvm.img.xz-SHA512SUMS
-DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/image/clear-$$version-kvm.img.xz-SHA512SUMS.sig
+DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/releases/$$version/clear/clear-$$version-kvm.img.xz
+DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/releases/$$version/clear/clear-$$version-kvm.img.xz-SHA512SUMS
+DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/releases/$$version/clear/clear-$$version-kvm.img.xz-SHA512SUMS.sig
 # skipping image verification, does not work at the moment (https://github.com/clearlinux/distribution/issues/85)
 # DOWNLOAD_CLEAR_IMG += && openssl smime -verify -in clear-$$version-kvm.img.xz-SHA512SUMS.sig -inform der -content clear-$$version-kvm.img.xz-SHA512SUMS -CAfile ../test/ClearLinuxRoot.pem -out /dev/null
 DOWNLOAD_CLEAR_IMG += && sed -e 's;/.*/;;' clear-$$version-kvm.img.xz-SHA512SUMS | sha512sum -c
