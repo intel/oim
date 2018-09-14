@@ -190,6 +190,27 @@ The `qemu-system-x86_64` binary must be installed, either from
 [upstream QEMU](https://www.qemu.org/) or the Linux distribution. The
 version must be v2.10.0 or higher because vhost-scsi is required
 ([SPDK Prerequisites](http://www.spdk.io/doc/vhost.html#vhost_prereqs)).
+
+For networking, the `tunctl` from the `uml-utilities` package must be
+installed. The following command must be run once after booting the
+host machine and before starting the virtual machine:
+
+    sudo test/runqemu-ifup $(id -u) $(id -g)
+
+This configures a tap device for use by the current user, then prints
+the name (usually `tap0`). At the moment, the test setup is hard-coded
+to use:
+
+- `tap0`
+- 192.168.7.1 for the build host
+- 192.168.7.2 for the virtual machine
+- 8.8.8.8 as DNS server for the virtual machine
+
+To undo the configuration changes made by `test/runqemu-ifup` when
+the tap device is no longer needed, run:
+
+    sudo test/runqemu-ifdown tap0
+
 KVM must be enabled and the user must be allowed to use it. Usually this
 is done by adding the user to the `kvm` group. The
 ["Install QEMU-KVM"](https://clearlinux.org/documentation/clear-linux/get-started/virtual-machine-install/kvm)

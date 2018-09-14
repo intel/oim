@@ -37,7 +37,7 @@ func getHostname() string {
 }
 
 var (
-	oimImageRegistry = flag.String("oimImageRegistry", getHostname()+":5000", "overrides the default repository used for the OIM CSI driver image (must be reachable from inside QEMU)")
+	oimImageRegistry = flag.String("oimImageRegistry", "192.168.7.1:5000", "overrides the default repository used for the OIM CSI driver image (must be reachable from inside QEMU)")
 )
 
 func csiOIMPod(

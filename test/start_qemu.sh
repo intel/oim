@@ -55,7 +55,7 @@ exec qemu-system-x86_64 \
     -device virtio-rng-pci \
     -drive file="$IMAGE",if=none,aio=threads,format=raw,id=disk \
     -device virtio-blk-pci,drive=disk,bootindex=0 \
-    -netdev user,id=mynet0,hostfwd=tcp::${VMN}0022-:22,hostfwd=tcp::${VMN}2375-:2375,hostfwd=tcp::${VMN}6443-:6443, \
+    -netdev tap,id=mynet0,ifname=tap0,script=no,downscript=no \
     -device virtio-net-pci,netdev=mynet0 \
     -debugcon file:debug.log -global isa-debugcon.iobase=0x402 \
     "$@"

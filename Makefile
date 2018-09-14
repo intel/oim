@@ -166,7 +166,7 @@ clean:
 # tests using that address try to go through the proxy.
 HTTP_PROXY=$(shell echo "$${HTTP_PROXY:-$${http_proxy}}")
 HTTPS_PROXY=$(shell echo "$${HTTPS_PROXY:-$${https_proxy}}")
-NO_PROXY=$(shell echo "$${NO_PROXY:-$${no_proxy}},$$(ip addr | grep inet6 | grep /64 | sed -e 's;.*inet6 \(.*\)/64 .*;\1;' | tr '\n' ','; ip addr | grep -w inet | grep /24 | sed -e 's;.*inet \(.*\)/24 .*;\1;' | tr '\n' ',')",$$(hostname),0.0.0.0,10.0.2.15)
+NO_PROXY=$(shell echo "$${NO_PROXY:-$${no_proxy}},$$(ip addr | grep inet6 | grep /64 | sed -e 's;.*inet6 \(.*\)/64 .*;\1;' | tr '\n' ','; ip addr | grep -w inet | grep /24 | sed -e 's;.*inet \(.*\)/24 .*;\1;' | tr '\n' ',')",192.168.7.1,0.0.0.0,10.0.2.15)
 export HTTP_PROXY HTTPS_PROXY NO_PROXY
 PROXY_ENV=env 'HTTP_PROXY=$(HTTP_PROXY)' 'HTTPS_PROXY=$(HTTPS_PROXY)' 'NO_PROXY=$(NO_PROXY)'
 
@@ -266,6 +266,12 @@ SETUP_CLEAR_IMG += && qemu_running && waitfor "Retype new password" <&$${COPROC[
 SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Reconfiguring..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]}
+
+# Set up the static network configuration.
+SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/systemd/network" >&$${COPROC[1]}
+SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=ens4" "[Network]" "Address=192.168.7.2/24" "Gateway=192.168.7.1" "DNS=8.8.8.8"; do echo "echo '$$i' >>/etc/systemd/network/20-wired.network" >&$${COPROC[1]}; done
+SETUP_CLEAR_IMG += && qemu_running && echo "systemctl restart systemd-networkd" >&$${COPROC[1]}
+
 SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
 # Install kubelet, kubeadm and CRI-O.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic"
@@ -291,12 +297,12 @@ SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"H
 # Creating an entirely separate /etc/crio/crio.conf isn't ideal because
 # future updates to /usr/share/defaults/crio/crio.conf
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/crio
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm cat /usr/share/defaults/crio/crio.conf | sed -e  "s^.*insecure_registries.*=.*.*^insecure_registries = [ '$$(hostname):5000' ]^" | ./ssh-clear-kvm "cat >/etc/crio/crio.conf"
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm cat /usr/share/defaults/crio/crio.conf | sed -e  "s^.*insecure_registries.*=.*.*^insecure_registries = [ '192.168.7.1:5000' ]^" | ./ssh-clear-kvm "cat >/etc/crio/crio.conf"
 # Reconfiguration done, start daemons.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart cri-o kubelet && systemctl enable cri-o kubelet'
-# We allow API access also via localhost, because that's what we are going to
+# We allow API access also via 192.168.7.2, because that's what we are going to
 # use below for connecting directly from the host.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans localhost --cri-socket /var/run/crio/crio.sock'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans 192.168.7.2 --cri-socket /var/run/crio/crio.sock'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p .kube'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-'
@@ -309,7 +315,7 @@ SETUP_CLEAR_IMG += && ./ssh-clear-kvm $(PROXY_ENV) kubectl apply -f https://clou
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm ln -s /opt/cni/bin/weave-net /usr/libexec/cni/weave-net
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm ln -s /opt/cni/bin/weave-ipam /usr/libexec/cni/weave-ipam
 SETUP_CLEAR_IMG += && ( echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." ) 2>/dev/null
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://localhost:16443;' >clear-kvm-kube.config
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://192.168.7.2:6443;' >clear-kvm-kube.config
 # Verify that Kubernetes works by starting it and then listing pods.
 # We also wait for the node to become ready, which can take a while because
 # images might still need to be pulled. This can take minutes, therefore we sleep
@@ -339,7 +345,7 @@ _work/kube-clear-kvm: test/start_kubernetes.sh _work/ssh-clear-kvm
 
 _work/ssh-clear-kvm: _work/id
 	echo "#!/bin/sh" >$@
-	echo "exec ssh -p \$${VMM:-1}0022 -oIdentitiesOnly=yes -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oLogLevel=error -i $$(pwd)/_work/id root@localhost \"\$$@\"" >>$@
+	echo "exec ssh -oIdentitiesOnly=yes -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oLogLevel=error -i $$(pwd)/_work/id root@192.168.7.2 \"\$$@\"" >>$@
 	chmod u+x $@
 
 _work/OVMF.fd:
