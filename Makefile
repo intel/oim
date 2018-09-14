@@ -222,7 +222,7 @@ CLEAR_IMG_VERSION = $(shell curl https://download.clearlinux.org/latest)
 DOWNLOAD_CLEAR_IMG = true
 DOWNLOAD_CLEAR_IMG += && mkdir -p _work
 DOWNLOAD_CLEAR_IMG += && cd _work
-DOWNLOAD_CLEAR_IMG += && dd if=/dev/random bs=1 count=8 2>/dev/null | od -A n -t x8 >passwd | sed -e 's/ //g'
+DOWNLOAD_CLEAR_IMG += && dd if=/dev/random bs=1 count=8 2>/dev/null | od -A n -t x8 | sed -e 's/ //g' >passwd
 DOWNLOAD_CLEAR_IMG += && version=$(CLEAR_IMG_VERSION)
 DOWNLOAD_CLEAR_IMG += && [ "$$version" ]
 DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/releases/$$version/clear/clear-$$version-kvm.img.xz
@@ -264,9 +264,9 @@ SETUP_CLEAR_IMG += && sleep 5
 SETUP_CLEAR_IMG += && ( echo "Changing root password..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && qemu_running && echo "root" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && qemu_running && waitfor "New password" <&$${COPROC[0]}
-SETUP_CLEAR_IMG += && qemu_running && echo "root$$(cat passwd)" >&$${COPROC[1]}
+SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && qemu_running && waitfor "Retype new password" <&$${COPROC[0]}
-SETUP_CLEAR_IMG += && qemu_running && echo "root$$(cat passwd)" >&$${COPROC[1]}
+SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Reconfiguring..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
