@@ -207,17 +207,14 @@ PROXY_ENV=env 'HTTP_PROXY=$(HTTP_PROXY)' 'HTTPS_PROXY=$(HTTPS_PROXY)' 'NO_PROXY=
 # Need bash for coproc below.
 SHELL=bash
 
-# This defines how we set up Kubernetes:
-# - latest stable release
-# - kubeadm downloaded from upstream
-RELEASE=$(shell curl -sSL https://dl.k8s.io/release/stable.txt)
-KUBEADM=/opt/bin/kubeadm
-
 _work/clear-kvm-original.img:
 	$(DOWNLOAD_CLEAR_IMG)
 
 # This picks the latest available version. Can be overriden via make CLEAR_IMG_VERSION=
 CLEAR_IMG_VERSION = $(shell curl https://download.clearlinux.org/latest)
+
+# Hostname set inside the virtual machine.
+GUEST_HOSTNAME = kubernetes-master
 
 DOWNLOAD_CLEAR_IMG = true
 DOWNLOAD_CLEAR_IMG += && mkdir -p _work
@@ -270,32 +267,52 @@ SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Reconfiguring..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
-# We need Docker.
+# We need Docker, kubelet and kubeadm.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic"
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'ln -s /usr/share/defaults/etc/hosts /etc/hosts'
+# Due to stateless /etc is empty but /etc/hosts is needed by k8s pods.
+# It also expects that the local host name can be resolved. Let's use a nicer one
+# instead of the normal default (clear-<long hex string>).
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'hostnamectl set-hostname $(GUEST_HOSTNAME)' && ./ssh-clear-kvm 'echo 127.0.0.1 localhost $(GUEST_HOSTNAME) >>/etc/hosts'
+# br_netfilter must be loaded explicitly on the Clear Linux KVM kernel (and only there),
+# otherwise the required /proc/sys/net/bridge/bridge-nf-call-iptables isn't there.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm modprobe br_netfilter && ./ssh-clear-kvm 'echo br_netfilter >>/etc/modules'
+# Disable swap (permanently).
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm systemctl mask $$(./ssh-clear-kvm cat /proc/swaps | sed -n -e 's;^/dev/\([0-9a-z]*\).*;dev-\1.swap;p')
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm swapoff -a
+# Choose Docker by disabling the use of CRI-O in KUBELET_EXTRA_ARGS.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
-SETUP_CLEAR_IMG += && ( echo "Downloading Kubernetes $(RELEASE)." ) 2>/dev/null
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /opt/bin && cd /opt/bin && for i in kubeadm kubelet kubectl; do $(PROXY_ENV) curl -L --remote-name-all https://storage.googleapis.com/kubernetes-release/release/$(RELEASE)/bin/linux/amd64/$$i && chmod +x $$i; done'
-SETUP_CLEAR_IMG += && ( echo "Using a mixture of Clear Linux CNI plugins (/usr/libexec/cni/) and plugins downloaded via pods (/opt/cni/bin)" ) 2>/dev/null
-# Clear runs with some small amount of swap. We ignore that.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --runtime-request-timeout=30m --fail-swap-on=false --cni-bin-dir=/opt/cni/bin --allow-privileged=true --feature-gates=CSIPersistentVolume=true,MountPropagation=true\"'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; echo 'ExecStart='; grep ^ExecStart= /lib/systemd/system/kubelet.service | sed -e 's;/usr/bin/kubelet;/opt/bin/kubelet;' ) >/etc/systemd/system/kubelet.service.d/oim.conf"
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /opt/cni/bin/; for i in /usr/libexec/cni/*; do ln -s $$i /opt/cni/bin/; done'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/extra.conf"
+# Disable CNI by overriding the default "KUBELET_NETWORK_ARGS=--network-plugin=cni --cni-conf-dir=/etc/cni/net.d --cni-bin-dir=/usr/libexec/cni".
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/network.conf"
+# Proxy settings for Docker.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"HTTP_PROXY=$(HTTP_PROXY)\" \"HTTPS_PROXY=$(HTTPS_PROXY)\" \"NO_PROXY=$(NO_PROXY)\"'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf"
 # Testing may involve a Docker registry running on the build host (see
 # REGISTRY_NAME). We need to trust that registry, otherwise Docker
 # will refuse to pull images from it.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"$$(hostname):5000\"] }' >/etc/docker/daemon.json"
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(KUBEADM) init --apiserver-cert-extra-sans localhost --kubernetes-version $(RELEASE) --ignore-preflight-errors=Swap,SystemVerification,CRI,KubeletVersion'
+# Reconfiguration done, start daemons.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker kubelet'
+# We allow API access also via localhost, because that's what we are going to
+# use below for connecting directly from the host.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans localhost --ignore-preflight-errors=SystemVerification'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p .kube'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl get pods --all-namespaces'
 SETUP_CLEAR_IMG += && ( echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." ) 2>/dev/null
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://localhost:16443;' >clear-kvm-kube.config
+# Verify that Kubernetes works by starting it and then listing pods.
+# We also wait for the node to become ready, which can take a while because
+# images might still need to be pulled. This can take minutes, therefore we sleep
+# for one minute between output.
+SETUP_CLEAR_IMG += && ( echo "Waiting for Kubernetes cluster to become ready..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && ./kube-clear-kvm
+SETUP_CLEAR_IMG += && while ! ./ssh-clear-kvm kubectl get nodes | grep -q '$(GUEST_HOSTNAME) *Ready'; do sleep 60; ./ssh-clear-kvm kubectl get nodes; ./ssh-clear-kvm kubectl get pods --all-namespaces; done
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm kubectl get nodes; ./ssh-clear-kvm kubectl get pods --all-namespaces
+# Doing the same locally only works if we have kubectl
+SETUP_CLEAR_IMG += && if command -v kubectl >/dev/null; then kubectl --kubeconfig ./clear-kvm-kube.config get pods --all-namespaces; fi
 SETUP_CLEAR_IMG += && qemu_running && echo "shutdown now" >&$${COPROC[1]} && wait
 
 # Ensures that (among others) _work/clear-kvm.img gets deleted when configuring it fails.
