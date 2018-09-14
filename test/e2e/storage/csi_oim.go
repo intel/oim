@@ -67,68 +67,6 @@ func csiOIMPod(
 			RestartPolicy:      v1.RestartPolicyNever,
 			Containers: []v1.Container{
 				{
-					Name:            "external-provisioner",
-					Image:           csiContainerImage("csi-provisioner"),
-					ImagePullPolicy: v1.PullAlways,
-					Args: []string{
-						"--v=5",
-						"--provisioner=oim-csi-driver",
-						"--csi-address=/csi/csi.sock",
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-				{
-					Name:            "driver-registrar",
-					Image:           csiContainerImage("driver-registrar"),
-					ImagePullPolicy: v1.PullAlways,
-					Args: []string{
-						"--v=5",
-						"--csi-address=/csi/csi.sock",
-					},
-					Env: []v1.EnvVar{
-						{
-							Name: "KUBE_NODE_NAME",
-							ValueFrom: &v1.EnvVarSource{
-								FieldRef: &v1.ObjectFieldSelector{
-									FieldPath: "spec.nodeName",
-								},
-							},
-						},
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-				{
-					Name:            "external-attacher",
-					Image:           csiContainerImage("csi-attacher"),
-					ImagePullPolicy: v1.PullAlways,
-					Args: []string{
-						"--v=5",
-						"--csi-address=$(ADDRESS)",
-					},
-					Env: []v1.EnvVar{
-						{
-							Name:  "ADDRESS",
-							Value: "/csi/csi.sock",
-						},
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-				{
 					Name:            "oim-csi-driver",
 					Image:           *oimImageRegistry + "/oim-csi-driver:canary",
 					ImagePullPolicy: v1.PullAlways,
@@ -174,6 +112,68 @@ func csiOIMPod(
 							Name:             "mountpoint-dir",
 							MountPath:        "/var/lib/kubelet/pods",
 							MountPropagation: &mountPropagation,
+						},
+					},
+				},
+				{
+					Name:            "external-provisioner",
+					Image:           csiContainerImage("csi-provisioner"),
+					ImagePullPolicy: v1.PullIfNotPresent,
+					Args: []string{
+						"--v=5",
+						"--provisioner=oim-csi-driver",
+						"--csi-address=/csi/csi.sock",
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "socket-dir",
+							MountPath: "/csi",
+						},
+					},
+				},
+				{
+					Name:            "driver-registrar",
+					Image:           csiContainerImage("driver-registrar"),
+					ImagePullPolicy: v1.PullIfNotPresent,
+					Args: []string{
+						"--v=5",
+						"--csi-address=/csi/csi.sock",
+					},
+					Env: []v1.EnvVar{
+						{
+							Name: "KUBE_NODE_NAME",
+							ValueFrom: &v1.EnvVarSource{
+								FieldRef: &v1.ObjectFieldSelector{
+									FieldPath: "spec.nodeName",
+								},
+							},
+						},
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "socket-dir",
+							MountPath: "/csi",
+						},
+					},
+				},
+				{
+					Name:            "external-attacher",
+					Image:           csiContainerImage("csi-attacher"),
+					ImagePullPolicy: v1.PullIfNotPresent,
+					Args: []string{
+						"--v=5",
+						"--csi-address=$(ADDRESS)",
+					},
+					Env: []v1.EnvVar{
+						{
+							Name:  "ADDRESS",
+							Value: "/csi/csi.sock",
+						},
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{
+							Name:      "socket-dir",
+							MountPath: "/csi",
 						},
 					},
 				},
