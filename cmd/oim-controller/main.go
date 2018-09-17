@@ -55,6 +55,10 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Failed to initialize server: %s\n", err)
 	}
+	if err := controller.Start(); err != nil {
+		logger.Fatalf("Failed to start auto-registrationg: %s\n", err)
+	}
+	defer controller.Stop()
 	server, service := oimcontroller.Server(*endpoint, controller)
 	if err := server.Run(context.Background(), service); err != nil {
 		logger.Fatalf("Failed to run server: %s\n", err)
