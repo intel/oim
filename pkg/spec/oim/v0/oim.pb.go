@@ -50,6 +50,8 @@ const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 type RegisterControllerRequest struct {
 	// An identifier for the OIM controller which is unique
 	// among all controllers connected to the OIM registry.
+	// The host name of each compute node might be used here
+	// if it is known to be unique.
 	ControllerId string `protobuf:"bytes,1,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"`
 	// A string that can be used for grpc.Dial to connect
 	// to the OIM controller.

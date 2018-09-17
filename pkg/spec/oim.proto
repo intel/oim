@@ -19,6 +19,8 @@ service Registry {
 message RegisterControllerRequest {
     // An identifier for the OIM controller which is unique
     // among all controllers connected to the OIM registry.
+    // The host name of each compute node might be used here
+    // if it is known to be unique.
     string controller_id = 1;
     // A string that can be used for grpc.Dial to connect
     // to the OIM controller.

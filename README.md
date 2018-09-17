@@ -60,6 +60,12 @@ identified by an ID that is unique for all instances connected to the
 same control plane. This unique ID is used to route requests to the
 right OIM controller via the OIM registry.
 
+When deploying one OIM registry per cluster with unique host names
+inside that cluster, the host name can be used as controller ID. This
+removes the need to configure or auto-detect the controller ID on the
+host system and is therefore the default in the OIM CSI driver. More
+complex deployment scenarios are still possible.
+
 ### Security
 
 Eventually all communication will be protected by TLS when going over
@@ -87,12 +93,19 @@ is only one OIM registry.
 
 ### OIM Controller
 
-There is one OIM controller per accelerator hardware device. It registers
-the hardware with the OIM Registry on startup and at regular
-intervals, to recover from a potential loss of the registry DB.
+There is one OIM controller per accelerator hardware device. The OIM
+controller responds to requests that control the operation of the
+hardware.
 
-Once running, it responds to requests that control the operation of
-the hardware.
+If provided with the necessary information (which controller ID to
+use, registry endpoint, its own external endpoint), the OIM controller
+can register the hardware with the OIM registry on startup and at
+regular intervals, to recover from a potential loss of the registry
+DB.
+
+But this is optional. This mapping can also be configured manually
+with the oim-registry-tool (NOT YET IMPLEMENTED).
+
 
 ### OIM CSI Driver
 
