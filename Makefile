@@ -19,7 +19,7 @@ REGISTRY_NAME=localhost:5000
 IMAGE_VERSION_oim-csi-driver=canary
 IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
-OIM_CMDS=oim-controller oim-csi-driver oim-registry
+OIM_CMDS=oim-controller oim-csi-driver oim-registry oimctl
 
 # Need bash for coproc in test/test.make.
 SHELL=bash
