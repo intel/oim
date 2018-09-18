@@ -19,3 +19,10 @@ func (m MemRegistryDB) Store(controllerID, address string) {
 func (m MemRegistryDB) Lookup(controllerID string) (address string) {
 	return m[controllerID]
 }
+func (m MemRegistryDB) Foreach(callback func(controllerID, address string) bool) {
+	for controllerID, address := range m {
+		if !callback(controllerID, address) {
+			return
+		}
+	}
+}

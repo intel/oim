@@ -2,24 +2,27 @@
 // source: oim.proto
 
 /*
-Package oim is a generated protocol buffer package.
+	Package oim is a generated protocol buffer package.
 
-It is generated from these files:
-	oim.proto
+	It is generated from these files:
+		oim.proto
 
-It has these top-level messages:
-	RegisterControllerRequest
-	RegisterControllerReply
-	MapVolumeRequest
-	MallocParams
-	CephParams
-	MapVolumeReply
-	UnmapVolumeRequest
-	UnmapVolumeReply
-	ProvisionMallocBDevRequest
-	ProvisionMallocBDevReply
-	CheckMallocBDevRequest
-	CheckMallocBDevReply
+	It has these top-level messages:
+		RegisterControllerRequest
+		RegisterControllerReply
+		GetControllerRequest
+		GetControllerReply
+		DBEntry
+		MapVolumeRequest
+		MallocParams
+		CephParams
+		MapVolumeReply
+		UnmapVolumeRequest
+		UnmapVolumeReply
+		ProvisionMallocBDevRequest
+		ProvisionMallocBDevReply
+		CheckMallocBDevRequest
+		CheckMallocBDevReply
 */
 package oim
 
@@ -82,6 +85,57 @@ func (m *RegisterControllerReply) String() string            { return proto.Comp
 func (*RegisterControllerReply) ProtoMessage()               {}
 func (*RegisterControllerReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{1} }
 
+type GetControllerRequest struct {
+}
+
+func (m *GetControllerRequest) Reset()                    { *m = GetControllerRequest{} }
+func (m *GetControllerRequest) String() string            { return proto.CompactTextString(m) }
+func (*GetControllerRequest) ProtoMessage()               {}
+func (*GetControllerRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{2} }
+
+type GetControllerReply struct {
+	// All current registry DB entries.
+	Entries []*DBEntry `protobuf:"bytes,1,rep,name=entries" json:"entries,omitempty"`
+}
+
+func (m *GetControllerReply) Reset()                    { *m = GetControllerReply{} }
+func (m *GetControllerReply) String() string            { return proto.CompactTextString(m) }
+func (*GetControllerReply) ProtoMessage()               {}
+func (*GetControllerReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{3} }
+
+func (m *GetControllerReply) GetEntries() []*DBEntry {
+	if m != nil {
+		return m.Entries
+	}
+	return nil
+}
+
+type DBEntry struct {
+	// The unique key under which the OIM controller is registered.
+	ControllerId string `protobuf:"bytes,1,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"`
+	// The grpc.Dial target for connecting to the OIM controller.
+	Address string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+}
+
+func (m *DBEntry) Reset()                    { *m = DBEntry{} }
+func (m *DBEntry) String() string            { return proto.CompactTextString(m) }
+func (*DBEntry) ProtoMessage()               {}
+func (*DBEntry) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{4} }
+
+func (m *DBEntry) GetControllerId() string {
+	if m != nil {
+		return m.ControllerId
+	}
+	return ""
+}
+
+func (m *DBEntry) GetAddress() string {
+	if m != nil {
+		return m.Address
+	}
+	return ""
+}
+
 type MapVolumeRequest struct {
 	// An identifier for the volume that must be unique
 	// among all volumes mapped by the OIM controller.
@@ -99,7 +153,7 @@ type MapVolumeRequest struct {
 func (m *MapVolumeRequest) Reset()                    { *m = MapVolumeRequest{} }
 func (m *MapVolumeRequest) String() string            { return proto.CompactTextString(m) }
 func (*MapVolumeRequest) ProtoMessage()               {}
-func (*MapVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{2} }
+func (*MapVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{5} }
 
 type isMapVolumeRequest_Params interface {
 	isMapVolumeRequest_Params()
@@ -229,7 +283,7 @@ type MallocParams struct {
 func (m *MallocParams) Reset()                    { *m = MallocParams{} }
 func (m *MallocParams) String() string            { return proto.CompactTextString(m) }
 func (*MallocParams) ProtoMessage()               {}
-func (*MallocParams) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{3} }
+func (*MallocParams) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{6} }
 
 // Defines a Ceph block device. This is currently a placeholder
 // to demonstrate how MapVolumeRequest.params will work.
@@ -240,7 +294,7 @@ type CephParams struct {
 func (m *CephParams) Reset()                    { *m = CephParams{} }
 func (m *CephParams) String() string            { return proto.CompactTextString(m) }
 func (*CephParams) ProtoMessage()               {}
-func (*CephParams) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{4} }
+func (*CephParams) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{7} }
 
 func (m *CephParams) GetSecret() string {
 	if m != nil {
@@ -266,7 +320,7 @@ type MapVolumeReply struct {
 func (m *MapVolumeReply) Reset()                    { *m = MapVolumeReply{} }
 func (m *MapVolumeReply) String() string            { return proto.CompactTextString(m) }
 func (*MapVolumeReply) ProtoMessage()               {}
-func (*MapVolumeReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{5} }
+func (*MapVolumeReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{8} }
 
 func (m *MapVolumeReply) GetDevice() string {
 	if m != nil {
@@ -290,7 +344,7 @@ type UnmapVolumeRequest struct {
 func (m *UnmapVolumeRequest) Reset()                    { *m = UnmapVolumeRequest{} }
 func (m *UnmapVolumeRequest) String() string            { return proto.CompactTextString(m) }
 func (*UnmapVolumeRequest) ProtoMessage()               {}
-func (*UnmapVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{6} }
+func (*UnmapVolumeRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{9} }
 
 func (m *UnmapVolumeRequest) GetVolumeId() string {
 	if m != nil {
@@ -305,7 +359,7 @@ type UnmapVolumeReply struct {
 func (m *UnmapVolumeReply) Reset()                    { *m = UnmapVolumeReply{} }
 func (m *UnmapVolumeReply) String() string            { return proto.CompactTextString(m) }
 func (*UnmapVolumeReply) ProtoMessage()               {}
-func (*UnmapVolumeReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{7} }
+func (*UnmapVolumeReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{10} }
 
 type ProvisionMallocBDevRequest struct {
 	// The desired name of the new BDev.
@@ -317,7 +371,7 @@ type ProvisionMallocBDevRequest struct {
 func (m *ProvisionMallocBDevRequest) Reset()                    { *m = ProvisionMallocBDevRequest{} }
 func (m *ProvisionMallocBDevRequest) String() string            { return proto.CompactTextString(m) }
 func (*ProvisionMallocBDevRequest) ProtoMessage()               {}
-func (*ProvisionMallocBDevRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{8} }
+func (*ProvisionMallocBDevRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{11} }
 
 func (m *ProvisionMallocBDevRequest) GetBdevName() string {
 	if m != nil {
@@ -339,7 +393,7 @@ type ProvisionMallocBDevReply struct {
 func (m *ProvisionMallocBDevReply) Reset()                    { *m = ProvisionMallocBDevReply{} }
 func (m *ProvisionMallocBDevReply) String() string            { return proto.CompactTextString(m) }
 func (*ProvisionMallocBDevReply) ProtoMessage()               {}
-func (*ProvisionMallocBDevReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{9} }
+func (*ProvisionMallocBDevReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{12} }
 
 type CheckMallocBDevRequest struct {
 	// The name of an existing BDev.
@@ -349,7 +403,7 @@ type CheckMallocBDevRequest struct {
 func (m *CheckMallocBDevRequest) Reset()                    { *m = CheckMallocBDevRequest{} }
 func (m *CheckMallocBDevRequest) String() string            { return proto.CompactTextString(m) }
 func (*CheckMallocBDevRequest) ProtoMessage()               {}
-func (*CheckMallocBDevRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{10} }
+func (*CheckMallocBDevRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{13} }
 
 func (m *CheckMallocBDevRequest) GetBdevName() string {
 	if m != nil {
@@ -364,11 +418,14 @@ type CheckMallocBDevReply struct {
 func (m *CheckMallocBDevReply) Reset()                    { *m = CheckMallocBDevReply{} }
 func (m *CheckMallocBDevReply) String() string            { return proto.CompactTextString(m) }
 func (*CheckMallocBDevReply) ProtoMessage()               {}
-func (*CheckMallocBDevReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{11} }
+func (*CheckMallocBDevReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{14} }
 
 func init() {
 	proto.RegisterType((*RegisterControllerRequest)(nil), "oim.v0.RegisterControllerRequest")
 	proto.RegisterType((*RegisterControllerReply)(nil), "oim.v0.RegisterControllerReply")
+	proto.RegisterType((*GetControllerRequest)(nil), "oim.v0.GetControllerRequest")
+	proto.RegisterType((*GetControllerReply)(nil), "oim.v0.GetControllerReply")
+	proto.RegisterType((*DBEntry)(nil), "oim.v0.DBEntry")
 	proto.RegisterType((*MapVolumeRequest)(nil), "oim.v0.MapVolumeRequest")
 	proto.RegisterType((*MallocParams)(nil), "oim.v0.MallocParams")
 	proto.RegisterType((*CephParams)(nil), "oim.v0.CephParams")
@@ -395,6 +452,8 @@ type RegistryClient interface {
 	// Adds a new entry to the registry DB or overwrites
 	// an existing one.
 	RegisterController(ctx context.Context, in *RegisterControllerRequest, opts ...grpc.CallOption) (*RegisterControllerReply, error)
+	// Retrieves all registry DB entries.
+	GetControllers(ctx context.Context, in *GetControllerRequest, opts ...grpc.CallOption) (*GetControllerReply, error)
 }
 
 type registryClient struct {
@@ -414,12 +473,23 @@ func (c *registryClient) RegisterController(ctx context.Context, in *RegisterCon
 	return out, nil
 }
 
+func (c *registryClient) GetControllers(ctx context.Context, in *GetControllerRequest, opts ...grpc.CallOption) (*GetControllerReply, error) {
+	out := new(GetControllerReply)
+	err := grpc.Invoke(ctx, "/oim.v0.Registry/GetControllers", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Server API for Registry service
 
 type RegistryServer interface {
 	// Adds a new entry to the registry DB or overwrites
 	// an existing one.
 	RegisterController(context.Context, *RegisterControllerRequest) (*RegisterControllerReply, error)
+	// Retrieves all registry DB entries.
+	GetControllers(context.Context, *GetControllerRequest) (*GetControllerReply, error)
 }
 
 func RegisterRegistryServer(s *grpc.Server, srv RegistryServer) {
@@ -444,6 +514,24 @@ func _Registry_RegisterController_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Registry_GetControllers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetControllerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).GetControllers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/oim.v0.Registry/GetControllers",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).GetControllers(ctx, req.(*GetControllerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Registry_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "oim.v0.Registry",
 	HandlerType: (*RegistryServer)(nil),
@@ -451,6 +539,10 @@ var _Registry_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterController",
 			Handler:    _Registry_RegisterController_Handler,
+		},
+		{
+			MethodName: "GetControllers",
+			Handler:    _Registry_GetControllers_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -687,6 +779,84 @@ func (m *RegisterControllerReply) MarshalTo(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	return i, nil
+}
+
+func (m *GetControllerRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *GetControllerRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	return i, nil
+}
+
+func (m *GetControllerReply) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *GetControllerReply) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Entries) > 0 {
+		for _, msg := range m.Entries {
+			dAtA[i] = 0xa
+			i++
+			i = encodeVarintOim(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
+func (m *DBEntry) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DBEntry) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.ControllerId) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintOim(dAtA, i, uint64(len(m.ControllerId)))
+		i += copy(dAtA[i:], m.ControllerId)
+	}
+	if len(m.Address) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintOim(dAtA, i, uint64(len(m.Address)))
+		i += copy(dAtA[i:], m.Address)
+	}
 	return i, nil
 }
 
@@ -981,6 +1151,38 @@ func (m *RegisterControllerReply) Size() (n int) {
 	return n
 }
 
+func (m *GetControllerRequest) Size() (n int) {
+	var l int
+	_ = l
+	return n
+}
+
+func (m *GetControllerReply) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Entries) > 0 {
+		for _, e := range m.Entries {
+			l = e.Size()
+			n += 1 + l + sovOim(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *DBEntry) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.ControllerId)
+	if l > 0 {
+		n += 1 + l + sovOim(uint64(l))
+	}
+	l = len(m.Address)
+	if l > 0 {
+		n += 1 + l + sovOim(uint64(l))
+	}
+	return n
+}
+
 func (m *MapVolumeRequest) Size() (n int) {
 	var l int
 	_ = l
@@ -1243,6 +1445,245 @@ func (m *RegisterControllerReply) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: RegisterControllerReply: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *GetControllerRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: GetControllerRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: GetControllerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *GetControllerReply) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: GetControllerReply: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: GetControllerReply: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Entries", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowOim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthOim
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Entries = append(m.Entries, &DBEntry{})
+			if err := m.Entries[len(m.Entries)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DBEntry) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DBEntry: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DBEntry: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ControllerId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowOim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthOim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ControllerId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowOim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthOim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Address = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipOim(dAtA[iNdEx:])
@@ -2158,37 +2599,41 @@ var (
 func init() { proto.RegisterFile("oim.proto", fileDescriptorOim) }
 
 var fileDescriptorOim = []byte{
-	// 503 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x54, 0xcd, 0x6e, 0xd3, 0x40,
-	0x10, 0x8e, 0x9b, 0xca, 0x24, 0xd3, 0x52, 0xaa, 0xa1, 0x04, 0xd7, 0x20, 0x53, 0x16, 0x0e, 0x3d,
-	0xa5, 0x10, 0xc4, 0x0d, 0x09, 0x29, 0x01, 0x89, 0x1e, 0x82, 0x8a, 0x25, 0x38, 0x44, 0x42, 0x95,
-	0x63, 0x4f, 0x13, 0x0b, 0x3b, 0xbb, 0xec, 0x3a, 0x46, 0xe1, 0x29, 0x90, 0x78, 0x27, 0xc4, 0x91,
-	0x47, 0x40, 0xe1, 0x45, 0x90, 0xd7, 0x71, 0xe2, 0x36, 0x4e, 0xa5, 0xde, 0x76, 0xbf, 0xf9, 0xf6,
-	0x9b, 0x9f, 0x6f, 0x6c, 0x68, 0xf2, 0x30, 0x6e, 0x0b, 0xc9, 0x13, 0x8e, 0x66, 0x76, 0x4c, 0x9f,
-	0xd9, 0xce, 0x88, 0xf3, 0x51, 0x44, 0x27, 0x1a, 0x1d, 0x4e, 0x2f, 0x4e, 0xbe, 0x49, 0x4f, 0x08,
-	0x92, 0x2a, 0xe7, 0xb1, 0x01, 0x1c, 0xba, 0x34, 0x0a, 0x55, 0x42, 0xb2, 0xc7, 0x27, 0x89, 0xe4,
-	0x51, 0x44, 0xd2, 0xa5, 0xaf, 0x53, 0x52, 0x09, 0x3e, 0x81, 0xdb, 0xfe, 0x12, 0x3c, 0x0f, 0x03,
-	0xcb, 0x38, 0x32, 0x8e, 0x9b, 0xee, 0xee, 0x0a, 0x3c, 0x0d, 0xd0, 0x82, 0x5b, 0x5e, 0x10, 0x48,
-	0x52, 0xca, 0xda, 0xd2, 0xe1, 0xe2, 0xca, 0x0e, 0xe1, 0x7e, 0x95, 0xb6, 0x88, 0x66, 0xec, 0xa7,
-	0x01, 0xfb, 0x7d, 0x4f, 0x7c, 0xe2, 0xd1, 0x34, 0xa6, 0x22, 0xdd, 0x03, 0x68, 0xa6, 0x1a, 0x58,
-	0xa5, 0x6a, 0xe4, 0xc0, 0x69, 0x80, 0x6d, 0x30, 0x63, 0x2f, 0x8a, 0xb8, 0xaf, 0xb3, 0xec, 0x74,
-	0x0e, 0xda, 0x79, 0x87, 0xed, 0xbe, 0x46, 0xcf, 0x3c, 0xe9, 0xc5, 0xea, 0x5d, 0xcd, 0x5d, 0xb0,
-	0xf0, 0x18, 0xb6, 0x7d, 0x12, 0x63, 0xab, 0xae, 0xd9, 0x58, 0xb0, 0x7b, 0x24, 0xc6, 0x4b, 0xae,
-	0x66, 0x74, 0x1b, 0x60, 0x0a, 0x8d, 0xb0, 0x3d, 0xd8, 0x2d, 0xab, 0xb1, 0xa7, 0x00, 0x2b, 0x3e,
-	0xb6, 0xc0, 0x54, 0xe4, 0x4b, 0x4a, 0x16, 0xb5, 0x2d, 0x6e, 0xec, 0x15, 0xec, 0x95, 0x5a, 0x11,
-	0xd1, 0x2c, 0x63, 0x06, 0x94, 0x86, 0x3e, 0x15, 0xcc, 0xfc, 0x86, 0x08, 0xdb, 0xca, 0x57, 0xe1,
-	0x62, 0x4e, 0xfa, 0xcc, 0x9e, 0x03, 0x7e, 0x9c, 0xc4, 0x37, 0x19, 0x05, 0x43, 0xd8, 0xbf, 0xf4,
-	0x24, 0x1b, 0x68, 0x1f, 0xec, 0x33, 0xc9, 0xd3, 0x50, 0x85, 0x7c, 0x92, 0xf7, 0xd0, 0x7d, 0x43,
-	0x69, 0x49, 0x6e, 0x18, 0x50, 0x7a, 0x3e, 0xf1, 0xe2, 0xa2, 0xa6, 0x46, 0x06, 0xbc, 0xf7, 0xe2,
-	0xbc, 0xaa, 0xf0, 0x3b, 0xe9, 0xaa, 0xea, 0xae, 0x3e, 0x33, 0x1b, 0xac, 0x4a, 0xb9, 0x2c, 0xd5,
-	0x4b, 0x68, 0xf5, 0xc6, 0xe4, 0x7f, 0xb9, 0x59, 0x1a, 0xd6, 0x82, 0x83, 0xb5, 0x67, 0x22, 0x9a,
-	0x75, 0x2e, 0xa0, 0x91, 0x6f, 0x89, 0x9c, 0xe1, 0x00, 0x70, 0x7d, 0x63, 0xf0, 0x71, 0x61, 0xde,
-	0xc6, 0x4d, 0xb5, 0x1f, 0x5d, 0x47, 0xc9, 0x8a, 0xae, 0x75, 0x7e, 0x6d, 0x01, 0x94, 0x44, 0x5f,
-	0x43, 0x73, 0xe9, 0x1a, 0x5a, 0xab, 0x65, 0xba, 0x6c, 0x84, 0xdd, 0xaa, 0x88, 0x68, 0x3d, 0x7c,
-	0x0b, 0x3b, 0x25, 0x17, 0xd0, 0x2e, 0x88, 0xeb, 0x6e, 0xda, 0x56, 0x65, 0x2c, 0x97, 0xf9, 0x0c,
-	0x77, 0x2b, 0x26, 0x8d, 0xac, 0x78, 0xb2, 0xd9, 0x55, 0xfb, 0xe8, 0x5a, 0x4e, 0x2e, 0xff, 0x01,
-	0xee, 0x5c, 0x99, 0x3a, 0x3a, 0xcb, 0x6f, 0xa1, 0xd2, 0x45, 0xfb, 0xe1, 0xc6, 0xb8, 0x96, 0xec,
-	0xde, 0xfb, 0x3d, 0x77, 0x8c, 0x3f, 0x73, 0xc7, 0xf8, 0x3b, 0x77, 0x8c, 0x1f, 0xff, 0x9c, 0xda,
-	0xa0, 0xce, 0xc3, 0x78, 0x68, 0xea, 0x1f, 0xca, 0x8b, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff, 0x36,
-	0x7a, 0x5a, 0x7f, 0x85, 0x04, 0x00, 0x00,
+	// 572 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x54, 0xcb, 0x6e, 0xd3, 0x40,
+	0x14, 0x8d, 0x9b, 0xca, 0x49, 0x6e, 0x4a, 0x5a, 0x0d, 0x25, 0xb8, 0xa6, 0x32, 0x61, 0x60, 0x11,
+	0x36, 0x29, 0x04, 0xb1, 0x43, 0xaa, 0x94, 0xb4, 0xa2, 0x95, 0x08, 0x2a, 0x96, 0x60, 0x11, 0x09,
+	0x55, 0x8e, 0x7d, 0x49, 0x2c, 0x6c, 0x8f, 0x99, 0x71, 0x8c, 0xc2, 0x57, 0x20, 0xf1, 0x2b, 0x7c,
+	0x03, 0x62, 0xc9, 0x27, 0xa0, 0xf0, 0x23, 0xc8, 0xe3, 0x38, 0x8f, 0xc6, 0xa9, 0x54, 0x75, 0xe7,
+	0x39, 0xf7, 0xcc, 0x99, 0x33, 0xf7, 0x9e, 0x31, 0x54, 0x98, 0xeb, 0xb7, 0x42, 0xce, 0x22, 0x46,
+	0xd4, 0xe4, 0x33, 0x7e, 0xa6, 0x1b, 0x43, 0xc6, 0x86, 0x1e, 0x1e, 0x49, 0x74, 0x30, 0xfe, 0x74,
+	0xf4, 0x95, 0x5b, 0x61, 0x88, 0x5c, 0xa4, 0x3c, 0xda, 0x87, 0x03, 0x13, 0x87, 0xae, 0x88, 0x90,
+	0x77, 0x59, 0x10, 0x71, 0xe6, 0x79, 0xc8, 0x4d, 0xfc, 0x32, 0x46, 0x11, 0x91, 0xc7, 0x70, 0xc7,
+	0x9e, 0x83, 0x97, 0xae, 0xa3, 0x29, 0x0d, 0xa5, 0x59, 0x31, 0x77, 0x16, 0xe0, 0xb9, 0x43, 0x34,
+	0x28, 0x59, 0x8e, 0xc3, 0x51, 0x08, 0x6d, 0x4b, 0x96, 0xb3, 0x25, 0x3d, 0x80, 0xfb, 0x79, 0xda,
+	0xa1, 0x37, 0xa1, 0x75, 0xd8, 0x7f, 0x8d, 0xd1, 0xda, 0x89, 0xf4, 0x18, 0xc8, 0x15, 0x3c, 0xf4,
+	0x26, 0xe4, 0x29, 0x94, 0x30, 0x88, 0xb8, 0x8b, 0x42, 0x53, 0x1a, 0xc5, 0x66, 0xb5, 0xbd, 0xdb,
+	0x4a, 0xaf, 0xd7, 0x3a, 0xe9, 0x9c, 0x06, 0x11, 0x9f, 0x98, 0x59, 0x9d, 0x9e, 0x41, 0x69, 0x86,
+	0xdd, 0xd6, 0xfd, 0x0f, 0x05, 0xf6, 0x7a, 0x56, 0xf8, 0x81, 0x79, 0x63, 0x1f, 0xb3, 0x8e, 0x3c,
+	0x80, 0x4a, 0x2c, 0x81, 0x85, 0x5e, 0x39, 0x05, 0xce, 0x1d, 0xd2, 0x02, 0xd5, 0xb7, 0x3c, 0x8f,
+	0xd9, 0x52, 0xaa, 0xda, 0xde, 0xcf, 0x5c, 0xf6, 0x24, 0x7a, 0x61, 0x71, 0xcb, 0x17, 0x67, 0x05,
+	0x73, 0xc6, 0x22, 0x4d, 0xd8, 0xb6, 0x31, 0x1c, 0x69, 0x45, 0xc9, 0x26, 0x19, 0xbb, 0x8b, 0xe1,
+	0x68, 0xce, 0x95, 0x8c, 0x4e, 0x19, 0xd4, 0x50, 0x22, 0xb4, 0x06, 0x3b, 0xcb, 0x6a, 0xf4, 0x09,
+	0xc0, 0x82, 0x4f, 0xea, 0xa0, 0x0a, 0xb4, 0x39, 0x46, 0x33, 0x6f, 0xb3, 0x15, 0x7d, 0x05, 0xb5,
+	0xa5, 0xab, 0x24, 0x2d, 0xad, 0x83, 0xea, 0x60, 0xec, 0xda, 0x98, 0x31, 0xd3, 0x15, 0x21, 0xb0,
+	0x2d, 0x6c, 0xe1, 0xce, 0x9a, 0x21, 0xbf, 0xe9, 0x73, 0x20, 0xef, 0x03, 0xff, 0x26, 0xad, 0xa0,
+	0x04, 0xf6, 0x56, 0xb6, 0x24, 0x33, 0xef, 0x81, 0x7e, 0xc1, 0x59, 0xec, 0x0a, 0x97, 0x05, 0xe9,
+	0x1d, 0x3a, 0x27, 0x18, 0x2f, 0xc9, 0x0d, 0x1c, 0x8c, 0x2f, 0x03, 0xcb, 0xcf, 0x3c, 0x95, 0x13,
+	0xe0, 0xad, 0xe5, 0xa7, 0xae, 0xdc, 0x6f, 0x28, 0x5d, 0x15, 0x4d, 0xf9, 0x4d, 0x75, 0xd0, 0x72,
+	0xe5, 0x92, 0xa3, 0x5e, 0x42, 0xbd, 0x3b, 0x42, 0xfb, 0xf3, 0xcd, 0x8e, 0x49, 0x52, 0xb9, 0xb6,
+	0x2d, 0xf4, 0x26, 0xed, 0x9f, 0x0a, 0x94, 0xd3, 0x24, 0xf3, 0x09, 0xe9, 0x03, 0x59, 0x4f, 0x35,
+	0x79, 0x94, 0x4d, 0x6f, 0xe3, 0x6b, 0xd2, 0x1f, 0x5e, 0x47, 0x49, 0x5c, 0x17, 0xc8, 0x1b, 0xa8,
+	0xad, 0xc4, 0x5f, 0x90, 0xc3, 0x6c, 0x53, 0xde, 0x73, 0xd1, 0xf5, 0x0d, 0x55, 0xa9, 0xd6, 0xfe,
+	0xb5, 0x05, 0xb0, 0x64, 0xf1, 0x18, 0x2a, 0xf3, 0x10, 0x10, 0x6d, 0x91, 0xcd, 0xd5, 0xb9, 0xea,
+	0xf5, 0x9c, 0x4a, 0xea, 0xee, 0x14, 0xaa, 0x4b, 0x43, 0x25, 0xf3, 0xc3, 0xd7, 0xc3, 0xa1, 0x6b,
+	0xb9, 0xb5, 0x54, 0xe6, 0x23, 0xdc, 0xcd, 0x19, 0x1c, 0xa1, 0xd9, 0x96, 0xcd, 0x21, 0xd1, 0x1b,
+	0xd7, 0x72, 0x52, 0xf9, 0x77, 0xb0, 0x7b, 0x65, 0x88, 0xc4, 0x98, 0x3f, 0xad, 0xdc, 0x50, 0xe8,
+	0x87, 0x1b, 0xeb, 0x52, 0xb2, 0x73, 0xef, 0xf7, 0xd4, 0x50, 0xfe, 0x4c, 0x0d, 0xe5, 0xef, 0xd4,
+	0x50, 0xbe, 0xff, 0x33, 0x0a, 0xfd, 0x22, 0x73, 0xfd, 0x81, 0x2a, 0x7f, 0xa1, 0x2f, 0xfe, 0x07,
+	0x00, 0x00, 0xff, 0xff, 0x83, 0xaa, 0x86, 0x63, 0x77, 0x05, 0x00, 0x00,
 }

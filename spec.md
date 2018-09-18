@@ -27,6 +27,10 @@ service Registry {
     // an existing one.
     rpc RegisterController(RegisterControllerRequest)
         returns (RegisterControllerReply) {}
+
+    // Retrieves all registry DB entries.
+    rpc GetControllers(GetControllerRequest)
+        returns (GetControllerReply) {}
 }
 
 message RegisterControllerRequest {
@@ -42,6 +46,22 @@ message RegisterControllerRequest {
 
 message RegisterControllerReply {
     // Intentionally empty.
+}
+
+message GetControllerRequest {
+    // Intentionally empty.
+}
+
+message GetControllerReply {
+    // All current registry DB entries.
+    repeated DBEntry entries = 1;
+}
+
+message DBEntry {
+    // The unique key under which the OIM controller is registered.
+    string controller_id = 1;
+    // The grpc.Dial target for connecting to the OIM controller.
+    string address = 2;
 }
 
 // In addition, the Registry service also transparently proxies all

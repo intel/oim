@@ -29,6 +29,10 @@ type RegistryDB interface {
 
 	// Lookup returns the endpoint or the empty string if not found.
 	Lookup(controllerID string) (address string)
+
+	// Foreach iterates over all DB entries until
+	// the callback function returns false.
+	Foreach(func(controllerID, address string) bool)
 }
 
 // Registry implements oim.Registry.
@@ -44,6 +48,20 @@ func (r *Registry) RegisterController(ctx context.Context, in *oim.RegisterContr
 	address := in.GetAddress()
 	r.db.Store(controllerID, address)
 	return &oim.RegisterControllerReply{}, nil
+}
+
+func (r *Registry) GetControllers(ctx context.Context, in *oim.GetControllerRequest) (*oim.GetControllerReply, error) {
+	out := oim.GetControllerReply{}
+	r.db.Foreach(func(controllerID, address string) bool {
+		out.Entries = append(out.Entries,
+			&oim.DBEntry{
+				ControllerId: controllerID,
+				Address:      address,
+			})
+		// More data please...
+		return true
+	})
+	return &out, nil
 }
 
 // StreamDirectory transparently proxies gRPC method calls to the
