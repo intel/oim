@@ -2,12 +2,14 @@
 
 'left to right direction
 
-title Volume Provisioning and Mapping
+title Components and Volume Provisioning
 
 node "Compute Node" as computenode {
     frame "Host (Linux)" as host {
-        frame "Kubernetes (container)" {
-            rectangle "**OIM CSI driver**" as driver #LightBlue
+        package "Kubernetes (container)" {
+            rectangle "**OIM CSI driver**" as oimdriver #LightBlue
+            rectangle "**3rd-party CSI driver**" as otherdriver #LightBlue
+            oimdriver -[hidden]> otherdriver
         }
     }
 
@@ -35,14 +37,14 @@ cloud "Control Plane" as controlplane {
     etcd -- registry
 }
 
-Proxy <- driver : map volume XYZ on host ABC
+Proxy <- oimdriver : map volume XYZ on host ABC
 Proxy -> controller : map volume XYZ
 
 controlplane -[hidden]> computenode
 
 database "Storage System" as storage
 
-storage <-- driver : provision
-storage --> spdk : IO
+storage <-- otherdriver : provision
+storage -- spdk : IO
 
 @enduml

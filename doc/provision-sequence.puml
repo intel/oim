@@ -1,0 +1,106 @@
+@startuml
+
+title Volume Provisioning with ceph-csi rbdplugin
+
+actor Admin #red
+actor User
+entity Kubernetes as k8s
+box "Host A"
+entity "ceph-csi" as cephcsi
+end box
+box "Host X" #LightBlue
+entity "OIM CSI" as driver
+end box
+entity "OIM registry" as registry
+box "Accelerator Card for Host X" #SkyBlue
+entity "OIM controller" as controller
+entity "SPDK vhost" as spdk
+end box
+database Ceph
+
+note right of driver
+    Host software like OIM CSI only sees a standard PCI device,
+    cannot talk directly with software on accelerator side.
+end note
+hnote over controller: listen port 9999
+hnote over spdk: listen socket /var/run/spdk.sock
+
+== Cluster Setup ==
+
+' create registry
+' Admin->registry: start
+' create controller
+' Admin->controller: start
+' create spdk
+' Admin->spdk: start
+note right of Admin
+    Zero-touch onboarding was considered.
+    Depends on (probably?):
+    - provisioning of secret keys at factory
+    - automatic identification of card on host side
+    - discovery of network settings
+    Currently the admin has to manage configuration and mapping.
+end note
+Admin->registry: register controller (network address, PCI bus and device number)
+Admin<-registry
+Admin->k8s: annotate nodes that\nhave accelerator
+Admin<-k8s
+note right of Admin
+     This could be automated with Node Feature Discovery (NFD).
+     Depends on the ability to identify the accelerator before
+     it is configured.
+end note
+Admin->k8s: deploy:\n* ceph-csi for provisioning\non at least one node\n* OIM CSI on nodes\nwith accelerator\n* ceph-csi as fallback\non the others
+activate k8s
+Admin<-k8s
+create driver
+k8s->driver: start
+create cephcsi
+k8s->cephcsi: start
+k8s<-driver
+k8s<-cephcsi
+deactivate k8s
+
+== Volume Provisioning ==
+
+User->k8s: create PVC
+activate k8s
+User<-k8s
+
+k8s->cephcsi: provision volume:\n1GB, ext4, ...
+cephcsi->Ceph: provision volume
+cephcsi<-Ceph
+k8s<-cephcsi: Ceph pool + mon list\nin a format specific\nto ceph-csi
+deactivate
+
+== Volume Usage ==
+
+User->k8s: create POD
+activate k8s
+User<-k8s
+k8s->driver: publish volume
+note right of cephcsi
+    OIM CSI driver has to know how to extract the relevant
+    information (pool, mon list) from arguments
+    when it replaces ceph-csi for mounting.
+end note
+activate driver
+driver->registry: publish volume\n**on host X**
+registry->controller: publish volume
+controller->spdk: Create BDev:\npool, mon list
+activate spdk
+spdk<-->Ceph: IO
+controller<-spdk: BDev0
+controller->spdk: create new\nvirtio-blk device
+activate spdk
+controller<-spdk: PCI function\nnumber
+registry<-controller: PCI function\nnumber
+driver<-registry: PCI function\nnumber
+driver->registry: get PCI information
+driver<-registry: PCI bus and device\nnumbers
+driver-->driver: wait for block device
+driver-->driver: format + mount\nblock device
+k8s<-driver: success
+deactivate driver
+
+@enduml
