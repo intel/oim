@@ -205,9 +205,10 @@ SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && ( echo "Reconfiguring..." ) 2>/dev/null
 SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]}
 
-# Set up the static network configuration.
+# Set up the static network configuration, both for booting with and without network interface renaming.
 SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/systemd/network" >&$${COPROC[1]}
 SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=ens4" "[Network]" "Address=192.168.7.2/24" "Gateway=192.168.7.1" "DNS=8.8.8.8"; do echo "echo '$$i' >>/etc/systemd/network/20-wired.network" >&$${COPROC[1]}; done
+SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=eth0" "[Network]" "Address=192.168.7.2/24" "Gateway=192.168.7.1" "DNS=8.8.8.8"; do echo "echo '$$i' >>/etc/systemd/network/20-wired.network" >&$${COPROC[1]}; done
 SETUP_CLEAR_IMG += && qemu_running && echo "systemctl restart systemd-networkd" >&$${COPROC[1]}
 
 SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
@@ -236,6 +237,13 @@ SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"H
 # future updates to /usr/share/defaults/crio/crio.conf
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/crio
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm cat /usr/share/defaults/crio/crio.conf | sed -e  "s^.*insecure_registries.*=.*.*^insecure_registries = [ '192.168.7.1:5000' ]^" | ./ssh-clear-kvm "cat >/etc/crio/crio.conf"
+# Tell CRI-O to use the simple lookback networking.
+# However, for this to work we have to have "eth0" around.
+# If we allow systemd to rename the interface, some command is run
+# against eth0, which causes errors during pod creation:
+# Sep 19 13:39:57 kubernetes-master kubelet[424]: E0919 13:39:57.508001     424 kuberuntime_sandbox.go:56] CreatePodSandbox for pod "coredns-78fcdf6894-5jjw6_kube-system(0a72f529-bc11-11e8-90ed-525400123456)" failed: rpc error: code = Unknown desc = failed to get network status for pod sandbox k8s_coredns-78fcdf6894-5jjw6_kube-system_0a72f529-bc11-11e8-90ed-525400123456_0(7d913cfcc8282e0e1ddd152207cf650d7977524ada42d3559f3e93bb76b39013): Unexpected command output Device "eth0" does not exist.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/cni/net.d && echo '{ "type": "loopback" }' |  ./ssh-clear-kvm 'cat >/etc/cni/net.d/99-loopback.conf'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/systemd/network/ && ./ssh-clear-kvm ln -s /dev/null /etc/systemd/network/99-default.link
 # Reconfiguration done, start daemons.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart cri-o kubelet && systemctl enable cri-o kubelet'
 # We allow API access also via 192.168.7.2, because that's what we are going to
@@ -244,14 +252,7 @@ SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cer
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p .kube'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-'
-# Enable Weave networking. CRI-O runs without it, but nodes never
-# reach the "ready" state without a network plugin ("KubeletNotReady,
-# message: runtime network not ready: NetworkReady=false
-# reason:NetworkPluginNotReady message:Network plugin returns error:
-# cni config uninitialized")
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm $(PROXY_ENV) kubectl apply -f https://cloud.weave.works/k8s/net?k8s-version=$$(./ssh-clear-kvm kubectl version | base64 | tr -d '\n')
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm ln -s /opt/cni/bin/weave-net /usr/libexec/cni/weave-net
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm ln -s /opt/cni/bin/weave-ipam /usr/libexec/cni/weave-ipam
+# Done.
 SETUP_CLEAR_IMG += && ( echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." ) 2>/dev/null
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://192.168.7.2:6443;' >clear-kvm-kube.config
 # Verify that Kubernetes works by starting it and then listing pods.
