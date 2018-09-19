@@ -212,7 +212,7 @@ SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=eth0" "[Network]"
 SETUP_CLEAR_IMG += && qemu_running && echo "systemctl restart systemd-networkd" >&$${COPROC[1]}
 
 SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
-# Install kubelet, kubeadm and CRI-O.
+# Install kubelet, kubeadm and Docker.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic"
 # Enable IP Forwarding.
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir /etc/sysctl.d && echo net.ipv4.ip_forward = 1 >/etc/sysctl.d/60-k8s.conf && systemctl restart systemd-sysctl'
@@ -226,29 +226,26 @@ SETUP_CLEAR_IMG += && ./ssh-clear-kvm modprobe br_netfilter && ./ssh-clear-kvm '
 # Disable swap (permanently).
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm systemctl mask $$(./ssh-clear-kvm cat /proc/swaps | sed -n -e 's;^/dev/\([0-9a-z]*\).*;dev-\1.swap;p')
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm swapoff -a
-# proxy settings for CRI-O
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir /etc/systemd/system/crio.service.d
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"HTTP_PROXY=$(HTTP_PROXY)\" \"HTTPS_PROXY=$(HTTPS_PROXY)\" \"NO_PROXY=$(NO_PROXY)\"') >/etc/systemd/system/crio.service.d/proxy.conf"
+# Choose Docker by disabling the use of CRI-O in KUBELET_EXTRA_ARGS.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/extra.conf"
+# Disable CNI by overriding the default "KUBELET_NETWORK_ARGS=--network-plugin=cni --cni-conf-dir=/etc/cni/net.d --cni-bin-dir=/usr/libexec/cni".
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/network.conf"
+# Proxy settings for Docker.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"HTTP_PROXY=$(HTTP_PROXY)\" \"HTTPS_PROXY=$(HTTPS_PROXY)\" \"NO_PROXY=$(NO_PROXY)\"'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf"
 # Testing may involve a Docker registry running on the build host (see
-# REGISTRY_NAME). We need to trust that registry, otherwise CRI-O
-# will fail to pull images from it. insecure-registries is commented out,
-# so we can simply replace that entire line.
-# Creating an entirely separate /etc/crio/crio.conf isn't ideal because
-# future updates to /usr/share/defaults/crio/crio.conf
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/crio
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm cat /usr/share/defaults/crio/crio.conf | sed -e  "s^.*insecure_registries.*=.*.*^insecure_registries = [ '192.168.7.1:5000' ]^" | ./ssh-clear-kvm "cat >/etc/crio/crio.conf"
-# Tell CRI-O to use the simple lookback networking.
-# However, for this to work we have to have "eth0" around.
-# If we allow systemd to rename the interface, some command is run
-# against eth0, which causes errors during pod creation:
-# Sep 19 13:39:57 kubernetes-master kubelet[424]: E0919 13:39:57.508001     424 kuberuntime_sandbox.go:56] CreatePodSandbox for pod "coredns-78fcdf6894-5jjw6_kube-system(0a72f529-bc11-11e8-90ed-525400123456)" failed: rpc error: code = Unknown desc = failed to get network status for pod sandbox k8s_coredns-78fcdf6894-5jjw6_kube-system_0a72f529-bc11-11e8-90ed-525400123456_0(7d913cfcc8282e0e1ddd152207cf650d7977524ada42d3559f3e93bb76b39013): Unexpected command output Device "eth0" does not exist.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/cni/net.d && echo '{ "type": "loopback" }' |  ./ssh-clear-kvm 'cat >/etc/cni/net.d/99-loopback.conf'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm mkdir -p /etc/systemd/network/ && ./ssh-clear-kvm ln -s /dev/null /etc/systemd/network/99-default.link
+# REGISTRY_NAME). We need to trust that registry, otherwise Docker
+# will refuse to pull images from it.
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"192.168.7.1:5000\"] }' >/etc/docker/daemon.json"
 # Reconfiguration done, start daemons.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart cri-o kubelet && systemctl enable cri-o kubelet'
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker kubelet && systemctl enable docker kubelet'
 # We allow API access also via 192.168.7.2, because that's what we are going to
-# use below for connecting directly from the host.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans 192.168.7.2 --cri-socket /var/run/crio/crio.sock'
+# use below for connecting directly from the host. We use Docker (the default),
+# but have to suppress a version check:
+# [ERROR SystemVerification]: unsupported docker version: 18.06.1
+SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans 192.168.7.2 --ignore-preflight-errors=SystemVerification'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p .kube'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config'
 SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-'
