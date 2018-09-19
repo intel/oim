@@ -209,10 +209,19 @@ func csiOIMPod(
 		return nil
 	}
 
-	ret, err := podClient.Create(pod)
-	if err != nil {
-		framework.ExpectNoError(err, "Failed to create %q pod: %v", pod.GetName(), err)
-	}
+	// Creating the pod can fail initially while the service
+	// account's secret isn't provisioned yet ('No API token found
+	// for service account "csi-service-account", retry after the
+	// token is automatically created and added to the service
+	// account', see https://github.com/kubernetes/kubernetes/issues/68776).
+	// We could use a DaemonSet, but then the name of the csi-pod changes
+	// during each test run. It's simpler to just try for a while here.
+	var ret *v1.Pod
+	Eventually(func() error {
+		var err error
+		ret, err = podClient.Create(pod)
+		return err
+	}, "1m", "1s").ShouldNot(HaveOccurred(), "Failed to create %q pod", pod.GetName())
 
 	// Wait for pod to come up
 	framework.ExpectNoError(framework.WaitForPodRunningInNamespace(client, ret))
