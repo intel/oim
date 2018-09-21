@@ -1,0 +1,8 @@
+glog,https://github.com/golang/glog
+gogo protobuf,https://github.com/gogo/protobuf
+Go,https://github.com/golang/go
+golang-github-fsnotify-fsnotify,https://github.com/fsnotify/fsnotify
+grpc-go,https://github.com/grpc/grpc-go
+grpc-proxy,https://github.com/vgough/grpc-proxy
+kubernetes,https://github.com/kubernetes/kubernetes
+pkg/errors,https://github.com/pkg/errors
