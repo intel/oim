@@ -101,6 +101,21 @@ coverage:
 	go test -coverprofile _work/cover.out $(IMPORT_PATH)/pkg/...
 	go tool cover -html=_work/cover.out -o _work/cover.html
 
+# This ensures that the vendor directory and vendor-bom.csv are in sync
+# at least as far as the listed components go.
+.PHONY: test_vendor_bom
+test: test_vendor_bom
+test_vendor_bom:
+	@ if ! diff -c \
+		<(tail +2 vendor-bom.csv | sed -e 's/;.*//') \
+		<((grep '^  name =' Gopkg.lock  | sed -e 's/.*"\(.*\)"/\1/'; echo github.com/dpdk/dpdk) | sort); then \
+		echo; \
+		echo "vendor-bom.csv not in sync with vendor directory (aka Gopk.lock):"; \
+		echo "+ new entry, missing in vendor-bom.csv"; \
+		echo "- obsolete entry in vendor-bom.csv"; \
+		false; \
+	fi
+
 # Downloads and unpacks the latest Clear Linux KVM image.
 # This intentionally uses a different directory, otherwise
 # we would end up sending the KVM images to the Docker
