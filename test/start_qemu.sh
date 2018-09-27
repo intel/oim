@@ -46,13 +46,18 @@ rm -f debug.log
 VMN=${VMN:=1}
 
 # We must exec here to ensure that our caller can kill qemu by killing its child process.
+# The source of entropy for the guest is intentionally the non-blocking /dev/urandom.
+# This is sufficient for guests that don't do anything important and avoids draining
+# the host of entropy, which happens when using /dev/random and many guests. When that
+# happens, guests get stuck during booting.
 exec qemu-system-x86_64 \
     -enable-kvm \
     -bios OVMF.fd \
     -smp sockets=1,cpus=4,cores=2 -cpu host \
     -m 1024 \
     -vga none -nographic \
-    -device virtio-rng-pci \
+    -object rng-random,filename=/dev/urandom,id=rng0 \
+    -device virtio-rng-pci,rng=rng0 \
     -drive file="$IMAGE",if=none,aio=threads,format=raw,id=disk \
     -device virtio-blk-pci,drive=disk,bootindex=0 \
     -netdev tap,id=mynet0,ifname=tap0,script=no,downscript=no \
