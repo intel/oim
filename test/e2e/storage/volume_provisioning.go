@@ -46,6 +46,7 @@ type storageClassTest struct {
 	expectedSize   string
 	pvCheck        func(volume *v1.PersistentVolume) error
 	nodeName       string
+	nodeSelector   map[string]string
 }
 
 const (
@@ -129,10 +130,10 @@ func testDynamicProvisioning(t storageClassTest, client clientset.Interface, cla
 		// Get entry, get mount options at 6th word, replace brackets with commas
 		command += fmt.Sprintf(" && ( mount | grep 'on /mnt/test' | awk '{print $6}' | sed 's/^(/,/; s/)$/,/' | grep -q ,%s, )", option)
 	}
-	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, command)
+	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, t.nodeSelector, command)
 
 	By("checking the created volume is readable and retains data")
-	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, "grep 'hello world' /mnt/test/data")
+	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, t.nodeSelector, "grep 'hello world' /mnt/test/data")
 
 	By(fmt.Sprintf("deleting claim %q/%q", claim.Namespace, claim.Name))
 	framework.ExpectNoError(client.CoreV1().PersistentVolumeClaims(claim.Namespace).Delete(claim.Name, nil))
@@ -226,7 +227,7 @@ func newClaim(t storageClassTest, ns, suffix string) *v1.PersistentVolumeClaim {
 }
 
 // runInPodWithVolume runs a command in a pod with given claim mounted to /mnt directory.
-func runInPodWithVolume(c clientset.Interface, ns, claimName, nodeName, command string) {
+func runInPodWithVolume(c clientset.Interface, ns, claimName, nodeName string, nodeSelector map[string]string, command string) {
 	pod := &v1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
@@ -236,6 +237,7 @@ func runInPodWithVolume(c clientset.Interface, ns, claimName, nodeName, command 
 			GenerateName: "pvc-volume-tester-",
 		},
 		Spec: v1.PodSpec{
+			NodeSelector: nodeSelector,
 			Containers: []v1.Container{
 				{
 					Name:    "volume-tester",

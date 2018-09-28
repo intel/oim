@@ -1,0 +1,103 @@
+# Right now, OIM only supports provisioning a Malloc BDev inside the
+# SPDK vhost, i.e. on the same node. This only works when everything
+# (CSI driver, app) run on the same node. We use the "intel.com/oim"
+# label to ensure that.
+#
+# The actual goal is to have provisioning of true network attached
+# storage, done by OIM CSI Driver+external-provisioner running in a
+# StateFull set. At the moment a DaemonSet is good enough. The
+# advantage over a plain pod is that the daemon set controller deals
+# with the race condition described in
+# https://github.com/kubernetes/kubernetes/issues/67882.
+kind: DaemonSet
+apiVersion: apps/v1beta2
+metadata:
+  name: oim-malloc
+  # For demo-purposes we deploy in the default namespace.
+  # namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: oim-malloc
+  template:
+    metadata:
+      labels:
+        app: oim-malloc
+    spec:
+      serviceAccount: oim-malloc-sa
+      nodeSelector:
+        intel.com/oim: "1"
+      containers:
+      - name: oim-csi-driver
+        args:
+        - --v=5 # TODO: get rid of glog
+        - --drivername=oim-malloc # This is the name under which the CSI driver gets referenced in the StorageClass and elsewhere.
+        - --endpoint=$(CSI_ENDPOINT)
+        - --nodeid=$(KUBE_NODE_NAME)
+        - --log.level=DEBUG
+        - --oim-registry-address=@OIM_REGISTRY_ADDRESS@ # needs to be replaced
+        - --controller-id=$(KUBE_NODE_NAME)
+        env:
+        - name: CSI_ENDPOINT
+          value: unix:///csi/csi.sock
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        image: 192.168.7.1:5000/oim-csi-driver:canary
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+        - mountPath: /var/lib/kubelet/pods
+          mountPropagation: Bidirectional
+          name: mountpoint-dir
+      - name: external-provisioner
+        args:
+        - --v=5
+        - --provisioner=oim-malloc
+        - --csi-address=/csi/csi.sock
+        image: quay.io/k8scsi/csi-provisioner:v0.2.1
+        imagePullPolicy: Always
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+      - name: driver-registrar
+        args:
+        - --v=5
+        - --csi-address=/csi/csi.sock
+        env:
+        - name: KUBE_NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        image: quay.io/k8scsi/driver-registrar:v0.2.0
+        imagePullPolicy: Always
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+      - name: external-attacher
+        args:
+        - --v=5
+        - --csi-address=$(ADDRESS)
+        env:
+        - name: ADDRESS
+          value: /csi/csi.sock
+        image: quay.io/k8scsi/csi-attacher:v0.2.0
+        imagePullPolicy: Always
+        volumeMounts:
+        - mountPath: /csi
+          name: socket-dir
+      volumes:
+      - hostPath:
+          path: /var/lib/kubelet/plugins/oim-malloc
+          type: DirectoryOrCreate
+        name: socket-dir
+      - hostPath:
+          path: /var/lib/kubelet/pods
+          type: DirectoryOrCreate
+        name: mountpoint-dir

@@ -208,25 +208,24 @@ The `qemu-system-x86_64` binary must be installed, either from
 version must be v2.10.0 or higher because vhost-scsi is required
 ([SPDK Prerequisites](http://www.spdk.io/doc/vhost.html#vhost_prereqs)).
 
-For networking, the `tunctl` from the `uml-utilities` package must be
+For networking, the `ip` tool from the `iproute2` package must be
 installed. The following command must be run once after booting the
 host machine and before starting the virtual machine:
 
-    sudo test/runqemu-ifup $(id -u) $(id -g)
+    test/runqemu-ifup 4
 
-This configures a tap device for use by the current user, then prints
-the name (usually `tap0`). At the moment, the test setup is hard-coded
-to use:
+This configures four tap devices for use by the current user. At the
+moment, the test setup is hard-coded to use:
 
-- `tap0`
-- 192.168.7.1 for the build host
-- 192.168.7.2 for the virtual machine
+- `oimtap0/1/2/3`
+- 192.168.7.1/3/5/7 for the build host side of the tap interfaces
+- 192.168.7.2/4/6/8 for the virtual machines
 - 8.8.8.8 as DNS server for the virtual machine
 
 To undo the configuration changes made by `test/runqemu-ifup` when
 the tap device is no longer needed, run:
 
-    sudo test/runqemu-ifdown tap0
+    test/runqemu-ifdown
 
 KVM must be enabled and the user must be allowed to use it. Usually this
 is done by adding the user to the `kvm` group. The
@@ -263,21 +262,15 @@ parameters.
     make test TEST_QEMU_IMAGE=_work/clear-kvm.img
     cd pkg/qemu && TEST_QEMU_IMAGE=<full path>/_work/clear-kvm.img go test
 
-The `clear-kvm.img` image itself is prepared
-automatically by the Makefile. It will contain the latest
-[Clear Linux OS](https://clearlinux.org/) and have the latest stable
-Kubernetes installed on it. This can be used also stand-alone:
+The `clear-kvm` images are prepared automatically by the Makefile. By
+default, four different images are prepared, each pre-configured with
+its own hostname and with network settings for the corresponding `tap`
+device. `clear-kvm.img` is a symlink to the `clear-kvm.0.img` where
+the Kubernetes master node will run.
 
-    make _work/clear-kvm.img
-    _work/start-clear-kvm _work/clear-kvm.img >/dev/null </dev/null &
-    _work/kube-clear-kvm
-    _work/ssh-clear-kvm kubectl get nodes
-    kubectl --kubeconfig _work/clear-kvm-kube.config get nodes
-    _work/ssh-clear-kvm shutdown now
-
-Some ports are hard-coded in the startup script, so only a single instance of
-the virtual machine is ever used during testing although tests are running
-in parallel. Those ports also must be available on the build machine.
+The images will contain the latest
+[Clear Linux OS](https://clearlinux.org/) and have the Kubernetes
+version supported by Clear Linux installed.
 
 ### SPDK
 
@@ -328,6 +321,75 @@ In addition to enabling additional tests individually as explained
 above, it is also possible to enable everything at once with:
 
     make test WITH_E2E_TESTS=1
+
+
+## Usage
+
+### Starting and stopping a demo cluster
+
+`make start` will bring up a Kubernetes test cluster inside the same
+QEMU virtual machines that are also used for testing. It also sets up
+the OIM CSI driver inside the cluster and all required additional
+tools (OIM registry, OIM controller, SPDK vhost) on the host.
+
+`make start` can be called multiple times in a row and it will attempt
+to bring up missing pieces each time it is invoked.
+
+Once it completes, everything is ready for interactive use via
+`kubectl` inside the virtual machine. There are two `.yaml` files
+which can be used to create a persistent volume claim (PVC) and to use
+that PVC inside a pod:
+
+    $ cat doc/csi-pvc.yaml | _work/ssh-clear-kvm kubectl create -f -
+    persistentvolumeclaim/csi-pvc created
+    $ cat doc/csi-app.yaml | _work/ssh-clear-kvm kubectl create -f -
+    pod/my-csi-app created
+    $ _work/ssh-clear-kvm kubectl get pods
+    NAME                   READY     STATUS    RESTARTS   AGE
+    my-csi-app             1/1       Running   0          1m
+    oim-csi-driver-9vffk   4/4       Running   0          11m
+
+The `_work` directory has log files for the tools on the host, and
+this command can be used to retrieve the log of the CSI driver:
+
+    $ _work/ssh-clear-kvm kubectl logs -l app=oim-csi-driver -c oim-csi-driver
+    INFO listening for connections | address: //csi/csi.sock
+    ...
+    DEBUG received | method: /csi.v0.Controller/CreateVolume request: name:"pvc-898c46f5c31611e8" capacity_range:<required_bytes:1048576 > volume_capabilities:<mount:<> access_mode:<mode:SINGLE_NODE_WRITER > > 
+    DEBUG sending | method: /csi.v0.Controller/CreateVolume method: /oim.v0.Controller/ProvisionMallocBDev request: bdev_name:"pvc-898c46f5c31611e8" size:1048576 
+    DEBUG received | method: /csi.v0.Controller/CreateVolume method: /oim.v0.Controller/ProvisionMallocBDev response: <empty>
+    DEBUG sending | method: /csi.v0.Controller/CreateVolume response: volume:<capacity_bytes:1048576 id:"pvc-898c46f5c31611e8" > 
+    ...
+    DEBUG received | method: /csi.v0.Node/NodePublishVolume request: volume_id:"pvc-898c46f5c31611e8" target_path:"/var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount" volume_capability:<mount:<> access_mode:<mode:SINGLE_NODE_WRITER > > volume_attributes:<key:"storage.kubernetes.io/csiProvisionerIdentity" value:"1538135608132-8081-oim-csi-driver" > 
+    I0928 12:03:58.582202       1 mount_linux.go:196] Detected OS without systemd
+    INFO mounting | method: /csi.v0.Node/NodePublishVolume target: /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount fstype:  read-only: %!s(bool=false) volumeid: pvc-898c46f5c31611e8 attributes: map[storage.kubernetes.io/csiProvisionerIdentity:1538135608132-8081-oim-csi-driver] flags: []
+    DEBUG sending | method: /csi.v0.Node/NodePublishVolume method: /oim.v0.Controller/MapVolume request: volume_id:"pvc-898c46f5c31611e8" malloc:<> 
+    DEBUG received | method: /csi.v0.Node/NodePublishVolume method: /oim.v0.Controller/MapVolume response: device:"/devices/pci0000:00/0000:00:15.0/" scsi:"0:0" 
+    INFO waiting for block device | method: /csi.v0.Node/NodePublishVolume sys: /sys/dev/block substr: /devices/pci0000:00/0000:00:15.0/ scsi: 0:0
+    DEBUG symlink | method: /csi.v0.Node/NodePublishVolume from: /sys/dev/block/254:0 to: ../../devices/pci0000:00/0000:00:03.0/virtio1/block/vda
+    DEBUG symlink | method: /csi.v0.Node/NodePublishVolume from: /sys/dev/block/254:1 to: ../../devices/pci0000:00/0000:00:03.0/virtio1/block/vda/vda1
+    DEBUG symlink | method: /csi.v0.Node/NodePublishVolume from: /sys/dev/block/254:2 to: ../../devices/pci0000:00/0000:00:03.0/virtio1/block/vda/vda2
+    DEBUG symlink | method: /csi.v0.Node/NodePublishVolume from: /sys/dev/block/254:3 to: ../../devices/pci0000:00/0000:00:03.0/virtio1/block/vda/vda3
+    ...
+    DEBUG symlink | method: /csi.v0.Node/NodePublishVolume from: /sys/dev/block/8:0 to: ../../devices/pci0000:00/0000:00:15.0/virtio3/host0/target0:0:0/0:0:0:0/block/sda
+    DEBUG found block device | method: /csi.v0.Node/NodePublishVolume entry: 8:0 dev: sda
+    I0928 12:03:58.606731       1 mount_linux.go:196] Detected OS without systemd
+    I0928 12:03:58.606756       1 mount_linux.go:472] Checking for issues with fsck on disk: /dev/sda497338321/sda
+    I0928 12:03:58.610058       1 mount_linux.go:491] Attempting to mount disk:  /dev/sda497338321/sda /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount
+    I0928 12:03:58.610188       1 mount_linux.go:143] Mounting cmd (mount) with arguments ([-o defaults /dev/sda497338321/sda /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount])
+    E0928 12:03:58.611787       1 mount_linux.go:148] Mount failed: exit status 255
+    Mounting command: mount
+    Mounting arguments: -o defaults /dev/sda497338321/sda /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount
+    Output: mount: mounting /dev/sda497338321/sda on /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount failed: Invalid argument
+    
+    I0928 12:03:58.611829       1 mount_linux.go:542] Attempting to determine if disk "/dev/sda497338321/sda" is formatted using blkid with args: ([-p -s TYPE -s PTTYPE -o export /dev/sda497338321/sda])
+    I0928 12:03:58.614370       1 mount_linux.go:545] Output: "", err: exit status 2
+    I0928 12:03:58.614420       1 mount_linux.go:516] Disk "/dev/sda497338321/sda" appears to be unformatted, attempting to format as type: "ext4" with options: [-F /dev/sda497338321/sda]
+    I0928 12:03:58.618630       1 mount_linux.go:520] Disk successfully formatted (mkfs): ext4 - /dev/sda497338321/sda /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount
+    I0928 12:03:58.618656       1 mount_linux.go:143] Mounting cmd (mount) with arguments ([-t ext4 -o defaults /dev/sda497338321/sda /var/lib/kubelet/pods/90076512-c316-11e8-9e2e-deadbeef0100/volumes/kubernetes.io~csi/pvc-898c46f5c31611e8/mount])
+    DEBUG sending | method: /csi.v0.Node/NodePublishVolume response: <empty>
+
+Once done, `make stop` will clean up the cluster and shut everything down.
 
 
 ## Troubleshooting

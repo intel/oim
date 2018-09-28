@@ -1,15 +1,6 @@
 #!/bin/bash
 #
-# QEMU network configuration script to bring down tap devices. This
-# utility needs to be run as root, and will use the tunctl binary
-# from the native sysroot. 
-#
-# If you find yourself calling this script a lot, you can add the
-# the following to your /etc/sudoers file to be able to run this
-# command without entering your password each time:
-#
-# <my-username> ALL=NOPASSWD: /path/to/runqemu-ifup
-# <my-username> ALL=NOPASSWD: /path/to/runqemu-ifdown
+# QEMU network configuration script to bring down OIM tap devices.
 #
 # Copyright (c) 2006-2011 Linux Foundation
 #
@@ -27,45 +18,20 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 usage() {
-	echo "sudo $(basename $0) <tap-dev>"
+	echo "$(basename $0)"
 }
 
-if [ $EUID -ne 0 ]; then
-	echo "Error: This script (runqemu-ifdown) must be run with root privileges"
-	exit 1
-fi
-
-if [ $# -ne 1 ]; then
+if [ $# -ne 0 ]; then
 	usage
 	exit 1
 fi
 
-TAP=$1
-STAGING_BINDIR_NATIVE=$2
+for TAP in $(ip tuntap show | sed -e 's/:.*//' | grep ^oimtap); do
+    sudo ip link del $TAP
 
-TUNCTL=tunctl
-$TUNCTL -d $TAP
-
-IFCONFIG=`which ip 2> /dev/null`
-if [ "x$IFCONFIG" = "x" ]; then
-	# better than nothing...
-	IFCONFIG=/sbin/ip
-fi
-if [ -x "$IFCONFIG" ]; then
-	if `$IFCONFIG link show $TAP > /dev/null 2>&1`; then
-		$IFCONFIG link del $TAP
-	fi
-fi
-# cleanup the remaining iptables rules
-IPTABLES=`which iptables 2> /dev/null`
-if [ "x$IPTABLES" = "x" ]; then
-	IPTABLES=/sbin/iptables
-fi
-if [ ! -x "$IPTABLES" ]; then
-	echo "$IPTABLES cannot be executed"
-	exit 1
-fi
-n=$[ (`echo $TAP | sed 's/tap//'` * 2) + 1 ]
-dest=$[ (`echo $TAP | sed 's/tap//'` * 2) + 2 ]
-$IPTABLES -D POSTROUTING -t nat -j MASQUERADE -s 192.168.7.$n/32
-$IPTABLES -D POSTROUTING -t nat -j MASQUERADE -s 192.168.7.$dest/32
+    i=$(echo $TAP | sed 's/oimtap//')
+    n=$(( $i * 2 + 1 ))
+    dest=$(( $i * 2 + 2 ))
+    sudo iptables -D POSTROUTING -t nat -j MASQUERADE -s 192.168.7.$n/32
+    sudo iptables -D POSTROUTING -t nat -j MASQUERADE -s 192.168.7.$dest/32
+done

@@ -201,8 +201,7 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 		config = framework.VolumeTestConfig{
 			Namespace:         ns.Name,
 			Prefix:            "csi",
-			ClientNodeName:    node.Name,
-			ServerNodeName:    node.Name,
+			NodeSelector:      map[string]string{"intel.com/oim": "1"},
 			WaitForCompletion: true,
 		}
 	})
@@ -249,14 +248,29 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 		})
 	})
 
-	// Create one of these for each of the drivers to be tested
-	// CSI hostPath driver test
-	Describe("Sanity CSI plugin test using OIM CSI driver", func() {
+	Describe("Sanity CSI plugin test using OIM CSI with Malloc BDev", func() {
 
 		var (
 			clusterRole    *rbacv1.ClusterRole
 			serviceAccount *v1.ServiceAccount
 			controlPlane   OIMControlPlane
+			cleanup        framework.CleanupActionHandle
+
+			afterEach = func() {
+				if cleanup == nil {
+					return
+				}
+				framework.RemoveCleanupAction(cleanup)
+				cleanup = nil
+
+				By("uninstalling CSI OIM pods")
+				csiOIMMalloc(cs, config, true, f, serviceAccount, "", "")
+				csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
+				serviceAccount = csiServiceAccount(cs, config, true)
+				clusterRole = csiClusterRole(cs, config, true)
+
+				controlPlane.StopOIMControlPlane(ctx)
+			}
 		)
 
 		BeforeEach(func() {
@@ -270,30 +284,24 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			clusterRole = csiClusterRole(cs, config, false)
 			serviceAccount = csiServiceAccount(cs, config, false)
 			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
-			csiOIMPod(cs, config, false, f, serviceAccount, controlPlane.registryAddress, controlPlane.controllerID)
-			e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, "csi-pod", GinkgoWriter)
+			csiOIMMalloc(cs, config, false, f, serviceAccount, controlPlane.registryAddress, controlPlane.controllerID)
+			e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, GinkgoWriter)
 			e2eutils.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
+
+			// Always clean up, even when interrupted (https://github.com/onsi/ginkgo/issues/222).
+			cleanup = framework.AddCleanupAction(afterEach)
 		})
 
-		AfterEach(func() {
-
-			By("uninstalling CSI OIM pods")
-			csiOIMPod(cs, config, true, f, serviceAccount, "", "")
-			csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
-			serviceAccount = csiServiceAccount(cs, config, true)
-			clusterRole = csiClusterRole(cs, config, true)
-
-			controlPlane.StopOIMControlPlane(ctx)
-		})
+		AfterEach(afterEach)
 
 		It("should provision storage", func() {
 			t := storageClassTest{
-				name:         "oim-csi-driver",
-				provisioner:  "oim-csi-driver",
+				name:         "oim-malloc",
+				provisioner:  "oim-malloc",
 				parameters:   map[string]string{},
 				claimSize:    "1Mi",
 				expectedSize: "1Mi",
-				nodeName:     node.Name,
+				nodeSelector: map[string]string{"intel.com/oim": "1"},
 			}
 
 			claim := newClaim(t, ns.GetName(), "")

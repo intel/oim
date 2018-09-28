@@ -41,9 +41,14 @@ if [ ! -f "$IMAGE" ]; then
     >&2 echo "Can't find image file \"$IMAGE\""
     exit 1
 fi
-rm -f debug.log
 
-VMN=${VMN:=1}
+# Pick up any sequence of digits as number for this virtual machine.
+VMN=$(echo $IMAGE | sed -e 's/[^0-9]*\([0-9]*\).*/\1/')
+if ! [ "$VMN" ]; then
+    VMN=0
+fi
+
+mac=DE:AD:BE:EF:01:0$VMN
 
 # We must exec here to ensure that our caller can kill qemu by killing its child process.
 # The source of entropy for the guest is intentionally the non-blocking /dev/urandom.
@@ -58,9 +63,9 @@ exec qemu-system-x86_64 \
     -vga none -nographic \
     -object rng-random,filename=/dev/urandom,id=rng0 \
     -device virtio-rng-pci,rng=rng0 \
-    -drive file="$IMAGE",if=none,aio=threads,format=raw,id=disk \
+    -drive file="$IMAGE",if=none,aio=threads,id=disk \
     -device virtio-blk-pci,drive=disk,bootindex=0 \
-    -netdev tap,id=mynet0,ifname=tap0,script=no,downscript=no \
-    -device virtio-net-pci,netdev=mynet0 \
-    -debugcon file:debug.log -global isa-debugcon.iobase=0x402 \
+    -netdev tap,ifname=oimtap$VMN,script=no,downscript=no,id=mynet0 \
+    -device virtio-net-pci,netdev=mynet0,mac=$mac \
+    -debugcon "file:$IMAGE.debug.log" -global isa-debugcon.iobase=0x402 \
     "$@"

@@ -71,13 +71,11 @@ TEST_E2E_DEPS=$(if $(filter $(IMPORT_PATH)/test/e2e, $(TEST_ARGS)), push-oim-csi
 
 .PHONY: run_tests
 run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi-driver
-	mkdir -p _work
-	cd _work && \
 	TEST_OIM_CSI_DRIVER_BINARY=$(abspath _output/oim-csi-driver) \
 	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
 	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
-	    $(TEST_CMD) $$( go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);../;' )
+	    $(TEST_CMD) $(shell go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);./;' )
 
 .PHONY: force_test
 force_test: clean_testcache test
@@ -219,9 +217,6 @@ _work/clear-kvm-original.img:
 # This picks the latest available version. Can be overriden via make CLEAR_IMG_VERSION=
 CLEAR_IMG_VERSION = $(shell curl https://download.clearlinux.org/latest)
 
-# Hostname set inside the virtual machine.
-GUEST_HOSTNAME = kubernetes-master
-
 DOWNLOAD_CLEAR_IMG = true
 DOWNLOAD_CLEAR_IMG += && mkdir -p _work
 DOWNLOAD_CLEAR_IMG += && cd _work
@@ -236,117 +231,30 @@ DOWNLOAD_CLEAR_IMG += && curl -O https://download.clearlinux.org/releases/$$vers
 DOWNLOAD_CLEAR_IMG += && sed -e 's;/.*/;;' clear-$$version-kvm.img.xz-SHA512SUMS | sha512sum -c
 DOWNLOAD_CLEAR_IMG += && unxz -c <clear-$$version-kvm.img.xz >clear-kvm-original.img
 
-_work/clear-kvm.img: _work/clear-kvm-original.img _work/kube-clear-kvm _work/OVMF.fd _work/start-clear-kvm _work/ssh-clear-kvm _work/id
-	cp $< $@
-	$(SETUP_CLEAR_IMG)
+# Number of nodes to be created in the virtual cluster, including master node.
+NUM_NODES = 4
 
-SETUP_CLEAR_IMG = true
-# We run with tracing enabled, but suppress the trace output for some
-# parts with 2>/dev/null (in particular, echo commands) to keep the
-# output a bit more readable.
-SETUP_CLEAR_IMG += && set -x
-SETUP_CLEAR_IMG += && cd _work
-# coproc runs the shell commands in a separate process, with
-# stdin/stdout available to the caller.
-SETUP_CLEAR_IMG += && coproc sh -c './start-clear-kvm clear-kvm.img | tee serial.log'
-# bash will detect when the coprocess dies and then unset the COPROC variables.
-# We can use that to check that QEMU is still healthy and avoid "ambiguous redirect"
-# errors when reading or writing to empty variables.
-SETUP_CLEAR_IMG += && qemu_running () { ( if ! [ "$$COPROC_PID" ]; then echo "ERRROR: QEMU died unexpectedly, see error messages above."; false; fi ) 2>/dev/null; }
-# Wait for certain output from the co-process.
-SETUP_CLEAR_IMG += && waitfor () { ( term="$$1"; while IFS= read -d : -r x && ! [[ "$$x" =~ "$$term" ]]; do :; done ) 2>/dev/null; }
-# We know the PID of the bash process running the pipe, but what we
-# really need to kill is the QEMU child process.
-SETUP_CLEAR_IMG += && trap '( [ "$$COPROC_PID" ] && echo "killing co-process and children with PID $$COPROC_PID"; kill $$(ps -o pid --ppid $$COPROC_PID | tail +2) $$COPROC_PID ) 2>/dev/null' EXIT
-SETUP_CLEAR_IMG += && ( echo "Waiting for initial root login, see $$(pwd)/serial.log" ) 2>/dev/null
-SETUP_CLEAR_IMG += && qemu_running && waitfor "login" <&$${COPROC[0]}
-# We get some extra messages on the console that should be printed
-# before we start interacting with the console prompt.
-SETUP_CLEAR_IMG += && ( echo "Give Clear Linux some time to finish booting." ) 2>/dev/null
-SETUP_CLEAR_IMG += && sleep 5
-SETUP_CLEAR_IMG += && ( echo "Changing root password..." ) 2>/dev/null
-SETUP_CLEAR_IMG += && qemu_running && echo "root" >&$${COPROC[1]}
-SETUP_CLEAR_IMG += && qemu_running && waitfor "New password" <&$${COPROC[0]}
-SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
-SETUP_CLEAR_IMG += && qemu_running && waitfor "Retype new password" <&$${COPROC[0]}
-SETUP_CLEAR_IMG += && qemu_running && echo "$$(cat passwd)" >&$${COPROC[1]}
-SETUP_CLEAR_IMG += && ( echo "Reconfiguring..." ) 2>/dev/null
-SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/ssh && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && mkdir -p .ssh && echo '$$(cat id.pub)' >>.ssh/authorized_keys" >&$${COPROC[1]}
-
-# Set up the static network configuration, both for booting with and without network interface renaming.
-SETUP_CLEAR_IMG += && qemu_running && echo "mkdir -p /etc/systemd/network" >&$${COPROC[1]}
-SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=ens4" "[Network]" "Address=192.168.7.2/24" "Gateway=192.168.7.1" "DNS=8.8.8.8"; do echo "echo '$$i' >>/etc/systemd/network/20-wired.network" >&$${COPROC[1]}; done
-SETUP_CLEAR_IMG += && qemu_running && for i in "[Match]" "Name=eth0" "[Network]" "Address=192.168.7.2/24" "Gateway=192.168.7.1" "DNS=8.8.8.8"; do echo "echo '$$i' >>/etc/systemd/network/20-wired.network" >&$${COPROC[1]}; done
-SETUP_CLEAR_IMG += && qemu_running && echo "systemctl restart systemd-networkd" >&$${COPROC[1]}
-
-SETUP_CLEAR_IMG += && ( echo "Configuring Kubernetes..." ) 2>/dev/null
-# Install kubelet, kubeadm and Docker.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "$(PROXY_ENV) swupd bundle-add cloud-native-basic"
-# Enable IP Forwarding.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir /etc/sysctl.d && echo net.ipv4.ip_forward = 1 >/etc/sysctl.d/60-k8s.conf && systemctl restart systemd-sysctl'
-# Due to stateless /etc is empty but /etc/hosts is needed by k8s pods.
-# It also expects that the local host name can be resolved. Let's use a nicer one
-# instead of the normal default (clear-<long hex string>).
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'hostnamectl set-hostname $(GUEST_HOSTNAME)' && ./ssh-clear-kvm 'echo 127.0.0.1 localhost $(GUEST_HOSTNAME) >>/etc/hosts'
-# br_netfilter must be loaded explicitly on the Clear Linux KVM kernel (and only there),
-# otherwise the required /proc/sys/net/bridge/bridge-nf-call-iptables isn't there.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm modprobe br_netfilter && ./ssh-clear-kvm 'echo br_netfilter >>/etc/modules'
-# Disable swap (permanently).
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm systemctl mask $$(./ssh-clear-kvm cat /proc/swaps | sed -n -e 's;^/dev/\([0-9a-z]*\).*;dev-\1.swap;p')
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm swapoff -a
-# Choose Docker by disabling the use of CRI-O in KUBELET_EXTRA_ARGS.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_EXTRA_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/extra.conf"
-# Disable CNI by overriding the default "KUBELET_NETWORK_ARGS=--network-plugin=cni --cni-conf-dir=/etc/cni/net.d --cni-bin-dir=/usr/libexec/cni".
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/kubelet.service.d/'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"KUBELET_NETWORK_ARGS=\"'; ) >/etc/systemd/system/kubelet.service.d/network.conf"
-# Proxy settings for Docker.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p /etc/systemd/system/docker.service.d/'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "( echo '[Service]'; echo 'Environment=\"HTTP_PROXY=$(HTTP_PROXY)\" \"HTTPS_PROXY=$(HTTPS_PROXY)\" \"NO_PROXY=$(NO_PROXY)\"'; echo 'ExecStart='; echo 'ExecStart=/usr/bin/dockerd --storage-driver=overlay2 --default-runtime=runc' ) >/etc/systemd/system/docker.service.d/oim.conf"
-# Testing may involve a Docker registry running on the build host (see
-# REGISTRY_NAME). We need to trust that registry, otherwise Docker
-# will refuse to pull images from it.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"192.168.7.1:5000\"] }' >/etc/docker/daemon.json"
-# Reconfiguration done, start daemons.
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'systemctl daemon-reload && systemctl restart docker kubelet && systemctl enable docker kubelet'
-# We allow API access also via 192.168.7.2, because that's what we are going to
-# use below for connecting directly from the host. We use Docker (the default),
-# but have to suppress a version check:
-# [ERROR SystemVerification]: unsupported docker version: 18.06.1
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm '$(PROXY_ENV) kubeadm init --apiserver-cert-extra-sans 192.168.7.2 --ignore-preflight-errors=SystemVerification'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'mkdir -p .kube'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cp -i /etc/kubernetes/admin.conf .kube/config'
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'kubectl taint nodes --all node-role.kubernetes.io/master-'
-# Done.
-SETUP_CLEAR_IMG += && ( echo "Use $$(pwd)/clear-kvm-kube.config as KUBECONFIG to access the running cluster." ) 2>/dev/null
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm 'cat /etc/kubernetes/admin.conf' | sed -e 's;https://.*:6443;https://192.168.7.2:6443;' >clear-kvm-kube.config
-# Verify that Kubernetes works by starting it and then listing pods.
-# We also wait for the node to become ready, which can take a while because
-# images might still need to be pulled. This can take minutes, therefore we sleep
-# for one minute between output.
-SETUP_CLEAR_IMG += && ( echo "Waiting for Kubernetes cluster to become ready..." ) 2>/dev/null
-SETUP_CLEAR_IMG += && ./kube-clear-kvm
-SETUP_CLEAR_IMG += && while ! ./ssh-clear-kvm kubectl get nodes | grep -q '$(GUEST_HOSTNAME) *Ready'; do sleep 60; ./ssh-clear-kvm kubectl get nodes; ./ssh-clear-kvm kubectl get pods --all-namespaces; done
-SETUP_CLEAR_IMG += && ./ssh-clear-kvm kubectl get nodes; ./ssh-clear-kvm kubectl get pods --all-namespaces
-# Doing the same locally only works if we have kubectl
-SETUP_CLEAR_IMG += && if command -v kubectl >/dev/null; then kubectl --kubeconfig ./clear-kvm-kube.config get pods --all-namespaces; fi
-SETUP_CLEAR_IMG += && qemu_running && echo "shutdown now" >&$${COPROC[1]} && wait
+# Multiple different images can be created, starting with clear-kvm.0.img
+# and ending with clear-kvm.<NUM_NODES - 1>.img.
+#
+# They have fixed IP addresses starting with 192.168.7.2 and host names
+# kubernetes-0/1/2/.... The first image is for the Kubernetes master node,
+# but configured so that also normal apps can run on it, i.e. no additional
+# worker nodes are needed.
+_work/clear-kvm.img: test/setup-clear-kvm.sh _work/clear-kvm-original.img _work/kube-clear-kvm _work/OVMF.fd _work/start-clear-kvm _work/id
+	$(PROXY_ENV) test/setup-clear-kvm.sh $(NUM_NODES)
+	ln -sf clear-kvm.0.img $@
 
 _work/start-clear-kvm: test/start_qemu.sh
 	mkdir -p _work
 	cp $< $@
-	sed -i -e "s;\(OVMF.fd\|[a-zA-Z0-9_]*\.log\);$$(pwd)/_work/\1;g" $@
+	sed -i -e "s;\(OVMF.fd\);$$(pwd)/_work/\1;g" $@
 	chmod a+x $@
 
-_work/kube-clear-kvm: test/start_kubernetes.sh _work/ssh-clear-kvm
+_work/kube-clear-kvm: test/start_kubernetes.sh
 	mkdir -p _work
 	cp $< $@
 	sed -i -e "s;SSH;$$(pwd)/_work/ssh-clear-kvm;g" $@
-	chmod u+x $@
-
-_work/ssh-clear-kvm: _work/id
-	echo "#!/bin/sh" >$@
-	echo "exec ssh -oIdentitiesOnly=yes -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oLogLevel=error -i $$(pwd)/_work/id root@192.168.7.2 \"\$$@\"" >>$@
 	chmod u+x $@
 
 _work/OVMF.fd:
@@ -363,4 +271,88 @@ test_protobuf:
 	@ if go list -f '{{ join .Deps "\n" }}' $(foreach i,$(OIM_CMDS),./cmd/$(i)) | grep -q github.com/golang/protobuf; then \
 		echo "binaries should not depend on golang/protobuf, use gogo/protobuf instead"; \
 		false; \
+	fi
+
+# Brings up the emulator environment:
+# - starts the OIM control plane and SPDK on the local host
+# - creates an SPDK virtio-scsi controller
+# - starts a QEMU virtual machine connected to SPDK's virtio-scsi controller
+# - starts a Kubernetes cluster
+# - deploys the OIM driver
+start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-clear-kvm
+	if ! [ -e _work/oim-registry.pid ] || ! kill -0 $$(cat _work/oim-registry.pid) 2>/dev/null; then \
+		truncate -s 0 _work/oim-registry.log && \
+		( _output/oim-registry -endpoint tcp://192.168.7.1:0 -log.level DEBUG >>_work/oim-registry.log 2>&1 & echo $$! >_work/oim-registry.pid ) && \
+		while ! grep -m 1 'listening for connections' _work/oim-registry.log > _work/oim-registry.port; do sleep 1; done && \
+		sed -i -e 's/.*address: .*://' _work/oim-registry.port; \
+	fi
+	if ! [ -e _work/vhost.pid ] || ! sudo kill -0 $$(cat _work/vhost.pid) 2>/dev/null; then \
+		rm -rf _work/vhost-run _work/vhost.pid && \
+		mkdir _work/vhost-run && \
+		( sudo _work/vhost -R -S $$(pwd)/_work/vhost-run -r $$(pwd)/_work/vhost-run/spdk.sock -f _work/vhost.pid -s 256 >_work/vhost.log 2>&1 & while ! [ -s _work/vhost.pid ] || ! [ -e _work/vhost-run/spdk.sock ]; do sleep 1; done ) && \
+		sudo chmod a+rw _work/vhost-run/spdk.sock; \
+	fi
+	if ! [ -e _work/vhost-run/scsi0 ]; then \
+		vendor/github.com/spdk/spdk/scripts/rpc.py -s $$(pwd)/_work/vhost-run/spdk.sock construct_vhost_scsi_controller scsi0 && \
+		while ! [ -e _work/vhost-run/scsi0 ]; do sleep 1; done && \
+		sudo chmod a+rw _work/vhost-run/scsi0; \
+	fi
+	if ! [ -e _work/oim-controller.pid ] || ! kill -0 $$(cat _work/oim-controller.pid) 2>/dev/null; then \
+		( _output/oim-controller -endpoint unix://$$(pwd)/_work/oim-controller.sock \
+		                         -spdk _work/vhost-run/spdk.sock \
+		                         -vhost-scsi-controller scsi0 \
+		                         -vm-vhost-device /devices/pci0000:00/0000:00:15.0/ \
+		                         -log.level DEBUG \
+		                         >_work/oim-controller.log 2>&1 & echo $$! >_work/oim-controller.pid ) && \
+		while ! grep -q 'listening for connections' _work/oim-controller.log; do sleep 1; done; \
+	fi
+	_output/oimctl -registry 192.168.7.1:$$(cat _work/oim-registry.port) \
+		-set "host-0=unix://$$(pwd)/_work/oim-controller.sock"
+	for i in $$(seq 0 $$(($(NUM_NODES) - 1))); do \
+		if ! [ -e _work/clear-kvm.$$i.pid ] || ! kill -0 $$(cat _work/clear-kvm.$$i.pid) 2>/dev/null; then \
+			if [ $$i -eq 0 ]; then \
+				opts="-m 1024 -object memory-backend-file,id=mem,size=1024M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -chardev socket,id=vhost0,path=_work/vhost-run/scsi0 -device vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15"; \
+			else \
+				opts=; \
+			fi; \
+			_work/start-clear-kvm _work/clear-kvm.$$i.img -monitor none -serial file:/nvme/gopath/src/github.com/intel/oim/_work/clear-kvm.$$i.log $$opts & \
+			echo $$! >_work/clear-kvm.$$i.pid; \
+		fi; \
+	done
+	_work/kube-clear-kvm
+	for i in malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
+		cat deploy/kubernetes/malloc/$$i | \
+			sed -e "s;@OIM_REGISTRY_ADDRESS@;192.168.7.1:$$(cat _work/oim-registry.port);" | \
+			_work/ssh-clear-kvm kubectl create -f - || true; \
+	done
+	@ echo "The test cluster is ready. Log in with _work/ssh-clear-kvm, run kubectl once logged in."
+	@ echo "To try out the OIM CSI driver:"
+	@ echo "   cat deploy/kubernetes/malloc/example/malloc-pvc.yaml | _work/ssh-clear-kvm kubectl create -f -"
+	@ echo "   cat deploy/kubernetes/malloc/example/malloc-app.yaml | _work/ssh-clear-kvm kubectl create -f -"
+
+stop:
+	if [ -e _work/clear-kvm.0.pid ]; then \
+		for i in example/malloc-app.yaml example/malloc-pvc.yaml malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
+			cat deploy/kubernetes/malloc/$$i | _work/ssh-clear-kvm kubectl delete -f - || true; \
+		done; \
+	fi
+	for i in $$(seq 0 $$(($(NUM_NODES) - 1))); do \
+		if [ -e _work/clear-kvm.$$i.pid ]; then \
+			kill -9 $$(cat _work/clear-kvm.$$i.pid) 2>/dev/null; \
+			rm -f _work/clear-kvm.$$i.pid; \
+		fi; \
+	done
+	if [ -e _work/oim-registry.pid ]; then \
+		kill -9 $$(cat _work/oim-registry.pid) 2>/dev/null; \
+		rm -f _work/oim-registry.pid; \
+	fi
+	if [ -e _work/oim-controller.pid ]; then \
+		kill -9 $$(cat _work/oim-controller.pid) 2>/dev/null; \
+		rm -f _work/oim-controller.pid; \
+	fi
+	if [ -e _work/vhost.pid ]; then \
+		if grep -q vhost /proc/$$(cat _work/vhost.pid)/cmdline; then \
+			sudo kill $$(cat _work/vhost.pid) 2>/dev/null; \
+		fi; \
+		rm -f _work/vhost.pid; \
 	fi

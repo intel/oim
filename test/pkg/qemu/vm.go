@@ -118,7 +118,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 		vm.start, vm.image + ".img",
 		"-serial", "none",
 		"-chardev", "stdio,id=mon0",
-		"-serial", "file:" + filepath.Join(filepath.Dir(image), "serial.log"),
+		"-serial", "file:" + image + ".serial.log",
 		"-qmp", "unix:" + qmpSocket + ",server,nowait",
 	}
 	args = append(args, qemuOptions...)

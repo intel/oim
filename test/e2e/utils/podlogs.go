@@ -27,14 +27,10 @@ func LogsForPod(ctx context.Context, cs clientset.Interface, ns, pod string, opt
 	return req.Context(ctx).Stream()
 }
 
-// CopyAllLogs follows the logs of all containers in the pod and writes each log line
-// with the container name as prefix. It does that until the context is done or
+// CopyAllLogs follows the logs of all containers in all pods and writes each log line
+// with the pod/container name as prefix. It does that until the context is done or
 // until an error occurs.
-func CopyAllLogs(ctx context.Context, cs clientset.Interface, ns, pod string, to io.Writer) error {
-	p, err := cs.Core().Pods(ns).Get(pod, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrapf(err, "get pod %s in %s", pod, ns)
-	}
+func CopyAllLogs(ctx context.Context, cs clientset.Interface, ns string, to io.Writer) error {
 	watcher, err := cs.Core().Pods(ns).Watch(metav1.ListOptions{})
 	if err != nil {
 		return errors.Wrap(err, "cannot create Pod event watcher")
@@ -46,32 +42,42 @@ func CopyAllLogs(ctx context.Context, cs clientset.Interface, ns, pod string, to
 		check := func() {
 			m.Lock()
 			defer m.Unlock()
-			for _, c := range p.Spec.Containers {
-				if logging[c.Name] {
-					continue
-				}
-				readCloser, err := LogsForPod(ctx, cs, ns, pod,
-					&corev1.PodLogOptions{
-						Container: c.Name,
-						Follow:    true,
-					})
-				if err != nil {
-					fmt.Fprintf(to, "%s: %s\n", c.Name, err)
-					continue
-				}
-				go func(container string) {
-					defer func() {
-						m.Lock()
-						logging[container] = false
-						m.Unlock()
-						readCloser.Close()
-					}()
-					scanner := bufio.NewScanner(readCloser)
-					for scanner.Scan() {
-						fmt.Fprintf(to, "%s: %s\n", container, scanner.Text())
+
+			pods, err := cs.Core().Pods(ns).List(metav1.ListOptions{})
+			if err != nil {
+				fmt.Fprintf(to, "get pod list in %s: %s", ns, err)
+				return
+			}
+
+			for _, pod := range pods.Items {
+				for _, c := range pod.Spec.Containers {
+					name := pod.ObjectMeta.Name + "/" + c.Name
+					if logging[name] {
+						continue
 					}
-				}(c.Name)
-				logging[c.Name] = true
+					readCloser, err := LogsForPod(ctx, cs, ns, pod.ObjectMeta.Name,
+						&corev1.PodLogOptions{
+							Container: c.Name,
+							Follow:    true,
+						})
+					if err != nil {
+						fmt.Fprintf(to, "%s: %s\n", name, err)
+						continue
+					}
+					go func(name string) {
+						defer func() {
+							m.Lock()
+							logging[name] = false
+							m.Unlock()
+							readCloser.Close()
+						}()
+						scanner := bufio.NewScanner(readCloser)
+						for scanner.Scan() {
+							fmt.Fprintf(to, "%s: %s\n", name, scanner.Text())
+						}
+					}(name)
+					logging[name] = true
+				}
 			}
 		}
 

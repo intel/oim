@@ -5,7 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // qemu adds support for the TEST_QEMU_IMAGE env variable to test binaries
-// and manages the virtual machine instance for tests.
+// and manages the virtual machine instance(s) for tests. If TEST_QEMU_IMAGE
+// is a symlink to a file of the format <base name>.0.img, then
+// all other images with the same base name will also be started. SPDK
+// is only set up for the first node.
 package qemu
 
 import (
@@ -23,7 +26,8 @@ import (
 )
 
 var (
-	VM *VirtualMachine
+	VM  *VirtualMachine
+	vms []*VirtualMachine
 
 	qemuImage = os.Getenv("TEST_QEMU_IMAGE")
 	lock      *lockfile.Lockfile
@@ -100,6 +104,33 @@ func Init(options ...Option) error {
 			qemuImage, opts, err, procs)
 	}
 	VM = vm
+	vms = append(vms, vm)
+
+	// Start also VMs for all other images?
+	realfile, err := filepath.EvalSymlinks(qemuImage)
+	if err != nil {
+		return fmt.Errorf("Failed to expand symlinks for %s: %s", qemuImage, err)
+	}
+	if strings.HasSuffix(realfile, ".0.img") {
+		basename := realfile[0 : len(realfile)-len(".0.img")]
+		for i := 1; ; i++ {
+			img := fmt.Sprintf("%s.%d.img", basename, i)
+			if _, err := os.Stat(img); err != nil {
+				if os.IsNotExist(err) {
+					break
+				}
+				return fmt.Errorf("%s: %s", img, err)
+			}
+			log.L().Infof("Starting additional image %s", img)
+			vm, err := StartQEMU(img)
+			if err != nil {
+				procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
+				return fmt.Errorf("Starting QEMU %s failed: %s\nRunning processes:\n%s",
+					img, err, procs)
+			}
+			vms = append(vms, vm)
+		}
+	}
 
 	if !o.kubernetes {
 		return nil
@@ -146,11 +177,12 @@ func KubeConfig() (string, error) {
 func Finalize() error {
 	// We must shut down QEMU first, otherwise
 	// SPDK refuses to remove the controller.
-	if VM != nil {
-		log.L().Infof("Stopping QEMU %s", VM)
-		VM.StopQEMU()
-		VM = nil
+	for _, vm := range vms {
+		log.L().Infof("Stopping QEMU %s", vm)
+		vm.StopQEMU()
 	}
+	vms = nil
+	VM = nil
 	if lock != nil {
 		err := lock.Unlock()
 		if err != nil {

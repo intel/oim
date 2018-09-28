@@ -13,11 +13,15 @@ import (
 	"io/ioutil"
 	"os"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/intel/oim/test/e2e/framework"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/oim-controller"
@@ -40,192 +44,55 @@ var (
 	oimImageRegistry = flag.String("oimImageRegistry", "192.168.7.1:5000", "overrides the default repository used for the OIM CSI driver image (must be reachable from inside QEMU)")
 )
 
-func csiOIMPod(
+func csiOIMMalloc(
 	client clientset.Interface,
 	config framework.VolumeTestConfig,
 	teardown bool,
 	f *framework.Framework,
 	sa *v1.ServiceAccount,
 	registryAddress, controllerID string,
-) *v1.Pod {
-	podClient := client.CoreV1().Pods(config.Namespace)
+) {
+	var err error
+	daemonsetClient := client.AppsV1().DaemonSets(config.Namespace)
 
-	priv := true
-	mountPropagation := v1.MountPropagationBidirectional
-	hostPathType := v1.HostPathDirectoryOrCreate
-	pod := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.Prefix + "-pod",
-			Namespace: config.Namespace,
-			Labels: map[string]string{
-				"app": "oim-csi-driver",
-			},
-		},
-		Spec: v1.PodSpec{
-			ServiceAccountName: sa.GetName(),
-			NodeName:           config.ServerNodeName,
-			RestartPolicy:      v1.RestartPolicyNever,
-			Containers: []v1.Container{
-				{
-					Name:            "oim-csi-driver",
-					Image:           *oimImageRegistry + "/oim-csi-driver:canary",
-					ImagePullPolicy: v1.PullAlways,
-					SecurityContext: &v1.SecurityContext{
-						Privileged: &priv,
-					},
-					Args: []string{
-						"--v=5", // TODO: get rid of glog
-						"--log.level=DEBUG",
-						"--endpoint=$(CSI_ENDPOINT)",
-						"--nodeid=$(KUBE_NODE_NAME)",
-						"--oim-registry-address=$(OIM_REGISTRY_ADDRESS)",
-						"--controller-id=$(OIM_CONTROLLER_ID)",
-					},
-					Env: []v1.EnvVar{
-						{
-							Name:  "CSI_ENDPOINT",
-							Value: "unix://" + "/csi/csi.sock",
-						},
-						{
-							Name: "KUBE_NODE_NAME",
-							ValueFrom: &v1.EnvVarSource{
-								FieldRef: &v1.ObjectFieldSelector{
-									FieldPath: "spec.nodeName",
-								},
-							},
-						},
-						{
-							Name:  "OIM_REGISTRY_ADDRESS",
-							Value: registryAddress,
-						},
-						{
-							Name:  "OIM_CONTROLLER_ID",
-							Value: controllerID,
-						},
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-						{
-							Name:             "mountpoint-dir",
-							MountPath:        "/var/lib/kubelet/pods",
-							MountPropagation: &mountPropagation,
-						},
-					},
-				},
-				{
-					Name:            "external-provisioner",
-					Image:           csiContainerImage("csi-provisioner"),
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Args: []string{
-						"--v=5",
-						"--provisioner=oim-csi-driver",
-						"--csi-address=/csi/csi.sock",
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-				{
-					Name:            "driver-registrar",
-					Image:           csiContainerImage("driver-registrar"),
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Args: []string{
-						"--v=5",
-						"--csi-address=/csi/csi.sock",
-					},
-					Env: []v1.EnvVar{
-						{
-							Name: "KUBE_NODE_NAME",
-							ValueFrom: &v1.EnvVarSource{
-								FieldRef: &v1.ObjectFieldSelector{
-									FieldPath: "spec.nodeName",
-								},
-							},
-						},
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-				{
-					Name:            "external-attacher",
-					Image:           csiContainerImage("csi-attacher"),
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Args: []string{
-						"--v=5",
-						"--csi-address=$(ADDRESS)",
-					},
-					Env: []v1.EnvVar{
-						{
-							Name:  "ADDRESS",
-							Value: "/csi/csi.sock",
-						},
-					},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "socket-dir",
-							MountPath: "/csi",
-						},
-					},
-				},
-			},
-			Volumes: []v1.Volume{
-				{
-					Name: "socket-dir",
-					VolumeSource: v1.VolumeSource{
-						HostPath: &v1.HostPathVolumeSource{
-							Path: "/var/lib/kubelet/plugins/oim-csi-driver",
-							Type: &hostPathType,
-						},
-					},
-				},
-				{
-					Name: "mountpoint-dir",
-					VolumeSource: v1.VolumeSource{
-						HostPath: &v1.HostPathVolumeSource{
-							Path: "/var/lib/kubelet/pods",
-							Type: &hostPathType,
-						},
-					},
-				},
-			},
-		},
+	var daemonset appsv1.DaemonSet
+	EntityFromManifestOrDie("deploy/kubernetes/malloc/malloc-daemonset.yaml", &daemonset)
+	daemonset.ObjectMeta.Namespace = config.Namespace
+	spec := &daemonset.Spec.Template.Spec
+	spec.ServiceAccountName = sa.GetName()
+	driverContainer := setContainerImage(spec.Containers, "oim-csi-driver", *oimImageRegistry+"/oim-csi-driver:canary")
+	Expect(driverContainer).NotTo(BeNil())
+	driverContainer.Args = append(spec.Containers[0].Args, "--oim-registry-address="+registryAddress)
+	// TODO: find OIM controller via host name
+	driverContainer.Args = append(spec.Containers[0].Args, "--controller-id="+controllerID)
+	Expect(setContainerImage(spec.Containers, "external-provisioner", csiContainerImage("csi-provisioner"))).NotTo(BeNil())
+	Expect(setContainerImage(spec.Containers, "driver-registrar", csiContainerImage("driver-registrar"))).NotTo(BeNil())
+	Expect(setContainerImage(spec.Containers, "external-attacher", csiContainerImage("csi-attacher"))).NotTo(BeNil())
+
+	err = daemonsetClient.Delete(daemonset.ObjectMeta.Name, nil)
+	if err != nil && !apierrs.IsNotFound(err) {
+		framework.ExpectNoError(err, "Failed to delete daemonset %s/%s: %v",
+			daemonset.GetNamespace(), daemonset.GetName(), err)
 	}
-
-	err := framework.DeletePodWithWait(f, client, pod)
-	framework.ExpectNoError(err, "Failed to delete pod %s/%s: %v",
-		pod.GetNamespace(), pod.GetName(), err)
 
 	if teardown {
-		return nil
+		return
 	}
 
-	// Creating the pod can fail initially while the service
-	// account's secret isn't provisioned yet ('No API token found
-	// for service account "csi-service-account", retry after the
-	// token is automatically created and added to the service
-	// account', see https://github.com/kubernetes/kubernetes/issues/68776).
-	// We could use a DaemonSet, but then the name of the csi-pod changes
-	// during each test run. It's simpler to just try for a while here.
-	var ret *v1.Pod
-	Eventually(func() error {
-		var err error
-		ret, err = podClient.Create(pod)
-		return err
-	}, "1m", "1s").ShouldNot(HaveOccurred(), "Failed to create %q pod", pod.GetName())
+	_, err = daemonsetClient.Create(&daemonset)
+	framework.ExpectNoError(err, "Failed to create daemonset %s/%s: %v",
+		daemonset.GetNamespace(), daemonset.GetName(), err)
+}
 
-	// Wait for pod to come up
-	framework.ExpectNoError(framework.WaitForPodRunningInNamespace(client, ret))
-	return ret
+func setContainerImage(containers []v1.Container, name, image string) *v1.Container {
+	for i, _ := range containers {
+		container := &containers[i]
+		if container.Name == name {
+			container.Image = image
+			return container
+		}
+	}
+	return nil
 }
 
 type OIMControlPlane struct {
@@ -315,4 +182,32 @@ func (op *OIMControlPlane) StopOIMControlPlane(ctx context.Context) {
 	if op.tmpDir != "" {
 		os.RemoveAll(op.tmpDir)
 	}
+}
+
+// EntityFromManifest reads a Kubernetes .yaml file and populates the
+// given entity with its content.
+func EntityFromManifest(fileName string, target runtime.Object) error {
+	// Ultimately this should use the "testfiles" package from https://github.com/kubernetes/kubernetes/pull/69105
+	// For now we just approximate it.
+	data, err := ioutil.ReadFile(fileName)
+	if err != nil && os.IsNotExist(err) {
+		// Probably started by Ginkgo in test/e2e. Try two levels up.
+		data, err = ioutil.ReadFile("../../" + fileName)
+		if err != nil {
+			return err
+		}
+	}
+
+	json, err := utilyaml.ToJSON(data)
+	if err != nil {
+		return err
+	}
+
+	err = runtime.DecodeInto(legacyscheme.Codecs.UniversalDecoder(), json, target)
+	return err
+}
+
+func EntityFromManifestOrDie(fileName string, target runtime.Object) {
+	err := EntityFromManifest(fileName, target)
+	framework.ExpectNoError(err, "Failed to load manifest: %q", fileName)
 }
