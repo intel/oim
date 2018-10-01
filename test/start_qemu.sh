@@ -48,6 +48,7 @@ if ! [ "$VMN" ]; then
     VMN=0
 fi
 
+# Same MAC address as the one used in setup-clear-kvm.sh.
 mac=DE:AD:BE:EF:01:0$VMN
 
 # We must exec here to ensure that our caller can kill qemu by killing its child process.

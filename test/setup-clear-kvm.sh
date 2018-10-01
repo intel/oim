@@ -100,10 +100,10 @@ setup_clear_img () (
     echo "exec ssh -oIdentitiesOnly=yes -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oLogLevel=error -i $(pwd)/_work/id root@$ipaddr \"\$@\"" >>_work/ssh-clear-kvm.$imagenum
     chmod u+x _work/ssh-clear-kvm.$imagenum
 
-    # Set up the static network configuration, both for booting with and without network interface renaming.
+    # Set up the static network configuration. The MAC address must match the one
+    # in start_qemu.sh.
     echo "mkdir -p /etc/systemd/network" >&${COPROC[1]}
-    for i in "[Match]" "Name=ens4" "[Network]" "Address=$ipaddr/24" "Gateway=192.168.7.$(($imagenum * 2 + 1))" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
-    for i in "[Match]" "Name=eth0" "[Network]" "Address=$ipaddr/24" "Gateway=192.168.7.$(($imagenum * 2 + 1))" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
+    for i in "[Match]" "MACAddress=DE:AD:BE:EF:01:0$i" "[Network]" "Address=$ipaddr/24" "Gateway=192.168.7.$(($imagenum * 2 + 1))" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
     echo "systemctl restart systemd-networkd" >&${COPROC[1]}
 
 
