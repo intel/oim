@@ -48,6 +48,12 @@ if ! [ "$VMN" ]; then
     VMN=0
 fi
 
+# For each base image we also expect or create a data disk.
+DATA_IMAGE=$(readlink -f $IMAGE).data
+if [ ! -f "$DATA_IMAGE" ]; then
+    truncate --size=1G "$DATA_IMAGE"
+fi
+
 # Same MAC address as the one used in setup-clear-kvm.sh.
 mac=DE:AD:BE:EF:01:0$VMN
 
@@ -66,6 +72,8 @@ exec qemu-system-x86_64 \
     -device virtio-rng-pci,rng=rng0 \
     -drive file="$IMAGE",if=none,aio=threads,id=disk \
     -device virtio-blk-pci,drive=disk,bootindex=0 \
+    -drive file="$DATA_IMAGE",if=none,aio=threads,id=data,format=raw \
+    -device virtio-blk-pci,drive=data \
     -netdev tap,ifname=oimtap$VMN,script=no,downscript=no,id=mynet0 \
     -device virtio-net-pci,netdev=mynet0,mac=$mac \
     -debugcon "file:$IMAGE.debug.log" -global isa-debugcon.iobase=0x402 \
