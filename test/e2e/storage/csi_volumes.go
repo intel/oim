@@ -96,6 +96,12 @@ func csiClusterRole(
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
 			},
 			{
+				// TODO: only define this in a Role, as in test/e2e/testing-manifests/storage-csi/controller-role.yaml
+				APIGroups: []string{""},
+				Resources: []string{"endpoints"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
+			},
+			{
 				APIGroups: []string{""},
 				Resources: []string{"secrets"},
 				Verbs:     []string{"get", "list"},

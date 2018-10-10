@@ -60,7 +60,7 @@ spec:
         - --v=5
         - --provisioner=oim-malloc
         - --csi-address=/csi/csi.sock
-        image: quay.io/k8scsi/csi-provisioner:v0.2.1
+        image: quay.io/k8scsi/csi-provisioner:v0.4.0
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
@@ -75,7 +75,7 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: spec.nodeName
-        image: quay.io/k8scsi/driver-registrar:v0.2.0
+        image: quay.io/k8scsi/driver-registrar:v0.4.0
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
@@ -87,7 +87,7 @@ spec:
         env:
         - name: ADDRESS
           value: /csi/csi.sock
-        image: quay.io/k8scsi/csi-attacher:v0.2.0
+        image: quay.io/k8scsi/csi-attacher:v0.4.0
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
