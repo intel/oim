@@ -89,9 +89,9 @@ func Init(options ...Option) error {
 		// with a small memory size because we don't know how much huge pages
 		// were set aside.
 		opts = append(opts,
-			"-object", "memory-backend-file,id=mem,size=1024M,mem-path=/dev/hugepages,share=on",
+			"-object", "memory-backend-file,id=mem,size=2048M,mem-path=/dev/hugepages,share=on",
 			"-numa", "node,memdev=mem",
-			"-m", "1024",
+			"-m", "2048",
 			"-chardev", "socket,id=vhost0,path="+spdk.VHostPath,
 			"-device", "vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15",
 		)

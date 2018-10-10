@@ -282,7 +282,7 @@ environment and only invoking some operations via sudo.
 The build machine must be prepared to allow this, huge pages must be
 set up so that normal users can access them, and nbd must be available:
 * [`sudo`](https://en.wikipedia.org/wiki/Sudo) must be able to run arbitrary commands
-* `sudo env PCI_WHITELIST="none" vendor/github.com/spdk/spdk/scripts/setup.sh && sudo chmod a+rw /dev/hugepages`
+* `sudo env HUGEMEM=4096 PCI_WHITELIST="none" vendor/github.com/spdk/spdk/scripts/setup.sh && sudo chmod a+rw /dev/hugepages`
 * `sudo modprobe nbd`
 
 Building SPDK depends on additional packages. SPDK

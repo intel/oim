@@ -66,7 +66,7 @@ exec qemu-system-x86_64 \
     -enable-kvm \
     -bios OVMF.fd \
     -smp sockets=1,cpus=4,cores=2 -cpu host \
-    -m 1024 \
+    -m 2048 \
     -vga none -nographic \
     -object rng-random,filename=/dev/urandom,id=rng0 \
     -device virtio-rng-pci,rng=rng0 \

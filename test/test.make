@@ -311,7 +311,7 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 	for i in $$(seq 0 $$(($(NUM_NODES) - 1))); do \
 		if ! [ -e _work/clear-kvm.$$i.pid ] || ! kill -0 $$(cat _work/clear-kvm.$$i.pid) 2>/dev/null; then \
 			if [ $$i -eq 0 ]; then \
-				opts="-m 1024 -object memory-backend-file,id=mem,size=1024M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -chardev socket,id=vhost0,path=_work/vhost-run/scsi0 -device vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15"; \
+				opts="-m 2048 -object memory-backend-file,id=mem,size=2048M,mem-path=/dev/hugepages,share=on -numa node,memdev=mem -chardev socket,id=vhost0,path=_work/vhost-run/scsi0 -device vhost-user-scsi-pci,id=scsi0,chardev=vhost0,bus=pci.0,addr=0x15"; \
 			else \
 				opts=; \
 			fi; \
