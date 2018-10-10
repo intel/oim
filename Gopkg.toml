@@ -49,7 +49,9 @@ ignored = [
 
 [[constraint]]
   name = "github.com/spdk/spdk"
-  branch = "master"
+  # Because we need https://review.gerrithub.io/c/spdk/spdk/+/430460/ for RBD.
+  source = "github.com/pohly/spdk"
+  branch = "rbd"
 
 [[override]]
   name = "github.com/kubernetes-csi/csi-test"

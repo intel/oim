@@ -19,8 +19,8 @@ timing_enter calsoft
 MALLOC_BDEV_SIZE=64
 MALLOC_BLOCK_SIZE=512
 
-rpc_py="python $rootdir/scripts/rpc.py"
-calsoft_py="python $testdir/calsoft.py"
+rpc_py="$rootdir/scripts/rpc.py"
+calsoft_py="$testdir/calsoft.py"
 
 # Copy the calsoft config file to /usr/local/etc
 mkdir -p /usr/local/etc
@@ -32,14 +32,14 @@ echo "IP=$TARGET_IP" >> /usr/local/etc/its.conf
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -m 0x1 -w &
+$ISCSI_APP -m 0x1 --wait-for-rpc &
 pid=$!
 echo "Process pid: $pid"
 
 trap "killprocess $pid; delete_tmp_conf_files; exit 1 " SIGINT SIGTERM EXIT
 
 waitforlisten $pid
-$rpc_py load_subsystem_config -f $testdir/iscsi.json
+$rpc_py load_subsystem_config < $testdir/iscsi.json
 $rpc_py start_subsystem_init
 echo "iscsi_tgt is listening. Running tests..."
 

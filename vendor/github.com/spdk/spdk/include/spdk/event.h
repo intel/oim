@@ -216,7 +216,7 @@ int spdk_app_parse_core_mask(const char *mask, struct spdk_cpuset *cpumask);
  */
 struct spdk_cpuset *spdk_app_get_core_mask(void);
 
-#define SPDK_APP_GETOPT_STRING "c:de:ghi:m:n:p:qr:s:uwB:L:RW:"
+#define SPDK_APP_GETOPT_STRING "c:de:ghi:m:n:p:r:s:uB:L:RW:"
 
 enum spdk_app_parse_args_rvals {
 	SPDK_APP_PARSE_ARGS_HELP = 0,
@@ -233,6 +233,7 @@ typedef enum spdk_app_parse_args_rvals spdk_app_parse_args_rvals_t;
  * \param opts Default options for the application.
  * \param getopt_str String representing the app-specific command line parameters.
  * Characters in this string must not conflict with characters in SPDK_APP_GETOPT_STRING.
+ * \param app_long_opts Array of full-name parameters. Can be NULL.
  * \param parse Function pointer to call if an argument in getopt_str is found.
  * \param usage Function pointer to print usage messages for app-specific command
  *		line parameters.
@@ -241,7 +242,8 @@ typedef enum spdk_app_parse_args_rvals spdk_app_parse_args_rvals_t;
  */
 spdk_app_parse_args_rvals_t spdk_app_parse_args(int argc, char **argv,
 		struct spdk_app_opts *opts, const char *getopt_str,
-		void (*parse)(int ch, char *arg), void (*usage)(void));
+		struct option *app_long_opts, void (*parse)(int ch, char *arg),
+		void (*usage)(void));
 
 /**
  * Print usage strings for common SPDK command line options.

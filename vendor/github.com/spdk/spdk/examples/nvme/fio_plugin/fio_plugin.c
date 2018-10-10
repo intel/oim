@@ -685,7 +685,8 @@ spdk_fio_queue(struct thread_data *td, struct io_u *io_u)
 		return -ENXIO;
 	}
 
-	block_size = spdk_nvme_ns_get_sector_size(ns);
+	block_size = spdk_nvme_ns_get_extended_sector_size(ns);
+
 	lba = io_u->offset / block_size;
 	lba_count = io_u->xfer_buflen / block_size;
 
@@ -852,6 +853,7 @@ static struct fio_option options[] = {
 		.type		= FIO_OPT_INT,
 		.off1		= offsetof(struct spdk_fio_options, mem_size),
 		.def		= "512",
+		.help		= "Memory Size for SPDK (MB)",
 		.category	= FIO_OPT_C_ENGINE,
 		.group		= FIO_OPT_G_INVALID,
 	},
@@ -861,6 +863,7 @@ static struct fio_option options[] = {
 		.type		= FIO_OPT_INT,
 		.off1		= offsetof(struct spdk_fio_options, shm_id),
 		.def		= "-1",
+		.help		= "Shared Memory ID",
 		.category	= FIO_OPT_C_ENGINE,
 		.group		= FIO_OPT_G_INVALID,
 	},
@@ -870,6 +873,7 @@ static struct fio_option options[] = {
 		.type		= FIO_OPT_INT,
 		.off1		= offsetof(struct spdk_fio_options, enable_sgl),
 		.def		= "0",
+		.help		= "SGL Used for I/O Commands (enable_sgl=1 or enable_sgl=0)",
 		.category	= FIO_OPT_C_ENGINE,
 		.group		= FIO_OPT_G_INVALID,
 	},

@@ -66,7 +66,8 @@ struct spdk_ut_sock_group_impl {
 #define __ut_group(group) (struct spdk_ut_sock_group_impl *)group
 
 static int
-spdk_ut_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, char *caddr, int clen)
+spdk_ut_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *sport,
+		     char *caddr, int clen, uint16_t *cport)
 {
 	return 0;
 }
@@ -144,6 +145,7 @@ spdk_ut_sock_close(struct spdk_sock *_sock)
 	if (sock == g_ut_client_sock) {
 		g_ut_client_sock = NULL;
 	}
+	free(_sock);
 
 	return 0;
 }

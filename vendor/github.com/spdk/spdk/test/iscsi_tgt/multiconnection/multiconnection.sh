@@ -5,16 +5,15 @@ rootdir=$(readlink -f $testdir/../../..)
 source $rootdir/test/common/autotest_common.sh
 source $rootdir/test/iscsi_tgt/common.sh
 
-rpc_py="python $rootdir/scripts/rpc.py"
-fio_py="python $rootdir/scripts/fio.py"
+rpc_py="$rootdir/scripts/rpc.py"
+fio_py="$rootdir/scripts/fio.py"
 
 CONNECTION_NUMBER=30
 
 # Remove lvol bdevs and stores.
-function remove_backends()
-{
+function remove_backends() {
 	echo "INFO: Removing lvol bdevs"
-	for i in `seq 1 $CONNECTION_NUMBER`; do
+	for i in $(seq 1 $CONNECTION_NUMBER); do
 		lun="lvs0/lbd_$i"
 		$rpc_py destroy_lvol_bdev $lun
 		echo -e "\tINFO: lvol bdev $lun removed"
@@ -36,7 +35,7 @@ timing_enter multiconnection
 
 timing_enter start_iscsi_tgt
 # Start the iSCSI target without using stub.
-$ISCSI_APP -w &
+$ISCSI_APP --wait-for-rpc &
 iscsipid=$!
 echo "iSCSI target launched. pid: $iscsipid"
 trap "remove_backends; iscsicleanup; killprocess $iscsipid; exit 1" SIGINT SIGTERM EXIT
@@ -55,12 +54,12 @@ ls_guid=$($rpc_py construct_lvol_store "Nvme0n1" "lvs0" -c 1048576)
 
 # Assign even size for each lvol_bdev.
 get_lvs_free_mb $ls_guid
-lvol_bdev_size=$(($free_mb/$CONNECTION_NUMBER))
-for i in `seq 1 $CONNECTION_NUMBER`; do
+lvol_bdev_size=$(($free_mb / $CONNECTION_NUMBER))
+for i in $(seq 1 $CONNECTION_NUMBER); do
 	$rpc_py construct_lvol_bdev -u $ls_guid lbd_$i $lvol_bdev_size
 done
 
-for i in `seq 1 $CONNECTION_NUMBER`; do
+for i in $(seq 1 $CONNECTION_NUMBER); do
 	lun="lvs0/lbd_$i:0"
 	$rpc_py construct_target_node Target$i Target${i}_alias "$lun" $PORTAL_TAG:$INITIATOR_TAG 256 -d
 done

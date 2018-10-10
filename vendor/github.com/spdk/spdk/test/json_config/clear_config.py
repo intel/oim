@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -12,7 +12,6 @@ def get_bdev_name_key(bdev):
     bdev_name_key = 'name'
     if 'method' in bdev and bdev['method'] == 'construct_split_vbdev':
         bdev_name_key = "base_bdev"
-
     return bdev_name_key
 
 
@@ -27,7 +26,6 @@ def get_bdev_name(bdev):
             bdev_name = bdev['params']['base_bdev']
     if 'method' in bdev and bdev['method'] == 'construct_error_bdev':
         bdev_name = "EE_%s" % bdev_name
-
     return bdev_name
 
 
@@ -54,12 +52,13 @@ def get_bdev_destroy_method(bdev):
                           'construct_aio_bdev': "delete_aio_bdev",
                           'construct_error_bdev': "delete_error_bdev",
                           'construct_split_vbdev': "destruct_split_vbdev",
-                          'construct_virtio_dev': "remove_virtio_bdev"
+                          'construct_virtio_dev': "remove_virtio_bdev",
+                          'construct_crypto_bdev': "delete_crypto_bdev"
                           }
     destroy_method = None
     if 'method' in bdev:
         construct_method = bdev['method']
-        if construct_method in destroy_method_map.keys():
+        if construct_method in list(destroy_method_map.keys()):
             destroy_method = destroy_method_map[construct_method]
 
     return destroy_method
@@ -81,11 +80,11 @@ def clear_bdev_subsystem(args, bdev_config):
 
 
 def get_nvmf_destroy_method(nvmf):
-    destroy_method_map = {'construct_nvmf_subsystem': "delete_nvmf_subsystem",
-                          'set_nvmf_target_config': None,
-                          'set_nvmf_target_options': None
-                          }
-    return destroy_method_map[nvmf['method']]
+    destroy_method_map = {'nvmf_subsystem_create': "delete_nvmf_subsystem"}
+    try:
+        return destroy_method_map[nvmf['method']]
+    except KeyError:
+        return None
 
 
 def clear_nvmf_subsystem(args, nvmf_config):
@@ -168,7 +167,7 @@ def call_test_cmd(func):
         try:
             func(*args, **kwargs)
         except JSONRPCException as ex:
-            print(ex.message)
+            print((ex.message))
             exit(1)
     return rpc_test_cmd
 
@@ -196,7 +195,7 @@ if __name__ == "__main__":
         if config is None:
             return
         if args.verbose:
-            print "Calling clear_%s_subsystem" % args.subsystem
+            print("Calling clear_%s_subsystem" % args.subsystem)
         globals()["clear_%s_subsystem" % args.subsystem](args, config)
 
     p = subparsers.add_parser('clear_subsystem', help="""Clear configuration of SPDK subsystem using JSON RPC""")
@@ -208,6 +207,6 @@ if __name__ == "__main__":
     try:
         args.client = rpc.client.JSONRPCClient(args.server_addr, args.port, args.verbose, args.timeout)
     except JSONRPCException as ex:
-        print(ex.message)
+        print((ex.message))
         exit(1)
     args.func(args)

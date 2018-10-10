@@ -102,7 +102,16 @@ struct pt_io_channel {
  */
 struct passthru_bdev_io {
 	uint8_t test;
+
+	/* bdev related */
+	struct spdk_io_channel *ch;
+
+	/* for bdev_io_wait */
+	struct spdk_bdev_io_wait_entry bdev_io_wait;
 };
+
+static void
+vbdev_passthru_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io);
 
 /* Called after we've unregistered following a hot remove callback.
  * Our finish entry point will be called next.
@@ -151,6 +160,49 @@ _pt_complete_io(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	spdk_bdev_free_io(bdev_io);
 }
 
+static void
+vbdev_passthru_resubmit_io(void *arg)
+{
+	struct spdk_bdev_io *bdev_io = (struct spdk_bdev_io *)arg;
+	struct passthru_bdev_io *io_ctx = (struct passthru_bdev_io *)bdev_io->driver_ctx;
+
+	vbdev_passthru_submit_request(io_ctx->ch, bdev_io);
+}
+
+static void
+vbdev_passthru_queue_io(struct spdk_bdev_io *bdev_io)
+{
+	struct passthru_bdev_io *io_ctx = (struct passthru_bdev_io *)bdev_io->driver_ctx;
+	int rc;
+
+	io_ctx->bdev_io_wait.bdev = bdev_io->bdev;
+	io_ctx->bdev_io_wait.cb_fn = vbdev_passthru_resubmit_io;
+	io_ctx->bdev_io_wait.cb_arg = bdev_io;
+
+	rc = spdk_bdev_queue_io_wait(bdev_io->bdev, io_ctx->ch, &io_ctx->bdev_io_wait);
+	if (rc != 0) {
+		SPDK_ERRLOG("Queue io failed in vbdev_passthru_queue_io, rc=%d.\n", rc);
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+	}
+}
+
+/* Callback for getting a buf from the bdev pool in the event that the caller passed
+ * in NULL, we need to own the buffer so it doesn't get freed by another vbdev module
+ * beneath us before we're done with it. That won't happen in this example but it could
+ * if this example were used as a template for something more complex.
+ */
+static void
+pt_read_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
+{
+	struct vbdev_passthru *pt_node = SPDK_CONTAINEROF(bdev_io->bdev, struct vbdev_passthru,
+					 pt_bdev);
+	struct pt_io_channel *pt_ch = spdk_io_channel_get_ctx(ch);
+
+	spdk_bdev_readv_blocks(pt_node->base_desc, pt_ch->base_ch, bdev_io->u.bdev.iovs,
+			       bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.offset_blocks,
+			       bdev_io->u.bdev.num_blocks, _pt_complete_io,
+			       bdev_io);
+}
 
 /* Called when someone above submits IO to this pt vbdev. We're simply passing it on here
  * via SPDK IO calls which in turn allocate another bdev IO and call our cpl callback provided
@@ -162,7 +214,7 @@ vbdev_passthru_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *b
 	struct vbdev_passthru *pt_node = SPDK_CONTAINEROF(bdev_io->bdev, struct vbdev_passthru, pt_bdev);
 	struct pt_io_channel *pt_ch = spdk_io_channel_get_ctx(ch);
 	struct passthru_bdev_io *io_ctx = (struct passthru_bdev_io *)bdev_io->driver_ctx;
-	int rc = 1;
+	int rc = 0;
 
 	/* Setup a per IO context value; we don't do anything with it in the vbdev other
 	 * than confirm we get the same thing back in the completion callback just to
@@ -172,10 +224,8 @@ vbdev_passthru_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *b
 
 	switch (bdev_io->type) {
 	case SPDK_BDEV_IO_TYPE_READ:
-		rc = spdk_bdev_readv_blocks(pt_node->base_desc, pt_ch->base_ch, bdev_io->u.bdev.iovs,
-					    bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.offset_blocks,
-					    bdev_io->u.bdev.num_blocks, _pt_complete_io,
-					    bdev_io);
+		spdk_bdev_io_get_buf(bdev_io, pt_read_get_buf_cb,
+				     bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 		break;
 	case SPDK_BDEV_IO_TYPE_WRITE:
 		rc = spdk_bdev_writev_blocks(pt_node->base_desc, pt_ch->base_ch, bdev_io->u.bdev.iovs,
@@ -211,13 +261,19 @@ vbdev_passthru_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *b
 		return;
 	}
 	if (rc != 0) {
-		SPDK_ERRLOG("ERROR on bdev_io submission!\n");
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		if (rc == -ENOMEM) {
+			SPDK_ERRLOG("No memory, start to queue io for passthru.\n");
+			io_ctx->ch = ch;
+			vbdev_passthru_queue_io(bdev_io);
+		} else {
+			SPDK_ERRLOG("ERROR on bdev_io submission!\n");
+			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		}
 	}
 }
 
 /* We'll just call the base bdev and let it answer however if we were more
- * restrictive for some reason (or less) we could get the repsonse back
+ * restrictive for some reason (or less) we could get the response back
  * and modify according to our purposes.
  */
 static bool
@@ -241,7 +297,7 @@ vbdev_passthru_get_io_channel(void *ctx)
 	struct spdk_io_channel *pt_ch = NULL;
 
 	/* The IO channel code will allocate a channel for us which consists of
-	 * the SPDK cahnnel structure plus the size of our pt_io_channel struct
+	 * the SPDK channel structure plus the size of our pt_io_channel struct
 	 * that we passed in when we registered our IO device. It will then call
 	 * our channel create callback to populate any elements that we need to
 	 * update.
@@ -433,7 +489,7 @@ vbdev_passthru_write_json_config(struct spdk_bdev *bdev, struct spdk_json_write_
 	spdk_json_write_object_end(w);
 }
 
-/* When we regsiter our bdev this is how we specify our entry points. */
+/* When we register our bdev this is how we specify our entry points. */
 static const struct spdk_bdev_fn_table vbdev_passthru_fn_table = {
 	.destruct		= vbdev_passthru_destruct,
 	.submit_request		= vbdev_passthru_submit_request,
@@ -492,7 +548,7 @@ vbdev_passthru_register(struct spdk_bdev *bdev)
 		}
 		pt_node->pt_bdev.product_name = "passthru";
 
-		/* Copy some properties from the underying base bdev. */
+		/* Copy some properties from the underlying base bdev. */
 		pt_node->pt_bdev.write_cache = bdev->write_cache;
 		pt_node->pt_bdev.need_aligned_buffer = bdev->need_aligned_buffer;
 		pt_node->pt_bdev.optimal_io_boundary = bdev->optimal_io_boundary;
@@ -508,7 +564,8 @@ vbdev_passthru_register(struct spdk_bdev *bdev)
 		TAILQ_INSERT_TAIL(&g_pt_nodes, pt_node, link);
 
 		spdk_io_device_register(pt_node, pt_bdev_ch_create_cb, pt_bdev_ch_destroy_cb,
-					sizeof(struct pt_io_channel));
+					sizeof(struct pt_io_channel),
+					name->bdev_name);
 		SPDK_NOTICELOG("io_device created at: 0x%p\n", pt_node);
 
 		rc = spdk_bdev_open(bdev, true, vbdev_passthru_base_bdev_hotremove_cb,
@@ -572,9 +629,25 @@ create_passthru_disk(const char *bdev_name, const char *vbdev_name)
 void
 delete_passthru_disk(struct spdk_bdev *bdev, spdk_delete_passthru_complete cb_fn, void *cb_arg)
 {
+	struct bdev_names *name;
+
 	if (!bdev || bdev->module != &passthru_if) {
 		cb_fn(cb_arg, -ENODEV);
 		return;
+	}
+
+	/* Remove the association (vbdev, bdev) from g_bdev_names. This is required so that the
+	 * vbdev does not get re-created if the same bdev is constructed at some other time,
+	 * unless the underlying bdev was hot-removed.
+	 */
+	TAILQ_FOREACH(name, &g_bdev_names, link) {
+		if (strcmp(name->vbdev_name, bdev->name) == 0) {
+			TAILQ_REMOVE(&g_bdev_names, name, link);
+			free(name->bdev_name);
+			free(name->vbdev_name);
+			free(name);
+			break;
+		}
 	}
 
 	spdk_bdev_unregister(bdev, cb_fn, cb_arg);

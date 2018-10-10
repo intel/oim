@@ -239,6 +239,26 @@ static const struct rte_cryptodev_capabilities aesni_mb_pmd_capabilities[] = {
 			}, }
 		}, }
 	},
+	{	/*  3DES CBC */
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
+		{.sym = {
+			.xform_type = RTE_CRYPTO_SYM_XFORM_CIPHER,
+			{.cipher = {
+				.algo = RTE_CRYPTO_CIPHER_3DES_CBC,
+				.block_size = 8,
+				.key_size = {
+					.min = 8,
+					.max = 24,
+					.increment = 8
+				},
+				.iv_size = {
+					.min = 8,
+					.max = 8,
+					.increment = 0
+				}
+			}, }
+		}, }
+	},
 	{	/* DES DOCSIS BPI */
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
 		{.sym = {
@@ -387,7 +407,8 @@ aesni_mb_pmd_info_get(struct rte_cryptodev *dev,
 		dev_info->feature_flags = dev->feature_flags;
 		dev_info->capabilities = aesni_mb_pmd_capabilities;
 		dev_info->max_nb_queue_pairs = internals->max_nb_queue_pairs;
-		dev_info->sym.max_nb_sessions = internals->max_nb_sessions;
+		/* No limit of number of sessions */
+		dev_info->sym.max_nb_sessions = 0;
 	}
 }
 
@@ -441,12 +462,12 @@ aesni_mb_pmd_qp_create_processed_ops_ring(struct aesni_mb_qp *qp,
 	r = rte_ring_lookup(ring_name);
 	if (r) {
 		if (rte_ring_get_size(r) >= ring_size) {
-			MB_LOG_INFO("Reusing existing ring %s for processed ops",
+			AESNI_MB_LOG(INFO, "Reusing existing ring %s for processed ops",
 			ring_name);
 			return r;
 		}
 
-		MB_LOG_ERR("Unable to reuse existing ring %s for processed ops",
+		AESNI_MB_LOG(ERR, "Unable to reuse existing ring %s for processed ops",
 			ring_name);
 		return NULL;
 	}
@@ -508,22 +529,6 @@ qp_setup_cleanup:
 	return -1;
 }
 
-/** Start queue pair */
-static int
-aesni_mb_pmd_qp_start(__rte_unused struct rte_cryptodev *dev,
-		__rte_unused uint16_t queue_pair_id)
-{
-	return -ENOTSUP;
-}
-
-/** Stop queue pair */
-static int
-aesni_mb_pmd_qp_stop(__rte_unused struct rte_cryptodev *dev,
-		__rte_unused uint16_t queue_pair_id)
-{
-	return -ENOTSUP;
-}
-
 /** Return the number of allocated queue pairs */
 static uint32_t
 aesni_mb_pmd_qp_count(struct rte_cryptodev *dev)
@@ -533,14 +538,14 @@ aesni_mb_pmd_qp_count(struct rte_cryptodev *dev)
 
 /** Returns the size of the aesni multi-buffer session structure */
 static unsigned
-aesni_mb_pmd_session_get_size(struct rte_cryptodev *dev __rte_unused)
+aesni_mb_pmd_sym_session_get_size(struct rte_cryptodev *dev __rte_unused)
 {
 	return sizeof(struct aesni_mb_session);
 }
 
 /** Configure a aesni multi-buffer session from a crypto xform chain */
 static int
-aesni_mb_pmd_session_configure(struct rte_cryptodev *dev,
+aesni_mb_pmd_sym_session_configure(struct rte_cryptodev *dev,
 		struct rte_crypto_sym_xform *xform,
 		struct rte_cryptodev_sym_session *sess,
 		struct rte_mempool *mempool)
@@ -550,27 +555,27 @@ aesni_mb_pmd_session_configure(struct rte_cryptodev *dev,
 	int ret;
 
 	if (unlikely(sess == NULL)) {
-		MB_LOG_ERR("invalid session struct");
+		AESNI_MB_LOG(ERR, "invalid session struct");
 		return -EINVAL;
 	}
 
 	if (rte_mempool_get(mempool, &sess_private_data)) {
-		CDEV_LOG_ERR(
-			"Couldn't get object from session mempool");
+		AESNI_MB_LOG(ERR,
+				"Couldn't get object from session mempool");
 		return -ENOMEM;
 	}
 
 	ret = aesni_mb_set_session_parameters(&job_ops[internals->vector_mode],
 			sess_private_data, xform);
 	if (ret != 0) {
-		MB_LOG_ERR("failed configure session parameters");
+		AESNI_MB_LOG(ERR, "failed configure session parameters");
 
 		/* Return session to mempool */
 		rte_mempool_put(mempool, sess_private_data);
 		return ret;
 	}
 
-	set_session_private_data(sess, dev->driver_id,
+	set_sym_session_private_data(sess, dev->driver_id,
 			sess_private_data);
 
 	return 0;
@@ -578,17 +583,17 @@ aesni_mb_pmd_session_configure(struct rte_cryptodev *dev,
 
 /** Clear the memory of session so it doesn't leave key material behind */
 static void
-aesni_mb_pmd_session_clear(struct rte_cryptodev *dev,
+aesni_mb_pmd_sym_session_clear(struct rte_cryptodev *dev,
 		struct rte_cryptodev_sym_session *sess)
 {
 	uint8_t index = dev->driver_id;
-	void *sess_priv = get_session_private_data(sess, index);
+	void *sess_priv = get_sym_session_private_data(sess, index);
 
 	/* Zero out the whole structure */
 	if (sess_priv) {
 		memset(sess_priv, 0, sizeof(struct aesni_mb_session));
 		struct rte_mempool *sess_mp = rte_mempool_from_obj(sess_priv);
-		set_session_private_data(sess, index, NULL);
+		set_sym_session_private_data(sess, index, NULL);
 		rte_mempool_put(sess_mp, sess_priv);
 	}
 }
@@ -606,13 +611,11 @@ struct rte_cryptodev_ops aesni_mb_pmd_ops = {
 
 		.queue_pair_setup	= aesni_mb_pmd_qp_setup,
 		.queue_pair_release	= aesni_mb_pmd_qp_release,
-		.queue_pair_start	= aesni_mb_pmd_qp_start,
-		.queue_pair_stop	= aesni_mb_pmd_qp_stop,
 		.queue_pair_count	= aesni_mb_pmd_qp_count,
 
-		.session_get_size	= aesni_mb_pmd_session_get_size,
-		.session_configure	= aesni_mb_pmd_session_configure,
-		.session_clear		= aesni_mb_pmd_session_clear
+		.sym_session_get_size	= aesni_mb_pmd_sym_session_get_size,
+		.sym_session_configure	= aesni_mb_pmd_sym_session_configure,
+		.sym_session_clear	= aesni_mb_pmd_sym_session_clear
 };
 
 struct rte_cryptodev_ops *rte_aesni_mb_pmd_ops = &aesni_mb_pmd_ops;

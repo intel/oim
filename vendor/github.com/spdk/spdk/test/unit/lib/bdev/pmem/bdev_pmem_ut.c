@@ -482,12 +482,13 @@ ut_pmem_write_read(void)
 	size_t i;
 	const uint64_t nblock_offset = 10;
 	uint64_t offset;
-	size_t io_size, nblock, total_io_size;
+	size_t io_size, nblock, total_io_size, bsize;
 
+	bsize = 4096;
 	struct iovec iov[] = {
-		{ 0, 2 * g_pool_ok.bsize },
-		{ 0, 3 * g_pool_ok.bsize },
-		{ 0, 4 * g_pool_ok.bsize },
+		{ 0, 2 * bsize },
+		{ 0, 3 * bsize },
+		{ 0, 4 * bsize },
 	};
 
 	rc = spdk_create_pmem_disk(g_pool_ok.name, g_bdev_name, &bdev);
@@ -522,7 +523,7 @@ ut_pmem_write_read(void)
 	CU_ASSERT_EQUAL(rc, SPDK_BDEV_IO_STATUS_FAILED);
 
 	/*
-	 * Write with insuficient IOV buffers length.
+	 * Write with insufficient IOV buffers length.
 	 */
 	rc = bdev_submit_request(bdev, SPDK_BDEV_IO_TYPE_WRITE, 0, g_pool_ok.nblock, &iov[0], 2);
 	CU_ASSERT_EQUAL(rc, SPDK_BDEV_IO_STATUS_FAILED);
@@ -588,7 +589,7 @@ ut_pmem_write_read(void)
 	CU_ASSERT_EQUAL(rc, SPDK_BDEV_IO_STATUS_FAILED);
 
 	/*
-	 * Read with insuficient IOV buffers length.
+	 * Read with insufficient IOV buffers length.
 	 */
 	rc = bdev_submit_request(bdev, SPDK_BDEV_IO_TYPE_READ, 0, g_pool_ok.nblock, &iov[0], 2);
 	CU_ASSERT_EQUAL(rc, SPDK_BDEV_IO_STATUS_FAILED);

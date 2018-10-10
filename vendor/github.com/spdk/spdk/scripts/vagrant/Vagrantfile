@@ -3,7 +3,7 @@
 
 Vagrant.configure(2) do |config|
 
-  # Pick the right distro and bootstrap, default is ubuntu1604
+  # Pick the right distro and bootstrap, default is fedora26
   distro = ( ENV['SPDK_VAGRANT_DISTRO'] || "fedora26")
   case distro
   when "centos7"
@@ -27,9 +27,18 @@ Vagrant.configure(2) do |config|
   when "fedora27"
     #See: https://app.vagrantup.com/generic/boxes/fedora27
     config.vm.box = "generic/fedora27"
+  when "fedora28"
+    #See: https://app.vagrantup.com/generic/boxes/fedora28
+    config.vm.box = "generic/fedora28"
   when "freebsd11"
     #See: https://app.vagrantup.com/generic/boxes/freebsd11
     config.vm.box = "generic/freebsd11"
+    if File.file?(File.expand_path("~/vagrant_pkg.conf"))
+      config.vm.provision  "file", source: "~/vagrant_pkg.conf", destination: "pkg.conf"
+      config.vm.provision "shell", inline: "sudo mv pkg.conf /usr/local/etc/pkg.conf"
+      config.vm.provision "shell", inline: "sudo chown root:wheel /usr/local/etc/pkg.conf"
+      config.vm.provision "shell", inline: "sudo chmod 644 /usr/local/etc/pkg.conf"
+    end
   else
     "Invalid argument #{distro}"
     abort("Invalid argument!")
@@ -39,6 +48,14 @@ Vagrant.configure(2) do |config|
   # Copy in the .gitconfig if it exists
   if File.file?(File.expand_path("~/.gitconfig"))
     config.vm.provision  "file", source: "~/.gitconfig", destination: ".gitconfig"
+  end
+
+  # Copy the tsocks configuration file for use when installing some spdk test pool dependencies
+  if File.file?("/etc/tsocks.conf")
+    config.vm.provision  "file", source: "/etc/tsocks.conf", destination: "tsocks.conf"
+    config.vm.provision "shell", inline: "sudo mv tsocks.conf /etc/tsocks.conf"
+    config.vm.provision "shell", inline: "sudo chown root:wheel /etc/tsocks.conf"
+    config.vm.provision "shell", inline: "sudo chmod 644 /etc/tsocks.conf"
   end
 
   # vagrant-cachier caches apt/yum etc to speed subsequent
@@ -62,6 +79,8 @@ Vagrant.configure(2) do |config|
   vmcpu=(ENV['SPDK_VAGRANT_VMCPU'] || 2)
   vmram=(ENV['SPDK_VAGRANT_VMRAM'] || 4096)
   spdk_dir=(ENV['SPDK_DIR'] || "none")
+  vhost_host_dir=(ENV['VHOST_HOST_DIR'] || "none")
+  vhost_vm_dir=(ENV['VHOST_VM_DIR'] || "none")
 
   config.ssh.forward_agent = true
   config.ssh.forward_x11 = true
@@ -70,18 +89,6 @@ Vagrant.configure(2) do |config|
     vb.customize ["modifyvm", :id, "--ioapic", "on"]
     vb.memory = "#{vmram}"
     vb.cpus = "#{vmcpu}"
-
-    # rsync the spdk directory if provision hasn't happened yet
-    unless File.exist? (".vagrant/machines/default/virtualbox/action_provision")
-      if spdk_dir != "none"
-        config.vm.synced_folder "#{spdk_dir}", "/home/vagrant/spdk_repo/spdk", type: "rsync", rsync__auto: false
-      end
-
-      # Copy in the user's tools if they exists
-      if File.directory?(File.expand_path("~/vagrant_tools"))
-        config.vm.synced_folder "~/vagrant_tools", "/home/vagrant/tools", type: "rsync", rsync__auto: false
-      end
-    end
 
     nvme_disk = 'nvme.vdi'
     unless File.exist? (nvme_disk)
@@ -99,12 +106,14 @@ Vagrant.configure(2) do |config|
   # libvirt configuration need modern Qemu(tested on 2.10) & vagrant-libvirt in version 0.0.39+
   # There are few limitation for SElinux - The file added outside libvirt must have proper SE ACL policy or setenforce 0
   config.vm.provider "libvirt" do |libvirt, override|
+    libvirt.random_hostname = "1"
+    libvirt.disk_bus = "virtio"
 
     # we put nvme_disk inside default pool to eliminate libvirt/SELinux Permissions Problems
     # and to be able to run vagrant from user $HOME directory
     nvme_disk = '/var/lib/libvirt/images/nvme_disk.img'
     unless File.exist? (nvme_disk)
-      override.puts "If run with libvirt provider please execute create_nvme_img.sh"
+      puts "If run with libvirt provider please execute create_nvme_img.sh"
     end
 
     libvirt.qemuargs :value => "-drive"
@@ -119,12 +128,31 @@ Vagrant.configure(2) do |config|
 
     # Optional field if we want use other storage pools than default
     # libvirt.storage_pool_name = "vm"
+  end
 
-    # rsync the spdk directory if provision hasn't happened yet
-    unless File.exist? (".vagrant/machines/default/virtualbox/action_provision")
-      if spdk_dir != "none"
-        config.vm.synced_folder "#{spdk_dir}", "/home/vagrant/spdk_repo/spdk", type: "rsync"
-      end
+  # rsync the spdk directory if provision hasn't happened yet
+  if ENV['COPY_SPDK_DIR'] == "1" && spdk_dir != "none"
+    config.vm.synced_folder "#{spdk_dir}", "/home/vagrant/spdk_repo/spdk", type: "rsync", rsync__auto: false
+  end
+
+  # provision the vm with all of the necessary spdk dependencies for running the autorun.sh tests
+  if ENV['DEPLOY_TEST_VM'] == "1" && spdk_dir != "none"
+    config.vm.provision "shell" do |setup|
+      setup.path = "#{spdk_dir}/test/common/config/vm_setup.sh"
+      setup.privileged = false
+      setup.args = ["-u", "-i"]
     end
+  end
+
+  if vhost_host_dir != "none"
+      config.vm.synced_folder "#{vhost_host_dir}", "#{vhost_vm_dir}", type: "rsync", rsync__auto: false
+      config.vm.provision "shell", inline: "sudo mkdir -p /root/.ssh"
+      config.vm.provision "shell", inline: "sudo cp #{vhost_vm_dir}/spdk_vhost_id_rsa* /root/.ssh"
+      config.vm.provision "shell", inline: "sudo chmod 600 /root/.ssh/spdk_vhost_id_rsa"
+  end
+
+  # Copy in the user's tools if they exists
+  if File.directory?(File.expand_path("~/vagrant_tools"))
+    config.vm.synced_folder "~/vagrant_tools", "/home/vagrant/tools", type: "rsync", rsync__auto: false
   end
 end

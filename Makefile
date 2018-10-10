@@ -69,7 +69,7 @@ clean:
 SPDK_SOURCE = vendor/github.com/spdk/spdk
 _work/vhost:
 	mkdir -p _work
-	cd $(SPDK_SOURCE) && ./configure && make -j
+	cd $(SPDK_SOURCE) && ./configure --with-rbd && make -j
 	cp -a $(SPDK_SOURCE)/app/vhost/vhost $@
 
 # protobuf API handling

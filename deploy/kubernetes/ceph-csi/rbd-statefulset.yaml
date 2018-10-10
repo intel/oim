@@ -1,0 +1,89 @@
+# In contrast to
+# https://github.com/ceph/ceph-csi/tree/master/deploy/rbd/kubernetes,
+# attacher and provisioner get deployed together with the rbdplugin
+# that they use. This makes the cluster-wide services independent
+# from node-specific operations.
+
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  name: oim-rbd-cluster
+spec:
+  serviceName: "csi-rbdplugin-attacher"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oim-rbd-cluster
+  template:
+    metadata:
+      labels:
+        app: oim-rbd-cluster
+    spec:
+      serviceAccountName: oim-rbd-cluster-sa
+      containers:
+        - name: rbdplugin
+          image: quay.io/cephcsi/rbdplugin:v0.3.0
+          args :
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--v=5"
+            - "--drivername=oim-rbd"
+          env:
+            - name: HOST_ROOTFS
+              value: "/rootfs"
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix://var/lib/kubelet/plugins/oim-rbd-cluster/csi.sock
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/oim-rbd-cluster
+            # This name is hard-coded in the source and independent of --drivername.
+            # Probably should use --drivername, but it doesn't matter and we want
+            # to get rid of it entirely anyway - see below.
+            - name: controller-dir
+              mountPath: /var/lib/kubelet/plugins/csi-rbdplugin/controller
+            - mountPath: /rootfs
+              name: host-rootfs
+        - name: provisioner
+          image: quay.io/k8scsi/csi-provisioner:v0.4.0
+          args:
+            - "--provisioner=oim-rbd"
+            - "--csi-address=$(ADDRESS)"
+            - "--v=5"
+          env:
+            - name: ADDRESS
+              value: /var/lib/kubelet/plugins/oim-rbd-cluster/csi.sock
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/oim-rbd-cluster
+        - name: attacher
+          image: quay.io/k8scsi/csi-attacher:v0.4.0
+          args:
+            - "--v=5"
+            - "--csi-address=$(ADDRESS)"
+          env:
+            - name: ADDRESS
+              value: /var/lib/kubelet/plugins/oim-rbd-cluster/csi.sock
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/oim-rbd-cluster
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd-cluster
+            type: DirectoryOrCreate
+        # We need to get rid of this directory, ceph-rbd should not store data locally (https://github.com/ceph/ceph-csi/issues/66).
+        - name: controller-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd-cluster/controller
+            type: DirectoryOrCreate
+        # This shouldn't be needed when just using rbdplugin for provisioning (https://github.com/ceph/ceph-csi/issues/93).
+        - name: host-rootfs
+          hostPath:
+            path: /

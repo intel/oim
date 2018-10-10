@@ -37,6 +37,7 @@
 #include "common/lib/ut_multithread.c"
 #include "unit/lib/json_mock.c"
 
+#include "spdk/config.h"
 /* HACK: disable VTune integration so the unit test doesn't need VTune headers and libs to build */
 #undef SPDK_CONFIG_VTUNE
 
@@ -52,6 +53,17 @@ DEFINE_STUB(spdk_conf_find_section, struct spdk_conf_section *, (struct spdk_con
 DEFINE_STUB(spdk_conf_section_get_nmval, char *,
 	    (struct spdk_conf_section *sp, const char *key, int idx1, int idx2), NULL);
 DEFINE_STUB(spdk_conf_section_get_intval, int, (struct spdk_conf_section *sp, const char *key), -1);
+
+struct spdk_trace_histories *g_trace_histories;
+DEFINE_STUB_V(spdk_trace_add_register_fn, (struct spdk_trace_register_fn *reg_fn));
+DEFINE_STUB_V(spdk_trace_register_owner, (uint8_t type, char id_prefix));
+DEFINE_STUB_V(spdk_trace_register_object, (uint8_t type, char id_prefix));
+DEFINE_STUB_V(spdk_trace_register_description, (const char *name, const char *short_name,
+		uint16_t tpoint_id, uint8_t owner_type,
+		uint8_t object_type, uint8_t new_object,
+		uint8_t arg1_is_ptr, const char *arg1_name));
+DEFINE_STUB_V(_spdk_trace_record, (uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id,
+				   uint32_t size, uint64_t object_id, uint64_t arg1));
 
 struct ut_bdev {
 	struct spdk_bdev	bdev;
@@ -71,6 +83,7 @@ bool g_teardown_done = false;
 bool g_get_io_channel = true;
 bool g_create_ch = true;
 bool g_init_complete_called = false;
+bool g_fini_start_called = true;
 
 static int
 stub_create_ch(void *io_device, void *ctx_buf)
@@ -190,11 +203,18 @@ init_complete(void)
 	g_init_complete_called = true;
 }
 
+static void
+fini_start(void)
+{
+	g_fini_start_called = true;
+}
+
 struct spdk_bdev_module bdev_ut_if = {
 	.name = "bdev_ut",
 	.module_init = module_init,
 	.module_fini = module_fini,
 	.init_complete = init_complete,
+	.fini_start = fini_start,
 };
 
 SPDK_BDEV_MODULE_REGISTER(&bdev_ut_if)
@@ -236,9 +256,10 @@ setup_test(void)
 	bool done = false;
 
 	allocate_threads(BDEV_UT_NUM_THREADS);
+	set_thread(0);
 	spdk_bdev_initialize(bdev_init_cb, &done);
 	spdk_io_device_register(&g_io_device, stub_create_ch, stub_destroy_ch,
-				sizeof(struct ut_bdev_channel));
+				sizeof(struct ut_bdev_channel), NULL);
 	register_bdev(&g_bdev, "ut_bdev", &g_io_device);
 	spdk_bdev_open(&g_bdev.bdev, true, NULL, NULL, &g_desc);
 }
@@ -252,6 +273,7 @@ finish_cb(void *cb_arg)
 static void
 teardown_test(void)
 {
+	set_thread(0);
 	g_teardown_done = false;
 	spdk_bdev_close(g_desc);
 	g_desc = NULL;
@@ -302,7 +324,68 @@ basic(void)
 	CU_ASSERT(g_ut_threads[0].ch != NULL);
 	spdk_put_io_channel(g_ut_threads[0].ch);
 
+	g_fini_start_called = false;
 	teardown_test();
+	CU_ASSERT(g_fini_start_called == true);
+}
+
+static void
+_bdev_removed(void *done)
+{
+	*(bool *)done = true;
+}
+
+static void
+_bdev_unregistered(void *done, int rc)
+{
+	CU_ASSERT(rc == 0);
+	*(bool *)done = true;
+}
+
+static void
+unregister_and_close(void)
+{
+	bool done, remove_notify;
+	struct spdk_bdev_desc *desc;
+
+	setup_test();
+	set_thread(0);
+
+	/* setup_test() automatically opens the bdev,
+	 * but this test needs to do that in a different
+	 * way. */
+	spdk_bdev_close(g_desc);
+	poll_threads();
+
+	remove_notify = false;
+	spdk_bdev_open(&g_bdev.bdev, true, _bdev_removed, &remove_notify, &desc);
+	CU_ASSERT(remove_notify == false);
+	CU_ASSERT(desc != NULL);
+
+	/* There is an open descriptor on the device. Unregister it,
+	 * which can't proceed until the descriptor is closed. */
+	done = false;
+	spdk_bdev_unregister(&g_bdev.bdev, _bdev_unregistered, &done);
+	/* No polling has occurred, so neither of these should execute */
+	CU_ASSERT(remove_notify == false);
+	CU_ASSERT(done == false);
+
+	/* Prior to the unregister completing, close the descriptor */
+	spdk_bdev_close(desc);
+
+	/* Poll the threads to allow all events to be processed */
+	poll_threads();
+
+	/* Remove notify should not have been called because the
+	 * descriptor is already closed. */
+	CU_ASSERT(remove_notify == false);
+
+	/* The unregister should have completed */
+	CU_ASSERT(done == true);
+
+	spdk_bdev_finish(finish_cb, NULL);
+	poll_threads();
+	free_threads();
 }
 
 static void
@@ -538,8 +621,10 @@ basic_qos(void)
 	 * Enable both IOPS and bandwidth rate limits.
 	 * In this case, both rate limits will take equal effect.
 	 */
-	bdev->internal.qos->iops_rate_limit = 2000; /* 2 I/O per millisecond */
-	bdev->internal.qos->byte_rate_limit = 8192000; /* 8K byte per millisecond with 4K block size */
+	/* 2000 I/O per second, or 2 per millisecond */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT].limit = 2000;
+	/* 8K byte per millisecond with 4K block size */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT].limit = 8192000;
 
 	g_get_io_channel = true;
 
@@ -646,8 +731,10 @@ io_during_qos_queue(void)
 	 * Enable both IOPS and bandwidth rate limits.
 	 * In this case, IOPS rate limit will take effect first.
 	 */
-	bdev->internal.qos->iops_rate_limit = 1000; /* 1000 I/O per second, or 1 per millisecond */
-	bdev->internal.qos->byte_rate_limit = 8192000; /* 8K byte per millisecond with 4K block size */
+	/* 1000 I/O per second, or 1 per millisecond */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT].limit = 1000;
+	/* 8K byte per millisecond with 4K block size */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT].limit = 8192000;
 
 	g_get_io_channel = true;
 
@@ -734,8 +821,10 @@ io_during_qos_reset(void)
 	 * Enable both IOPS and bandwidth rate limits.
 	 * In this case, bandwidth rate limit will take effect first.
 	 */
-	bdev->internal.qos->iops_rate_limit = 2000; /* 2000 I/O per second, or 2 per millisecond */
-	bdev->internal.qos->byte_rate_limit = 4096000; /* 4K byte per millisecond with 4K block size */
+	/* 2000 I/O per second, or 2 per millisecond */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT].limit = 2000;
+	/* 4K byte per millisecond with 4K block size */
+	bdev->internal.qos->rate_limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT].limit = 4096000;
 
 	g_get_io_channel = true;
 
@@ -907,7 +996,7 @@ enomem_multi_bdev(void)
 	enum spdk_bdev_io_status status[IO_ARRAY_SIZE];
 	uint32_t i;
 	struct ut_bdev *second_bdev;
-	struct spdk_bdev_desc *second_desc;
+	struct spdk_bdev_desc *second_desc = NULL;
 	struct spdk_bdev_channel *second_bdev_ch;
 	struct spdk_io_channel *second_ch;
 	int rc;
@@ -919,6 +1008,7 @@ enomem_multi_bdev(void)
 	SPDK_CU_ASSERT_FATAL(second_bdev != NULL);
 	register_bdev(second_bdev, "ut_bdev2", g_bdev.io_target);
 	spdk_bdev_open(&second_bdev->bdev, true, NULL, NULL, &second_desc);
+	SPDK_CU_ASSERT_FATAL(second_desc != NULL);
 
 	set_thread(0);
 	io_ch = spdk_bdev_get_io_channel(g_desc);
@@ -980,7 +1070,7 @@ enomem_multi_io_target(void)
 	uint32_t i;
 	int new_io_device;
 	struct ut_bdev *second_bdev;
-	struct spdk_bdev_desc *second_desc;
+	struct spdk_bdev_desc *second_desc = NULL;
 	struct spdk_bdev_channel *second_bdev_ch;
 	struct spdk_io_channel *second_ch;
 	int rc;
@@ -989,11 +1079,12 @@ enomem_multi_io_target(void)
 
 	/* Create new io_target and a second bdev using it */
 	spdk_io_device_register(&new_io_device, stub_create_ch, stub_destroy_ch,
-				sizeof(struct ut_bdev_channel));
+				sizeof(struct ut_bdev_channel), NULL);
 	second_bdev = calloc(1, sizeof(*second_bdev));
 	SPDK_CU_ASSERT_FATAL(second_bdev != NULL);
 	register_bdev(second_bdev, "ut_bdev2", &new_io_device);
 	spdk_bdev_open(&second_bdev->bdev, true, NULL, NULL, &second_desc);
+	SPDK_CU_ASSERT_FATAL(second_desc != NULL);
 
 	set_thread(0);
 	io_ch = spdk_bdev_get_io_channel(g_desc);
@@ -1063,10 +1154,15 @@ qos_dynamic_enable(void)
 	struct spdk_bdev_channel *bdev_ch[2];
 	struct spdk_bdev *bdev;
 	enum spdk_bdev_io_status bdev_io_status[2];
+	uint64_t limits[SPDK_BDEV_QOS_NUM_RATE_LIMIT_TYPES] = {};
 	int status, second_status, rc, i;
 
 	setup_test();
 	reset_time();
+
+	for (i = 0; i < SPDK_BDEV_QOS_NUM_RATE_LIMIT_TYPES; i++) {
+		limits[i] = UINT64_MAX;
+	}
 
 	bdev = &g_bdev.bdev;
 
@@ -1085,9 +1181,14 @@ qos_dynamic_enable(void)
 
 	set_thread(0);
 
-	/* Enable QoS */
+	/*
+	 * Enable QoS: IOPS and byte per second rate limits.
+	 * More than 10 I/Os allowed per timeslice.
+	 */
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 10000, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 10000;
+	limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT] = 100;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	poll_threads();
 	CU_ASSERT(status == 0);
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) != 0);
@@ -1125,9 +1226,19 @@ qos_dynamic_enable(void)
 	CU_ASSERT(bdev_io_status[1] == SPDK_BDEV_IO_STATUS_PENDING);
 	poll_threads();
 
-	/* Disable QoS */
+	/* Disable QoS: IOPS rate limit */
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 0, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 0;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
+	poll_threads();
+	CU_ASSERT(status == 0);
+	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) != 0);
+	CU_ASSERT((bdev_ch[1]->flags & BDEV_CH_QOS_ENABLED) != 0);
+
+	/* Disable QoS: Byte per second rate limit */
+	status = -1;
+	limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT] = 0;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	poll_threads();
 	CU_ASSERT(status == 0);
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) == 0);
@@ -1151,7 +1262,8 @@ qos_dynamic_enable(void)
 
 	/* Disable QoS again */
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 0, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 0;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	poll_threads();
 	CU_ASSERT(status == 0); /* This should succeed */
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) == 0);
@@ -1159,7 +1271,8 @@ qos_dynamic_enable(void)
 
 	/* Enable QoS on thread 0 */
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 10000, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 10000;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	poll_threads();
 	CU_ASSERT(status == 0);
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) != 0);
@@ -1168,7 +1281,8 @@ qos_dynamic_enable(void)
 	/* Disable QoS on thread 1 */
 	set_thread(1);
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 0, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 0;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	/* Don't poll yet. This should leave the channels with QoS enabled */
 	CU_ASSERT(status == -1);
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) != 0);
@@ -1176,7 +1290,8 @@ qos_dynamic_enable(void)
 
 	/* Enable QoS. This should immediately fail because the previous disable QoS hasn't completed. */
 	second_status = 0;
-	spdk_bdev_set_qos_limit_iops(bdev, 10000, qos_dynamic_enable_done, &second_status);
+	limits[SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT] = 10;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &second_status);
 	poll_threads();
 	CU_ASSERT(status == 0); /* The disable should succeed */
 	CU_ASSERT(second_status < 0); /* The enable should fail */
@@ -1185,7 +1300,8 @@ qos_dynamic_enable(void)
 
 	/* Enable QoS on thread 1. This should succeed now that the disable has completed. */
 	status = -1;
-	spdk_bdev_set_qos_limit_iops(bdev, 10000, qos_dynamic_enable_done, &status);
+	limits[SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT] = 10000;
+	spdk_bdev_set_qos_rate_limits(bdev, limits, qos_dynamic_enable_done, &status);
 	poll_threads();
 	CU_ASSERT(status == 0);
 	CU_ASSERT((bdev_ch[0]->flags & BDEV_CH_QOS_ENABLED) != 0);
@@ -1220,6 +1336,7 @@ main(int argc, char **argv)
 
 	if (
 		CU_add_test(suite, "basic", basic) == NULL ||
+		CU_add_test(suite, "unregister_and_close", unregister_and_close) == NULL ||
 		CU_add_test(suite, "basic_qos", basic_qos) == NULL ||
 		CU_add_test(suite, "put_channel_during_reset", put_channel_during_reset) == NULL ||
 		CU_add_test(suite, "aborted_reset", aborted_reset) == NULL ||

@@ -45,6 +45,7 @@ type storageClassTest struct {
 	expectedSize   string
 	pvCheck        func(volume *v1.PersistentVolume) error
 	nodeName       string
+	nodeName2      string
 	nodeSelector   map[string]string
 }
 
@@ -129,10 +130,14 @@ func testDynamicProvisioning(t storageClassTest, client clientset.Interface, cla
 		// Get entry, get mount options at 6th word, replace brackets with commas
 		command += fmt.Sprintf(" && ( mount | grep 'on /mnt/test' | awk '{print $6}' | sed 's/^(/,/; s/)$/,/' | grep -q ,%s, )", option)
 	}
-	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, t.nodeSelector, command)
+	nodeName := t.nodeName
+	runInPodWithVolume(client, "first", claim.Namespace, claim.Name, nodeName, t.nodeSelector, command)
 
 	By("checking the created volume is readable and retains data")
-	runInPodWithVolume(client, claim.Namespace, claim.Name, t.nodeName, t.nodeSelector, "grep 'hello world' /mnt/test/data")
+	if t.nodeName2 != "" {
+		nodeName = t.nodeName2
+	}
+	runInPodWithVolume(client, "second", claim.Namespace, claim.Name, nodeName, t.nodeSelector, "grep 'hello world' /mnt/test/data")
 
 	By(fmt.Sprintf("deleting claim %q/%q", claim.Namespace, claim.Name))
 	framework.ExpectNoError(client.CoreV1().PersistentVolumeClaims(claim.Namespace).Delete(claim.Name, nil))
@@ -226,14 +231,14 @@ func newClaim(t storageClassTest, ns, suffix string) *v1.PersistentVolumeClaim {
 }
 
 // runInPodWithVolume runs a command in a pod with given claim mounted to /mnt directory.
-func runInPodWithVolume(c clientset.Interface, ns, claimName, nodeName string, nodeSelector map[string]string, command string) {
+func runInPodWithVolume(c clientset.Interface, suffix, ns, claimName, nodeName string, nodeSelector map[string]string, command string) {
 	pod := &v1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "pvc-volume-tester-",
+			GenerateName: "pvc-volume-tester-" + suffix + "-",
 		},
 		Spec: v1.PodSpec{
 			NodeSelector: nodeSelector,

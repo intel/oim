@@ -218,8 +218,8 @@ struct spdk_nvme_transport_id {
 	 * addressing (e.g. RDMA), this should be an IP address. For PCIe, this
 	 * can either be a zero length string (the whole bus) or a PCI address
 	 * in the format DDDD:BB:DD.FF or DDDD.BB.DD.FF. For FC the string is
-	 * formatted as: nn-0xWWNN:pn-0xWWPN” where a)WWN isthe Node_Name of the
-	 * target NVMe_Port and b)WWPN is the N_Port_Name of the target NVMe_Port.
+	 * formatted as: nn-0xWWNN:pn-0xWWPN” where WWNN is the Node_Name of the
+	 * target NVMe_Port and WWPN is the N_Port_Name of the target NVMe_Port.
 	 */
 	char traddr[SPDK_NVMF_TRADDR_MAX_LEN + 1];
 
@@ -669,7 +669,10 @@ struct spdk_nvme_qpair;
  * request.
  *
  * For timeouts detected on the admin queue pair, the qpair returned here will
- * be NULL.
+ * be NULL.  If the controller has a serious error condition and is unable to
+ * communicate with driver via completion queue, the controller can set Controller
+ * Fatal Status field to 1, then reset is required to recover from such error.
+ * Users may detect Controller Fatal Status when timeout happens.
  *
  * \param cb_arg Argument passed to callback funciton.
  * \param ctrlr Opaque handle to NVMe controller.
@@ -1093,6 +1096,56 @@ int spdk_nvme_ctrlr_cmd_set_feature_ns(struct spdk_nvme_ctrlr *ctrlr, uint8_t fe
 				       void *cb_arg, uint32_t ns_id);
 
 /**
+ * Receive security protocol data from controller.
+ *
+ * This function is thread safe and can be called at any point after spdk_nvme_probe().
+ *
+ * Call spdk_nvme_ctrlr_process_admin_completions() to poll for completion of
+ * commands submitted through this function.
+ *
+ * \param ctrlr NVMe controller to use for security receive command submission.
+ * \param secp Security Protocol that is used.
+ * \param spsp Security Protocol Specific field.
+ * \param nssf NVMe Security Specific field. Indicate RPMB target when using Security
+ * Protocol EAh.
+ * \param payload The pointer to the payload buffer.
+ * \param payload_size The size of payload buffer.
+ * \param cb_fn Callback function to invoke when the security receive has completed.
+ * \param cb_arg Argument to pass to the callback function.
+ *
+ * \return 0 if successfully submitted, negated errno if resources could not be allocated
+ * for this request.
+ */
+int spdk_nvme_ctrlr_cmd_security_receive(struct spdk_nvme_ctrlr *ctrlr, uint8_t secp, uint16_t spsp,
+		uint8_t nssf, void *payload, uint32_t payload_size,
+		spdk_nvme_cmd_cb cb_fn, void *cb_arg);
+
+/**
+ * Send security protocol data to controller.
+ *
+ * This function is thread safe and can be called at any point after spdk_nvme_probe().
+ *
+ * Call spdk_nvme_ctrlr_process_admin_completions() to poll for completion of
+ * commands submitted through this function.
+ *
+ * \param ctrlr NVMe controller to use for security send command submission.
+ * \param secp Security Protocol that is used.
+ * \param spsp Security Protocol Specific field.
+ * \param nssf NVMe Security Specific field. Indicate RPMB target when using Security
+ * Protocol EAh.
+ * \param payload The pointer to the payload buffer.
+ * \param payload_size The size of payload buffer.
+ * \param cb_fn Callback function to invoke when the security send has completed.
+ * \param cb_arg Argument to pass to the callback function.
+ *
+ * \return 0 if successfully submitted, negated errno if resources could not be allocated
+ * for this request.
+ */
+int spdk_nvme_ctrlr_cmd_security_send(struct spdk_nvme_ctrlr *ctrlr, uint8_t secp, uint16_t spsp,
+				      uint8_t nssf, void *payload, uint32_t payload_size,
+				      spdk_nvme_cmd_cb cb_fn, void *cb_arg);
+
+/**
  * Attach the specified namespace to controllers.
  *
  * This function is thread safe and can be called at any point after spdk_nvme_probe().
@@ -1287,6 +1340,9 @@ uint32_t spdk_nvme_ns_get_max_io_xfer_size(struct spdk_nvme_ns *ns);
 /**
  * Get the sector size, in bytes, of the given namespace.
  *
+ * This function returns the size of the data sector only.  It does not
+ * include metadata size.
+ *
  * This function is thread safe and can be called at any point while the controller
  * is attached to the SPDK NVMe driver.
  *
@@ -1295,6 +1351,20 @@ uint32_t spdk_nvme_ns_get_max_io_xfer_size(struct spdk_nvme_ns *ns);
  * /return the sector size in bytes.
  */
 uint32_t spdk_nvme_ns_get_sector_size(struct spdk_nvme_ns *ns);
+
+/**
+ * Get the extended sector size, in bytes, of the given namespace.
+ *
+ * This function returns the size of the data sector plus metadata.
+ *
+ * This function is thread safe and can be called at any point while the controller
+ * is attached to the SPDK NVMe driver.
+ *
+ * \param ns Namespace to query.
+ *
+ * /return the extended sector size in bytes.
+ */
+uint32_t spdk_nvme_ns_get_extended_sector_size(struct spdk_nvme_ns *ns);
 
 /**
  * Get the number of sectors for the given namespace.

@@ -51,10 +51,12 @@
 
 static int vbdev_gpt_init(void);
 static void vbdev_gpt_examine(struct spdk_bdev *bdev);
+static int vbdev_gpt_get_ctx_size(void);
 
 static struct spdk_bdev_module gpt_if = {
 	.name = "gpt",
 	.module_init = vbdev_gpt_init,
+	.get_ctx_size = vbdev_gpt_get_ctx_size,
 	.examine_disk = vbdev_gpt_examine,
 
 };
@@ -77,6 +79,14 @@ struct gpt_disk {
 
 struct gpt_channel {
 	struct spdk_bdev_part_channel	part_ch;
+};
+
+struct gpt_io {
+	struct spdk_io_channel *ch;
+	struct spdk_bdev_io *bdev_io;
+
+	/* for bdev_io_wait */
+	struct spdk_bdev_io_wait_entry bdev_io_wait;
 };
 
 static SPDK_BDEV_PART_TAILQ g_gpt_disks = TAILQ_HEAD_INITIALIZER(g_gpt_disks);
@@ -157,11 +167,49 @@ vbdev_gpt_destruct(void *ctx)
 }
 
 static void
+vbdev_gpt_resubmit_request(void *arg)
+{
+	struct gpt_io *io = (struct gpt_io *)arg;
+
+	vbdev_gpt_submit_request(io->ch, io->bdev_io);
+}
+
+static void
+vbdev_gpt_queue_io(struct gpt_io *io)
+{
+	int rc;
+
+	io->bdev_io_wait.bdev = io->bdev_io->bdev;
+	io->bdev_io_wait.cb_fn = vbdev_gpt_resubmit_request;
+	io->bdev_io_wait.cb_arg = io;
+
+	rc = spdk_bdev_queue_io_wait(io->bdev_io->bdev,
+				     io->ch, &io->bdev_io_wait);
+	if (rc != 0) {
+		SPDK_ERRLOG("Queue io failed in vbdev_gpt_queue_io, rc=%d.\n", rc);
+		spdk_bdev_io_complete(io->bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+	}
+}
+
+static void
 vbdev_gpt_submit_request(struct spdk_io_channel *_ch, struct spdk_bdev_io *bdev_io)
 {
 	struct gpt_channel *ch = spdk_io_channel_get_ctx(_ch);
+	struct gpt_io *io = (struct gpt_io *)bdev_io->driver_ctx;
+	int rc;
 
-	spdk_bdev_part_submit_request(&ch->part_ch, bdev_io);
+	rc = spdk_bdev_part_submit_request(&ch->part_ch, bdev_io);
+	if (rc) {
+		if (rc == -ENOMEM) {
+			SPDK_DEBUGLOG(SPDK_LOG_VBDEV_GPT, "gpt: no memory, queue io\n");
+			io->ch = _ch;
+			io->bdev_io = bdev_io;
+			vbdev_gpt_queue_io(io);
+		} else {
+			SPDK_ERRLOG("gpt: error on bdev_io submission, rc=%d.\n", rc);
+			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		}
+	}
 }
 
 static void
@@ -273,6 +321,7 @@ vbdev_gpt_create_bdevs(struct gpt_base *gpt_base)
 
 		rc = spdk_bdev_part_construct(&d->part, gpt_base->part_base, name,
 					      lba_start, lba_end - lba_start, "GPT Disk");
+		free(name);
 		if (rc) {
 			SPDK_ERRLOG("could not construct bdev part\n");
 			/* spdk_bdev_part_construct will free name on failure */
@@ -378,12 +427,28 @@ vbdev_gpt_init(void)
 	return 0;
 }
 
+static int
+vbdev_gpt_get_ctx_size(void)
+{
+	return sizeof(struct gpt_io);
+}
+
 static void
 vbdev_gpt_examine(struct spdk_bdev *bdev)
 {
 	int rc;
 
-	if (g_gpt_disabled) {
+	/* A bdev with fewer than 2 blocks cannot have a GPT. Block 0 has
+	 * the MBR and block 1 has the GPT header.
+	 */
+	if (g_gpt_disabled || spdk_bdev_get_num_blocks(bdev) < 2) {
+		spdk_bdev_module_examine_done(&gpt_if);
+		return;
+	}
+
+	if (spdk_bdev_get_block_size(bdev) % 512 != 0) {
+		SPDK_ERRLOG("GPT module does not support block size %" PRIu32 " for bdev %s\n",
+			    spdk_bdev_get_block_size(bdev), spdk_bdev_get_name(bdev));
 		spdk_bdev_module_examine_done(&gpt_if);
 		return;
 	}

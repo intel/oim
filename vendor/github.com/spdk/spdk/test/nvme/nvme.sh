@@ -87,7 +87,7 @@ if [ `uname` = Linux ]; then
 fi
 
 if [ `uname` = Linux ]; then
-	start_stub "-s 2048 -i 0 -m 0xF"
+	start_stub "-s 4096 -i 0 -m 0xF"
 	trap "kill_stub; exit 1" SIGINT SIGTERM EXIT
 fi
 
@@ -111,10 +111,10 @@ done
 timing_exit identify
 
 timing_enter perf
-$rootdir/examples/nvme/perf/perf -q 128 -w read -s 12288 -t 1 -LL -i 0
+$rootdir/examples/nvme/perf/perf -q 128 -w read -o 12288 -t 1 -LL -i 0
 if [ -b /dev/ram0 ]; then
 	# Test perf with AIO device
-	$rootdir/examples/nvme/perf/perf /dev/ram0 -q 128 -w read -s 12288 -t 1 -LL -i 0
+	$rootdir/examples/nvme/perf/perf /dev/ram0 -q 128 -w read -o 12288 -t 1 -LL -i 0
 	report_test_completion "nvme_perf"
 fi
 timing_exit perf
@@ -153,11 +153,11 @@ timing_exit arbitration
 
 if [ `uname` = Linux ]; then
 	timing_enter multi_secondary
-	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -s 4096 -t 3 -c 0x1 &
+	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -o 4096 -t 3 -c 0x1 &
 	pid0=$!
-	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -s 4096 -t 3 -c 0x2 &
+	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -o 4096 -t 3 -c 0x2 &
 	pid1=$!
-	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -s 4096 -t 3 -c 0x4
+	$rootdir/examples/nvme/perf/perf -i 0 -q 16 -w read -o 4096 -t 3 -c 0x4
 	wait $pid0
 	wait $pid1
 	report_test_completion "nvme_multi_secondary"

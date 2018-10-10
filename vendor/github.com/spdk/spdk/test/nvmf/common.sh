@@ -20,7 +20,8 @@ function load_ib_rdma_modules()
 
 	modprobe ib_cm
 	modprobe ib_core
-	modprobe ib_ucm
+	# Newer kernels do not have the ib_ucm module
+	modprobe ib_ucm || true
 	modprobe ib_umad
 	modprobe ib_uverbs
 	modprobe iw_cm
@@ -48,6 +49,7 @@ function detect_soft_roce_nics()
 function detect_mellanox_nics()
 {
 	if ! hash lspci; then
+		echo "No NICs"
 		return 0
 	fi
 
@@ -57,6 +59,7 @@ function detect_mellanox_nics()
 	mlx_en_driver="mlx4_en"
 
 	if [ -z "$nvmf_nic_bdfs" ]; then
+		echo "No NICs"
 		return 0
 	fi
 
@@ -85,8 +88,10 @@ function detect_mellanox_nics()
 
 function detect_rdma_nics()
 {
-	detect_mellanox_nics
-	detect_soft_roce_nics
+	nics=$(detect_mellanox_nics)
+	if [ "$nics" == "No NICs" ]; then
+		detect_soft_roce_nics
+	fi
 }
 
 function allocate_nic_ips()
@@ -129,7 +134,36 @@ function get_ip_address()
 function nvmfcleanup()
 {
 	sync
-	rmmod nvme-rdma
+	set +e
+	for i in {1..20}; do
+		modprobe -v -r nvme-rdma nvme-fabrics
+		if [ $? -eq 0 ]; then
+			set -e
+			return
+		fi
+		sleep 1
+	done
+	set -e
+
+	# So far unable to remove the kernel modules. Try
+	# one more time and let it fail.
+	modprobe -v -r nvme-rdma nvme-fabrics
+}
+
+function nvmftestinit()
+{
+	if [ "$1" == "iso" ]; then
+		$rootdir/scripts/setup.sh
+		rdma_device_init
+	fi
+}
+
+function nvmftestfini()
+{
+	if [ "$1" == "iso" ]; then
+		$rootdir/scripts/setup.sh reset
+		rdma_device_init
+	fi
 }
 
 function rdma_device_init()

@@ -8,10 +8,11 @@ package oimcontroller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -61,7 +62,9 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		case *oim.MapVolumeRequest_Malloc:
 			return nil, fmt.Errorf("no existing MallocBDev with name %s found", volumeID)
 		case *oim.MapVolumeRequest_Ceph:
-			return nil, errors.New("not implemented")
+			if err := c.mapCeph(ctx, volumeID, x.Ceph); err != nil {
+				return nil, err
+			}
 		case nil:
 			return nil, errors.New("missing volume parameters")
 		default:
@@ -169,10 +172,13 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 	}
 
 	// Don't fail when the BDev is not found (idempotency).
-	// TODO: check whether this is really a BDev created by MapVolume.
-	// if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: volumeID}); err != nil {
-	//	// TODO: detect error (https://github.com/spdk/spdk/issues/319)
-	// }
+	// Check whether this is really a BDev created by MapVolume (i.e. everything except MallocBDevs).
+	// TODO: detect "not found" errors (https://github.com/spdk/spdk/issues/319)
+	if bdev, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: volumeID}); err == nil && len(bdev) > 0 && bdev[0].ProductName != "Malloc disk" {
+		if err := spdk.DeleteBDev(ctx, c.SPDK, spdk.DeleteBDevArgs{Name: volumeID}); err != nil {
+			// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
+		}
+	}
 
 	return &oim.UnmapVolumeReply{}, nil
 }
@@ -231,6 +237,25 @@ func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDe
 		// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
 		return nil, status.Error(codes.NotFound, "")
 	}
+}
+
+func (c *Controller) mapCeph(ctx context.Context, volumeID string, cephParams *oim.CephParams) error {
+	if c.SPDK == nil {
+		return errors.New("not connected to SPDK")
+	}
+	request := spdk.ConstructRBDBDevArgs{
+		BlockSize: 512,
+		Name:      volumeID,
+		UserID:    cephParams.UserId,
+		PoolName:  cephParams.Pool,
+		RBDName:   cephParams.Image,
+		Config: map[string]string{
+			"mon_host": cephParams.Monitors,
+			"key":      cephParams.Secret,
+		},
+	}
+	_, err := spdk.ConstructRBDBDev(ctx, c.SPDK, request)
+	return errors.Wrapf(err, "ConstructRBDBDev %q for RBD pool %q and image %q, monitors %q", volumeID, cephParams.Pool, cephParams.Image, cephParams.Monitors)
 }
 
 type Option func(c *Controller) error

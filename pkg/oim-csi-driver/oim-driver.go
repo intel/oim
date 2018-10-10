@@ -10,11 +10,14 @@ package oimcsidriver
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"google.golang.org/grpc"
+
+	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
 const (
@@ -33,6 +36,7 @@ type oimDriver struct {
 	vhostEndpoint      string
 	oimRegistryAddress string
 	oimControllerID    string
+	emulate            *EmulateCSIDriver
 
 	driver *CSIDriver
 
@@ -40,14 +44,19 @@ type oimDriver struct {
 	ns    *nodeServer
 	cs    *controllerServer
 	vhost string
+}
 
-	cap   []*csi.VolumeCapability_AccessMode
-	cscap []*csi.ControllerServiceCapability
+type EmulateCSIDriver struct {
+	CSIDriverName                 string
+	ControllerServiceCapabilities []csi.ControllerServiceCapability_RPC_Type
+	VolumeCapabilityAccessModes   []csi.VolumeCapability_AccessMode_Mode
+	MapVolumeParams               func(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRequest) error
 }
 
 var (
 	//	oimDriver     *oim
-	vendorVersion = "0.2.0"
+	vendorVersion       = "0.2.0"
+	supportedCSIDrivers = make(map[string]*EmulateCSIDriver)
 )
 
 type Option func(*oimDriver) error
@@ -90,6 +99,21 @@ func WithOIMRegistryAddress(address string) Option {
 func WithOIMControllerID(id string) Option {
 	return func(od *oimDriver) error {
 		od.oimControllerID = id
+		return nil
+	}
+}
+
+func WithEmulation(csiDriverName string) Option {
+	return func(od *oimDriver) error {
+		if csiDriverName == "" {
+			od.emulate = nil
+			return nil
+		}
+		emulate := supportedCSIDrivers[csiDriverName]
+		if emulate == nil {
+			return fmt.Errorf("cannot emulate CSI driver %q", csiDriverName)
+		}
+		od.emulate = emulate
 		return nil
 	}
 }
@@ -153,8 +177,14 @@ func (od *oimDriver) Start(ctx context.Context) (*oimcommon.NonBlockingGRPCServe
 	if od.driver == nil {
 		return nil, errors.New("Failed to initialize CSI Driver.")
 	}
-	od.driver.AddControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME})
-	od.driver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
+	if od.emulate != nil {
+		od.driver.AddControllerServiceCapabilities(od.emulate.ControllerServiceCapabilities)
+		od.driver.AddVolumeCapabilityAccessModes(od.emulate.VolumeCapabilityAccessModes)
+	} else {
+		// malloc fallback
+		od.driver.AddControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME})
+		od.driver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
+	}
 
 	// Create GRPC servers
 	od.ids = NewIdentityServer(od)

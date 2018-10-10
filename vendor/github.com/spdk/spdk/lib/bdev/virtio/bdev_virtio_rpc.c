@@ -109,6 +109,9 @@ spdk_rpc_create_virtio_user_scsi_bdev(struct spdk_jsonrpc_request *request,
 	struct rpc_construct_virtio_scsi_dev *req;
 	int rc;
 
+	SPDK_WARNLOG("construct_virtio_user_scsi_bdev command has been deprecated and will be removed "
+		     "in the subsequent release. Please use construct_virtio_dev instead.\n");
+
 	req = calloc(1, sizeof(*req));
 	if (!req) {
 		rc = -ENOMEM;
@@ -155,6 +158,9 @@ spdk_rpc_construct_virtio_pci_scsi_dev(struct spdk_jsonrpc_request *request,
 	struct rpc_construct_virtio_scsi_dev *req;
 	struct spdk_pci_addr pci_addr;
 	int rc;
+
+	SPDK_WARNLOG("construct_virtio_pci_scsi_bdev command has been deprecated and will be removed "
+		     "in the subsequent release. Please use construct_virtio_dev instead.\n");
 
 	req = calloc(1, sizeof(*req));
 	if (!req) {
@@ -229,6 +235,9 @@ spdk_rpc_remove_virtio_scsi_bdev(struct spdk_jsonrpc_request *request,
 {
 	struct rpc_remove_virtio_dev req = {NULL};
 	int rc;
+
+	SPDK_WARNLOG("remove_virtio_scsi_bdev command has been deprecated and will be removed "
+		     "in the subsequent release. Please use remove_virtio_bdev instead.\n");
 
 	if (spdk_json_decode_object(params, rpc_remove_virtio_dev,
 				    SPDK_COUNTOF(rpc_remove_virtio_dev),
@@ -366,6 +375,9 @@ spdk_rpc_create_virtio_user_blk_bdev(struct spdk_jsonrpc_request *request,
 	req.vq_count = SPDK_VIRTIO_USER_DEFAULT_VQ_COUNT;
 	req.vq_size = SPDK_VIRTIO_USER_DEFAULT_QUEUE_SIZE;
 
+	SPDK_WARNLOG("construct_virtio_user_blk_bdev command has been deprecated and will be removed "
+		     "in the subsequent release. Please use construct_virtio_dev instead.\n");
+
 	if (spdk_json_decode_object(params, rpc_construct_virtio_user_blk_dev,
 				    SPDK_COUNTOF(rpc_construct_virtio_user_blk_dev),
 				    &req)) {
@@ -413,6 +425,9 @@ spdk_rpc_create_virtio_pci_blk_bdev(struct spdk_jsonrpc_request *request,
 	int rc;
 
 	req.pci_address = NULL;
+
+	SPDK_WARNLOG("construct_virtio_pci_blk_bdev command has been deprecated and will be removed "
+		     "in the subsequent release. Please use construct_virtio_dev instead.\n");
 
 	if (spdk_json_decode_object(params, rpc_construct_virtio_pci_blk_dev,
 				    SPDK_COUNTOF(rpc_construct_virtio_pci_blk_dev),

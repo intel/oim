@@ -69,6 +69,7 @@ int pci_vfio_is_enabled(void);
 
 struct spdk_vfio_dma_map {
 	struct vfio_iommu_type1_dma_map map;
+	struct vfio_iommu_type1_dma_unmap unmap;
 	TAILQ_ENTRY(spdk_vfio_dma_map) tailq;
 };
 
@@ -129,6 +130,11 @@ vtophys_iommu_map_dma(uint64_t vaddr, uint64_t iova, uint64_t size)
 	dma_map->map.iova = iova;
 	dma_map->map.size = size;
 
+	dma_map->unmap.argsz = sizeof(dma_map->unmap);
+	dma_map->unmap.flags = 0;
+	dma_map->unmap.iova = iova;
+	dma_map->unmap.size = size;
+
 	pthread_mutex_lock(&g_vfio.mutex);
 	if (g_vfio.device_ref == 0) {
 		/* VFIO requires at least one device (IOMMU group) to be added to
@@ -165,7 +171,6 @@ out_insert:
 static int
 vtophys_iommu_unmap_dma(uint64_t iova, uint64_t size)
 {
-	struct vfio_iommu_type1_dma_unmap dma_unmap;
 	struct spdk_vfio_dma_map *dma_map;
 	int ret;
 
@@ -190,12 +195,8 @@ vtophys_iommu_unmap_dma(uint64_t iova, uint64_t size)
 		goto out_remove;
 	}
 
-	dma_unmap.argsz = sizeof(dma_unmap);
-	dma_unmap.flags = 0;
-	dma_unmap.iova = iova;
-	dma_unmap.size = size;
 
-	ret = ioctl(g_vfio.fd, VFIO_IOMMU_UNMAP_DMA, &dma_unmap);
+	ret = ioctl(g_vfio.fd, VFIO_IOMMU_UNMAP_DMA, &dma_map->unmap);
 	if (ret) {
 		DEBUG_PRINT("Cannot clear DMA mapping, error %d\n", errno);
 		pthread_mutex_unlock(&g_vfio.mutex);
@@ -388,7 +389,7 @@ spdk_vtophys_notify(void *cb_ctx, struct spdk_mem_map *map,
 					}
 				}
 			}
-			/* Since PCI paddr can break the 2MiB physical alginment skip this check for that. */
+			/* Since PCI paddr can break the 2MiB physical alignment skip this check for that. */
 			if (!pci_phys && (paddr & MASK_2MB)) {
 				DEBUG_PRINT("invalid paddr 0x%" PRIx64 " - must be 2MB aligned\n", paddr);
 				return -EINVAL;
@@ -404,7 +405,11 @@ spdk_vtophys_notify(void *cb_ctx, struct spdk_mem_map *map,
 				 * we need to unmap the range from the IOMMU
 				 */
 				if (g_vfio.enabled) {
-					paddr = spdk_mem_map_translate(map, (uint64_t)vaddr, VALUE_2MB);
+					uint64_t buffer_len;
+					paddr = spdk_mem_map_translate(map, (uint64_t)vaddr, &buffer_len);
+					if (buffer_len != VALUE_2MB) {
+						return -EINVAL;
+					}
 					rc = vtophys_iommu_unmap_dma(paddr, VALUE_2MB);
 					if (rc) {
 						return -EFAULT;
@@ -586,7 +591,7 @@ spdk_vtophys_pci_device_removed(struct rte_pci_device *pci_device)
 	 * of other, external factors.
 	 */
 	TAILQ_FOREACH(dma_map, &g_vfio.maps, tailq) {
-		ret = ioctl(g_vfio.fd, VFIO_IOMMU_UNMAP_DMA, &dma_map->map);
+		ret = ioctl(g_vfio.fd, VFIO_IOMMU_UNMAP_DMA, &dma_map->unmap);
 		if (ret) {
 			DEBUG_PRINT("Cannot unmap DMA memory, error %d\n", errno);
 			break;
@@ -599,11 +604,16 @@ spdk_vtophys_pci_device_removed(struct rte_pci_device *pci_device)
 int
 spdk_vtophys_init(void)
 {
+	const struct spdk_mem_map_ops vtophys_map_ops = {
+		.notify_cb = spdk_vtophys_notify,
+		.are_contiguous = NULL
+	};
+
 #if SPDK_VFIO_ENABLED
 	spdk_vtophys_iommu_init();
 #endif
 
-	g_vtophys_map = spdk_mem_map_alloc(SPDK_VTOPHYS_ERROR, spdk_vtophys_notify, NULL);
+	g_vtophys_map = spdk_mem_map_alloc(SPDK_VTOPHYS_ERROR, &vtophys_map_ops, NULL);
 	if (g_vtophys_map == NULL) {
 		DEBUG_PRINT("vtophys map allocation failed\n");
 		return -1;
@@ -618,7 +628,7 @@ spdk_vtophys(void *buf)
 
 	vaddr = (uint64_t)buf;
 
-	paddr_2mb = spdk_mem_map_translate(g_vtophys_map, vaddr, VALUE_2MB);
+	paddr_2mb = spdk_mem_map_translate(g_vtophys_map, vaddr, NULL);
 
 	/*
 	 * SPDK_VTOPHYS_ERROR has all bits set, so if the lookup returned SPDK_VTOPHYS_ERROR,
@@ -633,3 +643,49 @@ spdk_vtophys(void *buf)
 		return paddr_2mb + ((uint64_t)buf & MASK_2MB);
 	}
 }
+
+static int
+spdk_bus_scan(void)
+{
+	return 0;
+}
+
+static int
+spdk_bus_probe(void)
+{
+	return 0;
+}
+
+static struct rte_device *
+spdk_bus_find_device(const struct rte_device *start,
+		     rte_dev_cmp_t cmp, const void *data)
+{
+	return NULL;
+}
+
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+static enum rte_iova_mode
+spdk_bus_get_iommu_class(void) {
+	/* Since we register our PCI drivers after EAL init, we have no chance
+	 * of switching into RTE_IOVA_VA (virtual addresses as iova) iommu
+	 * class. DPDK uses RTE_IOVA_PA by default because for some platforms
+	 * it's the only supported mode, but then SPDK does not support those
+	 * platforms and doesn't mind defaulting to RTE_IOVA_VA. The rte_pci bus
+	 * will force RTE_IOVA_PA if RTE_IOVA_VA simply can not be used
+	 * (i.e. at least one device on the system is bound to uio_pci_generic),
+	 * so we simply return RTE_IOVA_VA here.
+	 */
+	return RTE_IOVA_VA;
+}
+#endif
+
+struct rte_bus spdk_bus = {
+	.scan = spdk_bus_scan,
+	.probe = spdk_bus_probe,
+	.find_device = spdk_bus_find_device,
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+	.get_iommu_class = spdk_bus_get_iommu_class,
+#endif
+};
+
+RTE_REGISTER_BUS(spdk, spdk_bus);

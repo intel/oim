@@ -37,70 +37,27 @@ include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
 
 # Build combined libspdk.so shared library
-SHARED_LIB = $(SPDK_ROOT_DIR)/build/lib/libspdk.so
+SHARED_LINKED_LIB := $(SPDK_ROOT_DIR)/build/lib/libspdk.so
+SHARED_REALNAME_LIB := $(SHARED_LINKED_LIB).$(SO_SUFFIX_ALL)
+IGNORED_LIBS := libspdk.so
+IGNORED_LIBS += libspdk_spdk_mock.so
+IGNORED_LIBS += libspdk_env_dpdk.so
 
-SPDK_LIB_LIST += app_rpc
-SPDK_LIB_LIST += bdev
-SPDK_LIB_LIST += bdev_rpc
-SPDK_LIB_LIST += blobfs
-SPDK_LIB_LIST += conf
-SPDK_LIB_LIST += copy
-SPDK_LIB_LIST += event
-SPDK_LIB_LIST += event_bdev
-SPDK_LIB_LIST += event_copy
-SPDK_LIB_LIST += event_iscsi
-SPDK_LIB_LIST += event_net
-SPDK_LIB_LIST += event_nvmf
-SPDK_LIB_LIST += event_scsi
-SPDK_LIB_LIST += iscsi
-SPDK_LIB_LIST += json
-SPDK_LIB_LIST += jsonrpc
-SPDK_LIB_LIST += log
-SPDK_LIB_LIST += log_rpc
-SPDK_LIB_LIST += net
-SPDK_LIB_LIST += nvmf
-SPDK_LIB_LIST += rpc
-SPDK_LIB_LIST += scsi
-SPDK_LIB_LIST += thread
-SPDK_LIB_LIST += trace
-SPDK_LIB_LIST += util
+SPDK_SHARED_LIBS := $(filter-out $(IGNORED_LIBS), $(sort $(notdir $(wildcard $(SPDK_ROOT_DIR)/build/lib/*.so))))
 
-ifeq ($(OS),Linux)
-SPDK_LIB_LIST += event_nbd
-SPDK_LIB_LIST += nbd
-
-ifeq ($(CONFIG_VHOST),y)
-SPDK_LIB_LIST += event_vhost
-SPDK_LIB_LIST += rte_vhost
-SPDK_LIB_LIST += vhost
-endif
-
-endif
-
-LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS)
-LIBS += $(COPY_MODULES_LINKER_ARGS)
-LIBS += $(SOCK_MODULES_LINKER_ARGS)
-LIBS += $(SPDK_LIB_LINKER_ARGS)
-LIBS += $(ENV_LINKER_ARGS)
-
-comma := ,
-
-$(SHARED_LIB): $(SPDK_LIB_FILES) $(SPDK_WHOLE_LIBS) $(BLOCKDEV_MODULES_FILES) $(COPY_MODULES_FILES) $(SOCK_MODULES_FILES) $(LINKER_MODULES) $(ENV_LIBS) $(MAKEFILE_LIST) spdk.map
+$(SHARED_REALNAME_LIB):
 	$(Q)echo "  SO $(notdir $@)"; \
-	rm -f $@; \
-	$(CC) -o $@ -shared $(CPPFLAGS) $(LDFLAGS) \
-		-Wl,--whole-archive \
-		$(filter-out -Wl$(comma)--no-whole-archive,$(LIBS)) \
-		-Wl,--no-whole-archive \
-		-Wl,--version-script=spdk.map \
-		$(SYS_LIBS)
+	echo "GROUP ( AS_NEEDED ( $(SPDK_SHARED_LIBS) ) )" > $(SHARED_REALNAME_LIB)
+
+$(SHARED_LINKED_LIB) : $(SHARED_REALNAME_LIB)
+	$(Q)echo "  SYMLINK $(notdir $@)"; $(BUILD_LINKERNAME_LIB)
 
 .PHONY: all clean $(DIRS-y)
 
-all: $(SHARED_LIB)
+all: $(SHARED_LINKED_LIB)
 
 clean:
-	$(CLEAN_C) $(SHARED_LIB)
+	$(CLEAN_C) $(SHARED_REALNAME_LIB) $(SHARED_LINKED_LIB)
 
 install:
 	$(INSTALL_SHARED_LIB)

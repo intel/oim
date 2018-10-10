@@ -133,12 +133,17 @@ SpdkSequentialFile::~SpdkSequentialFile(void)
 Status
 SpdkSequentialFile::Read(size_t n, Slice *result, char *scratch)
 {
-	uint64_t ret;
+	int64_t ret;
 
 	ret = spdk_file_read(mFile, g_sync_args.channel, scratch, mOffset, n);
-	mOffset += ret;
-	*result = Slice(scratch, ret);
-	return Status::OK();
+	if (ret >= 0) {
+		mOffset += ret;
+		*result = Slice(scratch, ret);
+		return Status::OK();
+	} else {
+		errno = -ret;
+		return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+	}
 }
 
 Status
@@ -149,7 +154,8 @@ SpdkSequentialFile::Skip(uint64_t n)
 }
 
 Status
-SpdkSequentialFile::InvalidateCache(size_t offset, size_t length)
+SpdkSequentialFile::InvalidateCache(__attribute__((unused)) size_t offset,
+				    __attribute__((unused)) size_t length)
 {
 	return Status::OK();
 }
@@ -173,13 +179,21 @@ SpdkRandomAccessFile::~SpdkRandomAccessFile(void)
 Status
 SpdkRandomAccessFile::Read(uint64_t offset, size_t n, Slice *result, char *scratch) const
 {
-	spdk_file_read(mFile, g_sync_args.channel, scratch, offset, n);
-	*result = Slice(scratch, n);
-	return Status::OK();
+	int64_t rc;
+
+	rc = spdk_file_read(mFile, g_sync_args.channel, scratch, offset, n);
+	if (rc >= 0) {
+		*result = Slice(scratch, n);
+		return Status::OK();
+	} else {
+		errno = -rc;
+		return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+	}
 }
 
 Status
-SpdkRandomAccessFile::InvalidateCache(size_t offset, size_t length)
+SpdkRandomAccessFile::InvalidateCache(__attribute__((unused)) size_t offset,
+				      __attribute__((unused)) size_t length)
 {
 	return Status::OK();
 }
@@ -230,13 +244,27 @@ public:
 	}
 	virtual Status Sync() override
 	{
-		spdk_file_sync(mFile, g_sync_args.channel);
-		return Status::OK();
+		int rc;
+
+		rc = spdk_file_sync(mFile, g_sync_args.channel);
+		if (!rc) {
+			return Status::OK();
+		} else {
+			errno = -rc;
+			return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+		}
 	}
 	virtual Status Fsync() override
 	{
-		spdk_file_sync(mFile, g_sync_args.channel);
-		return Status::OK();
+		int rc;
+
+		rc = spdk_file_sync(mFile, g_sync_args.channel);
+		if (!rc) {
+			return Status::OK();
+		} else {
+			errno = -rc;
+			return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+		}
 	}
 	virtual bool IsSyncThreadSafe() const override
 	{
@@ -246,7 +274,8 @@ public:
 	{
 		return mSize;
 	}
-	virtual Status InvalidateCache(size_t offset, size_t length) override
+	virtual Status InvalidateCache(__attribute__((unused)) size_t offset,
+				       __attribute__((unused)) size_t length) override
 	{
 		return Status::OK();
 	}
@@ -262,28 +291,49 @@ public:
 			return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
 		}
 	}
-	virtual Status RangeSync(uint64_t offset, uint64_t nbytes) override
+	virtual Status RangeSync(__attribute__((unused)) uint64_t offset,
+				 __attribute__((unused)) uint64_t nbytes) override
 	{
+		int rc;
+
 		/*
 		 * SPDK BlobFS does not have a range sync operation yet, so just sync
 		 *  the whole file.
 		 */
-		spdk_file_sync(mFile, g_sync_args.channel);
-		return Status::OK();
+		rc = spdk_file_sync(mFile, g_sync_args.channel);
+		if (!rc) {
+			return Status::OK();
+		} else {
+			errno = -rc;
+			return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+		}
 	}
 	virtual size_t GetUniqueId(char *id, size_t max_size) const override
 	{
-		return 0;
+		int rc;
+
+		rc = spdk_file_get_id(mFile, id, max_size);
+		if (rc < 0) {
+			return 0;
+		} else {
+			return rc;
+		}
 	}
 };
 
 Status
 SpdkWritableFile::Append(const Slice &data)
 {
-	spdk_file_write(mFile, g_sync_args.channel, (void *)data.data(), mSize, data.size());
-	mSize += data.size();
+	int64_t rc;
 
-	return Status::OK();
+	rc = spdk_file_write(mFile, g_sync_args.channel, (void *)data.data(), mSize, data.size());
+	if (rc >= 0) {
+		mSize += data.size();
+		return Status::OK();
+	} else {
+		errno = -rc;
+		return Status::IOError(spdk_file_get_name(mFile), strerror(errno));
+	}
 }
 
 class SpdkDirectory : public Directory
@@ -398,7 +448,7 @@ public:
 		return EnvWrapper::ReuseWritableFile(fname, old_fname, result, options);
 	}
 
-	virtual Status NewDirectory(const std::string &name,
+	virtual Status NewDirectory(__attribute__((unused)) const std::string &name,
 				    unique_ptr<Directory> *result) override
 	{
 		result->reset(new SpdkDirectory());
@@ -429,7 +479,8 @@ public:
 		}
 		return Status::OK();
 	}
-	virtual Status LinkFile(const std::string &src, const std::string &t) override
+	virtual Status LinkFile(__attribute__((unused)) const std::string &src,
+				__attribute__((unused)) const std::string &t) override
 	{
 		return Status::NotSupported("SpdkEnv does not support LinkFile");
 	}
@@ -461,10 +512,16 @@ public:
 	virtual Status LockFile(const std::string &fname, FileLock **lock) override
 	{
 		std::string name = sanitize_path(fname, mDirectory);
+		int64_t rc;
 
-		spdk_fs_open_file(g_fs, g_sync_args.channel, name.c_str(),
-				  SPDK_BLOBFS_OPEN_CREATE, (struct spdk_file **)lock);
-		return Status::OK();
+		rc = spdk_fs_open_file(g_fs, g_sync_args.channel, name.c_str(),
+				       SPDK_BLOBFS_OPEN_CREATE, (struct spdk_file **)lock);
+		if (!rc) {
+			return Status::OK();
+		} else {
+			errno = -rc;
+			return Status::IOError(name, strerror(errno));
+		}
 	}
 	virtual Status UnlockFile(FileLock *lock) override
 	{
@@ -521,7 +578,9 @@ public:
 };
 
 static void
-_spdk_send_msg(spdk_thread_fn fn, void *ctx, void *thread_ctx)
+_spdk_send_msg(__attribute__((unused)) spdk_thread_fn fn,
+	       __attribute__((unused)) void *ctx,
+	       __attribute__((unused)) void *thread_ctx)
 {
 	/* Not supported */
 	assert(false);
@@ -559,7 +618,8 @@ void SpdkEnv::StartThread(void (*function)(void *arg), void *arg)
 }
 
 static void
-fs_load_cb(void *ctx, struct spdk_filesystem *fs, int fserrno)
+fs_load_cb(__attribute__((unused)) void *ctx,
+	   struct spdk_filesystem *fs, int fserrno)
 {
 	if (fserrno == 0) {
 		g_fs = fs;
@@ -568,7 +628,8 @@ fs_load_cb(void *ctx, struct spdk_filesystem *fs, int fserrno)
 }
 
 static void
-spdk_rocksdb_run(void *arg1, void *arg2)
+spdk_rocksdb_run(__attribute__((unused)) void *arg1,
+		 __attribute__((unused)) void *arg2)
 {
 	struct spdk_bdev *bdev;
 
@@ -587,7 +648,8 @@ spdk_rocksdb_run(void *arg1, void *arg2)
 }
 
 static void
-fs_unload_cb(void *ctx, int fserrno)
+fs_unload_cb(__attribute__((unused)) void *ctx,
+	     __attribute__((unused)) int fserrno)
 {
 	assert(fserrno == 0);
 

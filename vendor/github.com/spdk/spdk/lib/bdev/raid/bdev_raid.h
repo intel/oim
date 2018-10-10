@@ -44,7 +44,10 @@ enum raid_bdev_state {
 	/* raid bdev is ready and is seen by upper layers */
 	RAID_BDEV_STATE_ONLINE,
 
-	/* raid bdev is configuring, not all underlying bdevs are present */
+	/*
+	 * raid bdev is configuring, not all underlying bdevs are present.
+	 * And can't be seen by upper layers.
+	 */
 	RAID_BDEV_STATE_CONFIGURING,
 
 	/*
@@ -64,32 +67,36 @@ enum raid_bdev_state {
  */
 struct raid_base_bdev_info {
 	/* pointer to base spdk bdev */
-	struct spdk_bdev         *base_bdev;
+	struct spdk_bdev	*bdev;
 
 	/* pointer to base bdev descriptor opened by raid bdev */
-	struct spdk_bdev_desc    *base_bdev_desc;
+	struct spdk_bdev_desc	*desc;
 
 	/*
 	 * When underlying base device calls the hot plug function on drive removal,
 	 * this flag will be set and later after doing some processing, base device
 	 * descriptor will be closed
 	 */
-	bool                     base_bdev_remove_scheduled;
+	bool			remove_scheduled;
 };
 
 /*
- * raid_bdev contains the information related to any raid bdev either configured or
- * in configuring list
+ * raid_bdev is the single entity structure which contains SPDK block device
+ * and the information related to any raid bdev either configured or
+ * in configuring list. io device is created on this.
  */
 struct raid_bdev {
+	/* raid bdev device, this will get registered in bdev layer */
+	struct spdk_bdev            bdev;
+
 	/* link of raid bdev to link it to configured, configuring or offline list */
-	TAILQ_ENTRY(raid_bdev)      link_specific_list;
+	TAILQ_ENTRY(raid_bdev)      state_link;
 
 	/* link of raid bdev to link it to global raid bdev list */
-	TAILQ_ENTRY(raid_bdev)      link_global_list;
+	TAILQ_ENTRY(raid_bdev)      global_link;
 
 	/* pointer to config file entry */
-	struct raid_bdev_config     *raid_bdev_config;
+	struct raid_bdev_config     *config;
 
 	/* array of base bdev info */
 	struct raid_base_bdev_info  *base_bdev_info;
@@ -120,39 +127,20 @@ struct raid_bdev {
 };
 
 /*
- * raid_bdev_ctxt is the single entity structure for entire bdev which is
- * allocated for any raid bdev
- */
-struct raid_bdev_ctxt {
-	/* raid bdev device, this will get registered in bdev layer */
-	struct spdk_bdev         bdev;
-
-	/* raid_bdev object, io device will be created on this */
-	struct raid_bdev         raid_bdev;
-};
-
-/*
  * raid_bdev_io is the context part of bdev_io. It contains the information
  * related to bdev_io for a pooled bdev
  */
 struct raid_bdev_io {
 	/* WaitQ entry, used only in waitq logic */
-	struct spdk_bdev_io_wait_entry  waitq_entry;
+	struct spdk_bdev_io_wait_entry	waitq_entry;
 
 	/* Original channel for this IO, used in queuing logic */
-	struct spdk_io_channel          *ch;
+	struct spdk_io_channel		*ch;
 
-	/* current buffer location, used in queueing logic */
-	uint8_t                         *buf;
-
-	/* outstanding child completions */
-	uint16_t                        splits_comp_outstanding;
-
-	/* pending splits yet to happen */
-	uint16_t                        splits_pending;
-
-	/* status of parent io */
-	bool                            status;
+	/* Used for tracking progress on resets sent to member disks. */
+	uint8_t				base_bdev_reset_submitted;
+	uint8_t				base_bdev_reset_completed;
+	uint8_t				base_bdev_reset_status;
 };
 
 /*
@@ -161,7 +149,7 @@ struct raid_bdev_io {
  */
 struct raid_base_bdev_config {
 	/* base bdev name from config file */
-	char                        *bdev_name;
+	char				*name;
 };
 
 /*
@@ -173,7 +161,7 @@ struct raid_bdev_config {
 	struct raid_base_bdev_config  *base_bdev;
 
 	/* Points to already created raid bdev  */
-	struct raid_bdev_ctxt         *raid_bdev_ctxt;
+	struct raid_bdev              *raid_bdev;
 
 	char                          *name;
 
@@ -207,10 +195,7 @@ struct raid_config {
  */
 struct raid_bdev_io_channel {
 	/* Array of IO channels of base bdevs */
-	struct spdk_io_channel      **base_bdevs_io_channel;
-
-	/* raid bdev  context pointer */
-	struct raid_bdev_ctxt       *raid_bdev_ctxt;
+	struct spdk_io_channel      **base_channel;
 };
 
 /* TAIL heads for various raid bdev lists */
@@ -225,11 +210,16 @@ extern struct spdk_raid_all_tailq           g_spdk_raid_bdev_list;
 extern struct spdk_raid_offline_tailq       g_spdk_raid_bdev_offline_list;
 extern struct raid_config                   g_spdk_raid_config;
 
-
+int raid_bdev_create(struct raid_bdev_config *raid_cfg);
 void raid_bdev_remove_base_bdev(void *ctx);
-int raid_bdev_add_base_device(struct spdk_bdev *bdev);
+int raid_bdev_add_base_devices(struct raid_bdev_config *raid_cfg);
+void raid_bdev_free_base_bdev_resource(struct raid_bdev *raid_bdev, uint32_t slot);
+void raid_bdev_cleanup(struct raid_bdev *raid_bdev);
 int raid_bdev_config_add(const char *raid_name, int strip_size, int num_base_bdevs,
-			 int raid_level, struct raid_bdev_config **_raid_bdev_config);
+			 int raid_level, struct raid_bdev_config **_raid_cfg);
+int raid_bdev_config_add_base_bdev(struct raid_bdev_config *raid_cfg,
+				   const char *base_bdev_name, uint32_t slot);
 void raid_bdev_config_cleanup(struct raid_bdev_config *raid_cfg);
+struct raid_bdev_config *raid_bdev_config_find_by_name(const char *raid_name);
 
 #endif // SPDK_BDEV_RAID_INTERNAL_H

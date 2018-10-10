@@ -259,6 +259,7 @@ static int ioat_reset_hw(struct spdk_ioat_chan *ioat)
 	int timeout;
 	uint64_t status;
 	uint32_t chanerr;
+	int rc;
 
 	status = ioat_get_chansts(ioat);
 	if (is_ioat_active(status) || is_ioat_idle(status)) {
@@ -282,6 +283,18 @@ static int ioat_reset_hw(struct spdk_ioat_chan *ioat)
 	 */
 	chanerr = ioat->regs->chanerr;
 	ioat->regs->chanerr = chanerr;
+
+	if (ioat->regs->cbver < SPDK_IOAT_VER_3_3) {
+		rc = spdk_pci_device_cfg_read32(ioat->device, &chanerr,
+						SPDK_IOAT_PCI_CHANERR_INT_OFFSET);
+		if (rc) {
+			SPDK_ERRLOG("failed to read the internal channel error register\n");
+			return -1;
+		}
+
+		spdk_pci_device_cfg_write32(ioat->device, chanerr,
+					    SPDK_IOAT_PCI_CHANERR_INT_OFFSET);
+	}
 
 	ioat_reset(ioat);
 
@@ -337,7 +350,7 @@ ioat_process_channel_events(struct spdk_ioat_chan *ioat)
 	return 0;
 }
 
-static int
+static void
 ioat_channel_destruct(struct spdk_ioat_chan *ioat)
 {
 	ioat_unmap_pci_bar(ioat);
@@ -354,8 +367,6 @@ ioat_channel_destruct(struct spdk_ioat_chan *ioat)
 		spdk_dma_free((void *)ioat->comp_update);
 		ioat->comp_update = NULL;
 	}
-
-	return 0;
 }
 
 static int
@@ -555,7 +566,7 @@ spdk_ioat_probe(void *cb_ctx, spdk_ioat_probe_cb probe_cb, spdk_ioat_attach_cb a
 	return rc;
 }
 
-int
+void
 spdk_ioat_detach(struct spdk_ioat_chan *ioat)
 {
 	struct ioat_driver	*driver = &g_ioat_driver;
@@ -569,8 +580,6 @@ spdk_ioat_detach(struct spdk_ioat_chan *ioat)
 
 	ioat_channel_destruct(ioat);
 	free(ioat);
-
-	return 0;
 }
 
 #define _2MB_PAGE(ptr)		((ptr) & ~(0x200000 - 1))

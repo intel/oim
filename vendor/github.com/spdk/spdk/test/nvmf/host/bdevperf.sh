@@ -8,7 +8,7 @@ source $rootdir/test/nvmf/common.sh
 MALLOC_BDEV_SIZE=64
 MALLOC_BLOCK_SIZE=512
 
-rpc_py="python $rootdir/scripts/rpc.py"
+rpc_py="$rootdir/scripts/rpc.py"
 
 set -e
 
@@ -22,23 +22,26 @@ fi
 timing_enter bdevperf
 timing_enter start_nvmf_tgt
 
-$NVMF_APP -m 0xF -w &
+$NVMF_APP -m 0xF &
 nvmfpid=$!
 
-trap "killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
+trap "process_shm --id $NVMF_APP_SHM_ID; killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
 
 waitforlisten $nvmfpid
-$rpc_py set_nvmf_target_options -u 8192 -p 4
-$rpc_py start_subsystem_init
+$rpc_py nvmf_create_transport -t RDMA -u 8192 -p 4
 timing_exit start_nvmf_tgt
 
 bdevs="$bdevs $($rpc_py construct_malloc_bdev $MALLOC_BDEV_SIZE $MALLOC_BLOCK_SIZE)"
 
-$rpc_py construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode1 "trtype:RDMA traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420" '' -a -s SPDK00000000000001 -n "$bdevs"
+$rpc_py nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
+for bdev in $bdevs; do
+	$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 $bdev
+done
+$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t rdma -a $NVMF_FIRST_TARGET_IP -s 4420
 
 echo "[Nvme]" > $testdir/bdevperf.conf
 echo "  TransportID \"trtype:RDMA adrfam:IPv4 subnqn:nqn.2016-06.io.spdk:cnode1 traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420\" Nvme0" >> $testdir/bdevperf.conf
-$rootdir/test/bdev/bdevperf/bdevperf -c $testdir/bdevperf.conf -q 128 -s 4096 -w verify -t 1
+$rootdir/test/bdev/bdevperf/bdevperf -c $testdir/bdevperf.conf -q 128 -o 4096 -w verify -t 1
 sync
 rm -rf $testdir/bdevperf.conf
 $rpc_py delete_nvmf_subsystem nqn.2016-06.io.spdk:cnode1

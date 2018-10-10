@@ -6,15 +6,16 @@ def set_iscsi_options(
         node_base=None,
         nop_timeout=None,
         nop_in_interval=None,
-        no_discovery_auth=None,
-        req_discovery_auth=None,
-        req_discovery_auth_mutual=None,
-        discovery_auth_group=None,
+        disable_chap=None,
+        require_chap=None,
+        mutual_chap=None,
+        chap_group=None,
         max_sessions=None,
         max_queue_depth=None,
         max_connections_per_session=None,
         default_time2wait=None,
         default_time2retain=None,
+        first_burst_length=None,
         immediate_data=None,
         error_recovery_level=None,
         allow_duplicated_isid=None,
@@ -22,19 +23,20 @@ def set_iscsi_options(
     """Set iSCSI target options.
 
     Args:
-        auth_file: Path to CHAP shared secret file for discovery session (optional)
+        auth_file: Path to CHAP shared secret file (optional)
         node_base: Prefix of the name of iSCSI target node (optional)
         nop_timeout: Timeout in seconds to nop-in request to the initiator (optional)
         nop_in_interval: Time interval in secs between nop-in requests by the target (optional)
-        no_discovery_auth: CHAP for discovery session should be disabled (optional)
-        req_discovery_auth: CHAP for discovery session should be required
-        req_discovery_auth_mutual: CHAP for discovery session should be mutual
-        discovery_auth_group: Authentication group ID for discovery session
+        disable_chap: CHAP for discovery session should be disabled (optional)
+        require_chap: CHAP for discovery session should be required
+        mutual_chap: CHAP for discovery session should be mutual
+        chap_group: Authentication group ID for discovery session
         max_sessions: Maximum number of sessions in the host
         max_queue_depth: Maximum number of outstanding I/Os per queue
         max_connections_per_session: Negotiated parameter, MaxConnections
         default_time2wait: Negotiated parameter, DefaultTime2Wait
         default_time2retain: Negotiated parameter, DefaultTime2Retain
+        first_burst_length: Negotiated parameter, FirstBurstLength
         immediate_data: Negotiated parameter, ImmediateData
         error_recovery_level: Negotiated parameter, ErrorRecoveryLevel
         allow_duplicated_isid: Allow duplicated initiator session ID
@@ -53,14 +55,14 @@ def set_iscsi_options(
         params['nop_timeout'] = nop_timeout
     if nop_in_interval:
         params['nop_in_interval'] = nop_in_interval
-    if no_discovery_auth:
-        params['no_discovery_auth'] = no_discovery_auth
-    if req_discovery_auth:
-        params['req_discovery_auth'] = req_discovery_auth
-    if req_discovery_auth_mutual:
-        params['req_discovery_auth_mutual'] = req_discovery_auth_mutual
-    if discovery_auth_group:
-        params['discovery_auth_group'] = discovery_auth_group
+    if disable_chap:
+        params['disable_chap'] = disable_chap
+    if require_chap:
+        params['require_chap'] = require_chap
+    if mutual_chap:
+        params['mutual_chap'] = mutual_chap
+    if chap_group:
+        params['chap_group'] = chap_group
     if max_sessions:
         params['max_sessions'] = max_sessions
     if max_queue_depth:
@@ -71,6 +73,8 @@ def set_iscsi_options(
         params['default_time2wait'] = default_time2wait
     if default_time2retain:
         params['default_time2retain'] = default_time2retain
+    if first_burst_length:
+        params['first_burst_length'] = first_burst_length
     if immediate_data:
         params['immediate_data'] = immediate_data
     if error_recovery_level:
@@ -81,6 +85,46 @@ def set_iscsi_options(
         params['min_connections_per_core'] = min_connections_per_core
 
     return client.call('set_iscsi_options', params)
+
+
+def set_iscsi_discovery_auth(
+        client,
+        disable_chap=None,
+        require_chap=None,
+        mutual_chap=None,
+        chap_group=None):
+    """Set CHAP authentication for discovery service.
+
+    Args:
+        disable_chap: CHAP for discovery session should be disabled (optional)
+        require_chap: CHAP for discovery session should be required (optional)
+        mutual_chap: CHAP for discovery session should be mutual (optional)
+        chap_group: Authentication group ID for discovery session (optional)
+
+    Returns:
+        True or False
+    """
+    params = {}
+
+    if disable_chap:
+        params['disable_chap'] = disable_chap
+    if require_chap:
+        params['require_chap'] = require_chap
+    if mutual_chap:
+        params['mutual_chap'] = mutual_chap
+    if chap_group:
+        params['chap_group'] = chap_group
+
+    return client.call('set_iscsi_discovery_auth', params)
+
+
+def get_iscsi_auth_groups(client):
+    """Display current authentication group configuration.
+
+    Returns:
+        List of current authentication group configuration.
+    """
+    return client.call('get_iscsi_auth_groups')
 
 
 def get_portal_groups(client):
@@ -182,6 +226,106 @@ def target_node_add_lun(client, name, bdev_name, lun_id=None):
     if lun_id:
         params['lun_id'] = lun_id
     return client.call('target_node_add_lun', params)
+
+
+def set_iscsi_target_node_auth(
+        client,
+        name,
+        chap_group=None,
+        disable_chap=None,
+        require_chap=None,
+        mutual_chap=None):
+    """Set CHAP authentication for the target node.
+
+    Args:
+        name: Target node name (ASCII)
+        chap_group: Authentication group ID for this target node
+        disable_chap: CHAP authentication should be disabled for this target node
+        require_chap: CHAP authentication should be required for this target node
+        mutual_chap: CHAP authentication should be mutual/bidirectional
+
+    Returns:
+        True or False
+    """
+    params = {
+        'name': name,
+    }
+
+    if chap_group:
+        params['chap_group'] = chap_group
+    if disable_chap:
+        params['disable_chap'] = disable_chap
+    if require_chap:
+        params['require_chap'] = require_chap
+    if mutual_chap:
+        params['mutual_chap'] = mutual_chap
+    return client.call('set_iscsi_target_node_auth', params)
+
+
+def add_iscsi_auth_group(client, tag, secrets=None):
+    """Add authentication group for CHAP authentication.
+
+    Args:
+        tag: Authentication group tag (unique, integer > 0).
+        secrets: Array of secrets objects (optional).
+
+    Returns:
+        True or False
+    """
+    params = {'tag': tag}
+
+    if secrets:
+        params['secrets'] = secrets
+    return client.call('add_iscsi_auth_group', params)
+
+
+def delete_iscsi_auth_group(client, tag):
+    """Delete an authentication group.
+
+    Args:
+        tag: Authentication group tag (unique, integer > 0)
+
+    Returns:
+        True or False
+    """
+    params = {'tag': tag}
+    return client.call('delete_iscsi_auth_group', params)
+
+
+def add_secret_to_iscsi_auth_group(client, tag, user, secret, muser=None, msecret=None):
+    """Add a secret to an authentication group.
+
+    Args:
+        tag: Authentication group tag (unique, integer > 0)
+        user: User name for one-way CHAP authentication
+        secret: Secret for one-way CHAP authentication
+        muser: User name for mutual CHAP authentication (optional)
+        msecret: Secret for mutual CHAP authentication (optional)
+
+    Returns:
+        True or False
+    """
+    params = {'tag': tag, 'user': user, 'secret': secret}
+
+    if muser:
+        params['muser'] = muser
+    if msecret:
+        params['msecret'] = msecret
+    return client.call('add_secret_to_iscsi_auth_group', params)
+
+
+def delete_secret_from_iscsi_auth_group(client, tag, user):
+    """Delete a secret from an authentication group.
+
+    Args:
+        tag: Authentication group tag (unique, integer > 0)
+        user: User name for one-way CHAP authentication
+
+    Returns:
+        True or False
+    """
+    params = {'tag': tag, 'user': user}
+    return client.call('delete_secret_from_iscsi_auth_group', params)
 
 
 def delete_pg_ig_maps(client, pg_ig_maps, name):

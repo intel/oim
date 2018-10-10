@@ -1,7 +1,7 @@
 set -e
 
 : ${SPDK_VHOST_VERBOSE=false}
-: ${QEMU_PREFIX="/usr/local/qemu/spdk-2.12-pre"}
+: ${QEMU_PREFIX="/usr/local/qemu/spdk-2.12"}
 
 BASE_DIR=$(readlink -f $(dirname ${BASH_SOURCE[0]}))
 
@@ -184,8 +184,7 @@ function spdk_vhost_run()
 	fi
 
 	if [[ -n "$vhost_json_path" ]]; then
-		$SPDK_BUILD_DIR/scripts/rpc.py -s $vhost_dir/rpc.sock load_config\
-		 --filename "$vhost_json_path/conf.json"
+		$SPDK_BUILD_DIR/scripts/rpc.py -s $vhost_dir/rpc.sock load_config < "$vhost_json_path/conf.json"
 	fi
 
 	notice "vhost started - pid=$vhost_pid"
@@ -324,7 +323,7 @@ function vm_ssh()
 	local ssh_config="$VM_BASE_DIR/ssh_config"
 
 	local ssh_cmd="ssh -i $SPDK_VHOST_SSH_KEY_FILE -F $ssh_config \
-		-p $(vm_ssh_socket $1) 127.0.0.1"
+		-p $(vm_ssh_socket $1) $VM_SSH_OPTIONS 127.0.0.1"
 
 	shift
 	$ssh_cmd "$@"
@@ -386,10 +385,9 @@ function vm_os_booted()
 		return 1
 	fi
 
-	# Shutdown existing master. Ignore errors as it might not exist.
-	ssh -O exit -F $VM_BASE_DIR/ssh_config -p $(vm_ssh_socket $1) 127.0.0.1 2> /dev/null || true
-
-	if ! vm_ssh $1 "true" 2>/dev/null; then
+	if ! VM_SSH_OPTIONS="-o ControlMaster=no" vm_ssh $1 "true" 2>/dev/null; then
+		# Shutdown existing master. Ignore errors as it might not exist.
+		VM_SSH_OPTIONS="-O exit" vm_ssh $1 "true" 2>/dev/null
 		return 1
 	fi
 
@@ -544,6 +542,7 @@ function vm_setup()
 				incoming=*) local vm_incoming="${OPTARG#*=}" ;;
 				migrate-to=*) local vm_migrate_to="${OPTARG#*=}" ;;
 				vhost-num=*) local vhost_dir="$(get_vhost_dir ${OPTARG#*=})" ;;
+				spdk-boot=*) local boot_from="${OPTARG#*=}" ;;
 				*)
 					error "unknown argument $OPTARG"
 					return 1
@@ -671,6 +670,7 @@ function vm_setup()
 	$shell_restore_x
 
 	local node_num=${!qemu_numa_node_param}
+	local boot_disk_present=false
 	notice "NUMA NODE: $node_num"
 	cmd+="-m $guest_memory --enable-kvm -cpu host -smp $cpu_num -vga std -vnc :$vnc_socket -daemonize ${eol}"
 	cmd+="-object memory-backend-file,id=mem,size=${guest_memory}M,mem-path=/dev/hugepages,share=on,prealloc=yes,host-nodes=$node_num,policy=bind ${eol}"
@@ -683,8 +683,10 @@ function vm_setup()
 	cmd+="-D $vm_dir/qemu.log ${eol}"
 	cmd+="-net user,hostfwd=tcp::$ssh_socket-:22,hostfwd=tcp::$fio_socket-:8765 ${eol}"
 	cmd+="-net nic ${eol}"
-	cmd+="-drive file=$os,if=none,id=os_disk ${eol}"
-	cmd+="-device ide-hd,drive=os_disk,bootindex=0 ${eol}"
+	if [[ -z "$boot_from" ]]; then
+		cmd+="-drive file=$os,if=none,id=os_disk ${eol}"
+		cmd+="-device ide-hd,drive=os_disk,bootindex=0 ${eol}"
+	fi
 
 	if ( [[ $disks == '' ]] && [[ $disk_type_g == virtio* ]] ); then
 		disks=1
@@ -708,8 +710,8 @@ function vm_setup()
 					local raw_disk=$(readlink -f $disk)
 				fi
 
-				# Create disk file if it not exist or it is smaller than 10G
-				if ( [[ -f $raw_disk ]] && [[ $(stat --printf="%s" $raw_disk) -lt $((1024 * 1024 * 1024 * 10)) ]] ) || \
+				# Create disk file if it not exist or it is smaller than 1G
+				if ( [[ -f $raw_disk ]] && [[ $(stat --printf="%s" $raw_disk) -lt $((1024 * 1024 * 1024)) ]] ) || \
 					[[ ! -e $raw_disk ]]; then
 					if [[ $raw_disk =~ /dev/.* ]]; then
 						error \
@@ -719,7 +721,7 @@ function vm_setup()
 					fi
 
 					notice "Creating Virtio disc $raw_disk"
-					dd if=/dev/zero of=$raw_disk bs=1024k count=10240
+					dd if=/dev/zero of=$raw_disk bs=1024k count=1024
 				else
 					notice "Using existing image $raw_disk"
 				fi
@@ -731,12 +733,22 @@ function vm_setup()
 			spdk_vhost_scsi)
 				notice "using socket $vhost_dir/naa.$disk.$vm_num"
 				cmd+="-chardev socket,id=char_$disk,path=$vhost_dir/naa.$disk.$vm_num ${eol}"
-				cmd+="-device vhost-user-scsi-pci,id=scsi_$disk,num_queues=$queue_number,chardev=char_$disk ${eol}"
+				cmd+="-device vhost-user-scsi-pci,id=scsi_$disk,num_queues=$queue_number,chardev=char_$disk"
+				if [[ "$disk" == "$boot_from" ]]; then
+					cmd+=",bootindex=0"
+					boot_disk_present=true
+				fi
+				cmd+=" ${eol}"
 				;;
 			spdk_vhost_blk)
 				notice "using socket $vhost_dir/naa.$disk.$vm_num"
 				cmd+="-chardev socket,id=char_$disk,path=$vhost_dir/naa.$disk.$vm_num ${eol}"
-				cmd+="-device vhost-user-blk-pci,num-queues=$queue_number,chardev=char_$disk ${eol}"
+				cmd+="-device vhost-user-blk-pci,num-queues=$queue_number,chardev=char_$disk"
+				if [[ "$disk" == "$boot_from" ]]; then
+					cmd+=",bootindex=0"
+					boot_disk_present=true
+				fi
+				cmd+=" ${eol}"
 				;;
 			kernel_vhost)
 				if [[ -z $disk ]]; then
@@ -754,6 +766,11 @@ function vm_setup()
 				return 1
 		esac
 	done
+
+	if [[ -n $boot_from ]] && [[ $boot_disk_present == false ]]; then
+		error "Boot from $boot_from is selected but device is not present"
+		return 1
+	fi
 
 	[[ ! -z $qemu_args ]] && cmd+=" $qemu_args ${eol}"
 	# remove last $eol
@@ -911,6 +928,8 @@ function vm_wait_for_boot()
 		done
 		echo ""
 		notice "VM$vm_num ready"
+		#Change Timeout for stopping services to prevent lengthy powerdowns
+		vm_ssh $vm_num "echo 'DefaultTimeoutStopSec=10' >> /etc/systemd/system.conf; systemctl daemon-reexec"
 	done
 
 	notice "all VMs ready"
@@ -1054,7 +1073,7 @@ function run_fio()
 		return 0
 	fi
 
-	python $SPDK_BUILD_DIR/test/vhost/common/run_fio.py --job-file=/root/$job_fname \
+	$SPDK_BUILD_DIR/test/vhost/common/run_fio.py --job-file=/root/$job_fname \
 		$([[ ! -z "$fio_bin" ]] && echo "--fio-bin=$fio_bin") \
 		--out=$out $json ${fio_disks%,}
 }

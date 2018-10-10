@@ -1,61 +1,249 @@
 # Changelog
 
-## v18.07: (Upcoming Release)
+## v18.10: (Upcoming Release)
 
-### RAID module
-A new bdev module called "raid" has been added as experimental module which
-aggregates underlying nvme bdevs and expose a single raid bdev to upper bdev
-layers. Over this LVS/LVOL can be created as per use-cases and they can be
-exposed to NVMe-oF subsystems. Please note that vhost will not work with RAID
-module as RAID module does not support multipe IOV Vectors yet.
+### nvme
 
-### Log
+spdk_nvme_ctrlr_cmd_security_send() and spdk_nvme_ctrlr_cmd_security_receive()
+were added to support sending or receiving security protocol data to or from
+nvme controller.
 
-The debug log component flag has been renamed from `-t` to `-L` to prevent confusion
-with tracepoints and to allow the option to be added to tools that already use `-t`
-to mean something else.
-
-### NVMe Driver
-
-New API function spdk_nvme_qpair_add_cmd_error_injection() and
-spdk_nvme_qpair_remove_cmd_error_injection() have been added for NVMe error emulation,
-users can set specified command with specified error status for error emulation.
-
-Change the name `timeout_sec` parameter to `timeout_us` in API function
-spdk_nvme_ctrlr_register_timeout_callback, and also change the type from uint32_t to
-uint64_t. This will give users more fine-grained control over the timeout period for
-calling callback functions.
+spdk_nvme_ns_get_extended_sector_size() was added.  This function includes
+the metadata size per sector (if any).  spdk_nvme_ns_get_sector_size() still
+returns only the data size per sector, not including metadata.
 
 ### Build System
 
-The build system now generates a combined shared library (libspdk.so) that may be used
-in place of the individual static libraries (libspdk_*.a).
-The combined library includes all components of SPDK and is intended to make linking
-against SPDK easier.
-The static libraries are also still provided for users that prefer to link only the
-minimal set of components required.
+New `configure` options, `--with-shared` and `--without-shared`
+[default], provide the capability to build, or not, SPDK shared libraries.
+This includes the single SPDK shared lib encompassing all of the SPDK
+static libs as well as individual SPDK shared libs corresponding to
+each of the SPDK static ones.  Although the production of the shared
+libs conforms with conventional version naming practices, such naming
+does not at this time confer any SPDK ABI compatibility claims.
 
-A new configure option was added `--with-crypto` that, when set, will build the crypto
-vbdev as well as its dependencies.
+### bdev
+
+spdk_bdev_alias_del_all() was added to delete all alias from block device.
+
+A new virtual bdev module has been added to perform at rest data encryption using the DPDK CryptoDev
+Framework.  The module initially uses a software AESNI CBC cipher with experimental support for the
+Intel QAT hardware accelerator also currently implemented with support for CBC cipher. Future work
+may include additional ciphers as well as consideration for authentication. NOTE: this module is
+currently marked as experimental.  Do not use in production.
+
+The RAID virtual bdev module is now always enabled by default.  The configure --with-raid and
+--without-raid options are now ignored and deprecated and will be removed in the next release.
+
+Enforcement of bandwidth limits for quality of service (QoS) has been added to the bdev layer.
+See the new [set_bdev_qos_limit](http://www.spdk.io/doc/jsonrpc.html#rpc_set_bdev_qos_limit)
+documentation for more details. The previous set_bdev_qos_limit_iops RPC method introduced at
+18.04 release has been deprecated. The new set_bdev_qos_limit RPC method can support both
+bandwidth and IOPS limits.
+
+### Environment Abstraction Layer and Event Framework
+
+The size parameter of spdk_mem_map_translate is now a pointer. This allows the
+function to report back the actual size of the translation relative to the original
+request made by the user.
+
+A new structure spdk_mem_map_ops has been introduced to hold memory map related
+callbacks. This structure is now passed as the second argument of spdk_mem_map_alloc
+in lieu of the notify callback.
+
+### iscsi target
+
+Parameter names of `set_iscsi_options` and `get_iscsi_global_params` RPC
+method for CHAP authentication in discovery sessions have been changed to
+align with `construct_target_node` RPC method. Old names are still usable
+but will be removed in future release.
+
+`set_iscsi_discovery_auth` and `set_iscsi_target_node_auth` RPC methods have
+been added to set CHAP authentication for discovery sessions and existing
+target nodes, respectively.
+
+The SPDK iSCSI target supports an AuthFile which can be used to load CHAP
+shared secrets when the iSCSI target starts. SPDK previously provided a
+default location for this file (`/usr/local/etc/spdk/auth.conf`) if none was
+specified. This default has been removed. Users must now explicitly specify
+the location of this file to load CHAP shared secrets from a file, or use
+the related iSCSI RPC methods to add them at runtime.
+
+### iscsi initiator
+
+The SPDK iSCSI initiator is no longer considered experimental and becomes
+a first-class citizen among bdev modules. The basic usage has been briefly
+described in the bdev user guide: [iSCSI bdev](https://spdk.io/doc/bdev.html#bdev_config_iscsi)
+
+### Miscellaneous
+
+The ReactorMask config file parameter has been deprecated.  Users should
+use the -m or --cpumask command line option to specify the CPU core mask
+for the application.
+
+Default config file pathnames have been removed from iscsi_tgt, nvmf_tgt
+and vhost.  Config file pathnames may now only be specified using the
+-c command line option.
+
+Users may no longer set DPDK_DIR in their environment to specify the
+location of the DPDK installation used to build SPDK.  Using DPDK_DIR
+has not been the documented nor recommended way to specify the DPDK
+location for several releases, but removing it ensures no unexpected
+surprises for users who may have DPDK_DIR defined for other reasons.
+Users should just use the "configure" script to specify the DPDK
+location before building SPDK.
+
+Although we know that many developers still use Python 2 we are officially
+switching to Python3 with requirement that all new code must be valid also
+for Python 2 up to the EOL which is year 2020.
+
+Invoking interpreter explicitly is forbidden for executable scripts. There
+is no need to use syntax like "python ./scripts/rpc.py". All executable
+scripts must contain proper shebang pointing to the right interpreter.
+Scripts without shebang musn't be executable.
+
+A Python script has been added to enable conversion of old INI config file
+to new JSON-RPC config file format. This script can be found at
+scripts/config_converter.py. Example how this script can be used:
+~~~{.sh}
+cat old_format.ini | scripts/config_converter.py > new_json_format.json
+~~~
+
+### Sock
+
+Two additional parameters were added to spdk_sock_get_addr() for the server
+port and client port. These parameters are named "sport" and "cport"
+respectively.
+
+### Virtio
+
+The following RPC commands have been deprecated:
+ - construct_virtio_user_scsi_bdev
+ - construct_virtio_pci_scsi_bdev
+ - construct_virtio_user_blk_bdev
+ - construct_virtio_pci_blk_bdev
+ - remove_virtio_scsi_bdev
+
+The `construct_virtio_*` ones were replaced with a single `construct_virtio_dev`
+command that can create any type of Virtio bdev(s). `remove_virtio_scsi_bdev`
+was replaced with `remove_virtio_bdev` that can delete both Virtio Block and SCSI
+devices.
+
+## v18.07:
+
+### bdev
+
+A new public header file bdev_module.h has been introduced to facilitate the
+development of new bdev modules. This header includes an interface for the
+spdk_bdev_part and spdk_bdev_part_base objects to enable the creation of
+multiple virtual bdevs on top of a single base bdev and should act as the
+primary API for module authors.
+
+spdk_bdev_get_opts() and spdk_bdev_set_opts() were added to set bdev-wide
+options.
+
+A mechanism for handling out of memory condition errors (ENOMEM) returned from
+I/O submission requests at the bdev layer has been added. See
+spdk_bdev_queue_io_wait().
+
+The spdk_bdev_get_io_stat() function now returns cumulative totals instead of
+resetting on each call. This allows multiple callers to query I/O statistics
+without conflicting with each other. Existing users will need to adjust their
+code to record the previous I/O statistics to calculate the delta between calls.
+
+I/O queue depth tracking and samples options have been added. See
+spdk_bdev_get_qd(), spdk_bdev_get_qd_sampling_period(), and
+spdk_bdev_set_qd_sampling_period().
+
+### RAID module
+A new bdev module called "raid" has been added as experimental module which
+aggregates underlying NVMe bdevs and exposes a single raid bdev. Please note
+that vhost will not work with this module because it does not yet have support
+for multi-element io vectors.
+
+### Log
+
+The debug log component flag available on several SPDK applications has been
+renamed from `-t` to `-L` to prevent confusion with tracepoints and to allow the
+option to be added to tools that already use `-t` to mean something else.
+
+### Blobstore
+
+A new function, spdk_bs_dump(), has been added that dumps all of the contents of
+a blobstore to a file pointer. This includes the metadata and is very useful for
+debugging.
+
+Two new operations have been added for thin-provisioned blobs.
+spdk_bs_inflate_blob() will allocate clusters for all thinly provisioned regions
+of the blob and populate them with the correct data by reading from the backing
+blob(s). spdk_bs_blob_decouple_parent() works similarly, but will only allocate
+clusters that correspond to data in the blob's immediate parent. Clusters
+allocated to grandparents or that aren't allocated at all will remain
+thin-provisioned.
+
+### BlobFS
+
+Changed the return type of spdk_file_truncate() from void to int to allow the
+propagation of `ENOMEM` errors.
+
+### NVMe Driver
+
+The new API functions spdk_nvme_qpair_add_cmd_error_injection() and
+spdk_nvme_qpair_remove_cmd_error_injection() have been added for NVMe error
+emulation. Users can set a specified command to fail with a particular error
+status.
+
+Changed the name `timeout_sec` parameter to `timeout_us` in
+spdk_nvme_ctrlr_register_timeout_callback(), and also changed the type from
+uint32_t to uint64_t. This will give users more fine-grained control over the
+timeout period.
+
+Basic support for Open Channel SSDs was added. See nvme_ocssd.h
+
+### NVMe Over Fabrics
+
+The spdk_nvmf_tgt_destroy() function is now asynchronous and takes a callback
+as a parameter.
+
+spdk_nvmf_qpair_disconnect() was added to allow the user to disconnect qpairs.
+
+spdk_nvmf_subsystem_get_max_namespaces() was added to query the maximum allowed
+number of namespaces for a given subsystem.
+
+### Build System
+
+The build system now generates a combined shared library (libspdk.so) that may
+be used in place of the individual static libraries (libspdk_*.a). The combined
+library includes all components of SPDK and is intended to make linking against
+SPDK easier. The static libraries are also still provided for users that prefer
+to link only the minimal set of components required.
+
+### git pre-commit and pre-push hooks
+
+The pre-commit hook will run `scripts/check_format.sh` and verify there are no
+formating errors before allowing `git commit` to run. The pre-push hook runs
+`make CONFIG_WERROR=y` with and without `CONFIG_DEBUG=y` using both the gcc and
+clang compiler before allowing `git push` to run. Following each DEBUG build
+`test/unit/unittest.sh` is run and verified. Results are recorded in the
+`make.log` file.
+
+To enable type: 'git config core.hooksPath .githooks'. To override after
+configuration use the `git --no-verify` flag.
 
 ### RPC
 
 The `start_nbd_disk` RPC method now returns the path to the kernel NBD device node
 rather than always returning `true`.
 
-### Bdev
+### DPDK 18.05
 
-The spdk_bdev_get_io_stat() function now returns cumulative totals instead of resetting
-on each call. This allows multiple callers to query I/O statistics without conflicting
-with each other. Existing users will need to adjust their code to record the previous
-I/O statistics to calculate the delta between calls.
+The DPDK submodule has been rebased on the DPDK 18.05 release.  DPDK 18.05 supports
+dynamic memory allocation, but due to some issues found after the DPDK 18.05 release,
+that support is not enabled for SPDK 18.07.  Therefore, SPDK 18.07 will continue to use
+the legacy memory allocation model.  The plan is to enable dynamic memory allocation
+after the DPDK 18.08 release which should fix these issues.
 
-A new public header file bdev_module.h has been introduced to facilitate the development
-of new bdev modules. This header includes an interface for the spdk_bdev_part and
-spdk_bdev_part_base objects to enable the creation of multiple virtual bdevs on top of a
-single base bdev.
-
-### Env
+### Environment Abstraction Layer and Event Framework
 
 The spdk_mem_map_translate() function now takes a size parameter to indicate the size of
 the memory region.  This can be used by environment implementations to validate the
@@ -65,40 +253,14 @@ The I/O Channel implementation has been moved to its own library - lib/thread. T
 public API that was previously in spdk/io_channel.h is now in spdk/thread.h The
 file spdk/io_channel.h remains and includes spdk/thread.h.
 
-### NVMe Over Fabrics
-
-The spdk_nvmf_tgt_destroy() function is now asynchronous and takes a callback
-as a parameter.
-
-### git pre-commit and pre-push hooks
-
-The pre-commit hook will run `scripts/check_format.sh` and verify there are no formating
-errors before allowing `git commit` to run. The pre-push hook runs `make CONFIG_WERROR=y`
-with and without `CONFIG_DEBUG=y` using both the gcc and clang compiler before allowing
-`git push` to run.  Following each DEBUG build `test/unit/unittest.sh` is run and verified.
-Results are recorded in the `make.log` file.
-
-To enable type: 'git config core.hooksPath .githooks'. To override after configuration use
-the `git --no-verify` flag.
+spdk_reactor_get_tsc_stats was added to return interesting statistics for each
+reactor.
 
 ### IOAT
 
 IOAT for copy engine is disabled by default. It can be enabled by specifying the Enable
 option with "Yes" in `[Ioat]` section of the configuration file. The Disable option is
 now deprecated and will be removed in a future release.
-
-### blobfs
-
-Change the return type of spdk_file_truncate from void to int. The purpose is to catch
-the `NOMEM` error condition.
-
-### DPDK 18.05
-
-The DPDK submodule has been rebased on the DPDK 18.05 release.  DPDK 18.05 supports
-dynamic memory allocation, but due to some issues found after the DPDK 18.05 release,
-that support is not enabled for SPDK 18.07.  Therefore, SPDK 18.07 will continue to use
-the legacy memory allocation model.  The plan is to enable dynamic memory allocation
-after the DPDK 18.08 release which should fix these issues.
 
 ## v18.04: Logical Volume Snapshot/Clone, iSCSI Initiator, Bdev QoS, VPP Userspace TCP/IP
 
@@ -199,7 +361,7 @@ A new `destroy_lvol_bdev` RPC method to delete logical volumes has been added.
 
 Lvols now have their own UUIDs which replace previous LvolStoreUUID_BlobID combination.
 
-New Snapshot and Clone funtionalities have been added. User may create Snapshots of existing Lvols
+New Snapshot and Clone functionalities have been added. User may create Snapshots of existing Lvols
 and Clones of existing Snapshots.
 See the [lvol snapshots](http://www.spdk.io/doc/logical_volumes.html#lvol_snapshots) documentation
 for more details.
@@ -348,7 +510,7 @@ See the [GPT](http://www.spdk.io/doc/bdev.html#bdev_config_gpt) documentation fo
 
 ### FIO plugin
 
-SPDK `fio_plugin` now suports FIO 3.3. The support for previous FIO 2.21 has been dropped,
+SPDK `fio_plugin` now supports FIO 3.3. The support for previous FIO 2.21 has been dropped,
 although it still remains to work for now. The new FIO contains huge amount of bugfixes and
 it's recommended to do an update.
 

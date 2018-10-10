@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 import io
 import time
 import sys
@@ -130,6 +129,7 @@ def case_message(func):
             655: 'thin_provisioning_filling_disks_less_than_lvs_size',
             700: 'tasting_positive',
             701: 'tasting_lvol_store_positive',
+            702: 'tasting_positive_with_different_lvol_store_cluster_size',
             750: 'snapshot_readonly',
             751: 'snapshot_compare_with_lvol_bdev',
             752: 'snapshot_during_io_traffic',
@@ -148,13 +148,16 @@ def case_message(func):
             10000: 'SIGTERM',
         }
         num = int(func.__name__.strip('test_case')[:])
-        print("========================================================")
-        print("Test Case {num}: Start".format(num=num))
-        print("Test Name: {name}".format(name=test_name[num]))
-        print("========================================================")
+        print("************************************")
+        print("START TEST CASE {name}".format(name=test_name[num]))
+        print("************************************")
         fail_count = func(*args, **kwargs)
-        print("Test Case {num}: END\n".format(num=num))
-        print("========================================================")
+        print("************************************")
+        if not fail_count:
+            print("END TEST CASE {name} PASS".format(name=test_name[num]))
+        else:
+            print("END TEST CASE {name} FAIL".format(name=test_name[num]))
+        print("************************************")
         return fail_count
     return inner
 
@@ -222,10 +225,9 @@ class TestCases(object):
                 return 1
         return 0
 
-    def _start_vhost(self, vhost_path, config_path, pid_path):
-        subprocess.call("{app} -c {config} -f "
+    def _start_vhost(self, vhost_path, pid_path):
+        subprocess.call("{app} -f "
                         "{pid} &".format(app=vhost_path,
-                                         config=config_path,
                                          pid=pid_path), shell=True)
         for timeo in range(10):
             if timeo == 9:
@@ -261,28 +263,20 @@ class TestCases(object):
                 return 1
         return 0
 
-    def _find_traddress_for_nvme(self, nvme_name):
-        with open(self.vhost_config_path) as file:
-            for line in file:
-                if nvme_name in line and "TransportID" in line:
-                    for word in line.split(" "):
-                        if word.startswith("traddr"):
-                            return word.split(":", 1)[1].replace("\"", "")
+    def get_lvs_size(self, lvs_name="lvs_test"):
+        lvs = self.c.get_lvol_stores(lvs_name)[0]
+        return int(int(lvs['free_clusters'] * lvs['cluster_size']) / MEGABYTE)
 
-        print("INFO: Traddr not found for Nvme {nvme}".format(nvme=nvme_name))
-        return -1
+    def get_lvs_divided_size(self, split_num, lvs_name="lvs_test"):
+        # Actual size of lvol bdevs on creation is rounded up to multiple of cluster size.
+        # In order to avoid over provisioning, this function returns
+        # lvol store size in MB divided by split_num - rounded down to multiple of cluster size."
+        lvs = self.c.get_lvol_stores(lvs_name)[0]
+        return int(int(lvs['free_clusters'] / split_num) * lvs['cluster_size'] / MEGABYTE)
 
-    def get_lvs_size(self):
-        lvs = self.c.get_lvol_stores()
-        return int(int(lvs[0][u'free_clusters'] * lvs[0]['cluster_size']) / MEGABYTE)
-
-    def get_lvol_bdev_split_size(self, split_num):
-        lvs = self.c.get_lvol_stores()
-        return int(int(lvs[0][u'free_clusters'] / split_num) * lvs[0]['cluster_size'] / MEGABYTE)
-
-    def get_lvs_cluster_size(self):
-        lvs = self.c.get_lvol_stores()
-        return int(int(lvs[0]['cluster_size']) / MEGABYTE)
+    def get_lvs_cluster_size(self, lvs_name="lvs_test"):
+        lvs = self.c.get_lvol_stores(lvs_name)[0]
+        return int(int(lvs['cluster_size']) / MEGABYTE)
 
     # positive tests
     @case_message
@@ -327,7 +321,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
 
         for j in range(2):
             uuid_bdevs = []
@@ -383,7 +377,7 @@ class TestCases(object):
         fail_count = self.c.check_get_lvol_stores(base_name_2, uuid_store_2,
                                                   self.cluster_size)
 
-        lvs_size = self.get_lvs_size()
+        lvs_size = self.get_lvs_size(self.lvs_name + "1")
         uuid_bdev_1 = self.c.construct_lvol_bdev(uuid_store_1,
                                                  self.lbd_name,
                                                  lvs_size)
@@ -468,12 +462,12 @@ class TestCases(object):
                                                   self.cluster_size)
         # size is equal to one quarter of size malloc bdev
 
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store, self.lbd_name, size)
         fail_count += self.c.check_get_bdevs_methods(uuid_bdev, size)
 
         # size is equal to half  of size malloc bdev
-        size = self.get_lvol_bdev_split_size(2)
+        size = self.get_lvs_divided_size(2)
         self.c.resize_lvol_bdev(uuid_bdev, size)
         fail_count += self.c.check_get_bdevs_methods(uuid_bdev, size)
 
@@ -579,7 +573,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
 
         for i in range(4):
             uuid_bdev = self.c.construct_lvol_bdev(uuid_store,
@@ -601,7 +595,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store,
                                                self.lbd_name,
                                                size)
@@ -632,25 +626,26 @@ class TestCases(object):
     @case_message
     def test_case255(self):
         base_path = path.dirname(sys.argv[0])
-        base_name = "Nvme0n1p0"
+        base_name = "aio_bdev0"
+        aio_bdev0 = path.join(base_path, "aio_bdev_0")
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
         uuid_store = self.c.construct_lvol_store(base_name,
                                                  self.lvs_name)
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
         if self.c.destroy_lvol_store(self.lvs_name) != 0:
             fail_count += 1
-        traddr = self._find_traddress_for_nvme("Nvme0")
-        if traddr != -1:
-            self.c.delete_nvme_controller("Nvme0")
-            self.c.construct_nvme_bdev("Nvme0", "PCIe", traddr)
-            # wait 1 second to allow time for lvolstore tasting
-            sleep(1)
-        else:
-            fail_count += 1
+
+        self.c.delete_aio_bdev(base_name)
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
+        # wait 1 second to allow time for lvolstore tasting
+        sleep(1)
+
         ret_value = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                  self.cluster_size)
         if ret_value == 0:
             fail_count += 1
+        self.c.delete_aio_bdev(base_name)
         return fail_count
 
     @case_message
@@ -820,7 +815,7 @@ class TestCases(object):
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
         lvs = self.c.get_lvol_stores()
-        size = int(int(lvs[0][u'free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
+        size = int(int(lvs[0]['free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
 
         # Construct thin provisioned lvol bdev
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store,
@@ -885,7 +880,7 @@ class TestCases(object):
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
         lvs = self.c.get_lvol_stores()
-        size = int(int(lvs[0][u'free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
+        size = int(int(lvs[0]['free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
 
         # Create lvol bdev, snapshot it, then clone it and then snapshot the clone
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store, self.lbd_name, size, thin=True)
@@ -950,7 +945,7 @@ class TestCases(object):
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
         lvs = self.c.get_lvol_stores()
-        size = int(int(lvs[0][u'free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
+        size = int(int(lvs[0]['free_clusters'] * lvs[0]['cluster_size']) / 4 / MEGABYTE)
 
         # Create lvol bdev, snapshot it, then clone it and then snapshot the clone
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store, self.lbd_name, size, thin=True)
@@ -1050,7 +1045,7 @@ class TestCases(object):
         bdev_name = self.c.construct_lvol_bdev(uuid_store, self.lbd_name,
                                                bdev_size, thin=True)
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_create_lvol = int(lvs[u'free_clusters'])
+        free_clusters_create_lvol = int(lvs['free_clusters'])
         # check and save number of free clusters for lvol store
         if free_clusters_start != free_clusters_create_lvol:
             fail_count += 1
@@ -1062,7 +1057,7 @@ class TestCases(object):
         # write data (lvs cluster size) to created lvol bdev starting from offset 0.
         fail_count += self.run_fio_test("/dev/nbd0", 0, size, "write", "0xcc")
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_first_fio = int(lvs[u'free_clusters'])
+        free_clusters_first_fio = int(lvs['free_clusters'])
         # check that free clusters on lvol store was decremented by 1
         if free_clusters_start != free_clusters_first_fio + 1:
             fail_count += 1
@@ -1074,7 +1069,7 @@ class TestCases(object):
         # write data (lvs cluster size) to lvol bdev with offset set to one and half of cluster size
         fail_count += self.run_fio_test(nbd_name, offset, size, "write", "0xcc")
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_second_fio = int(lvs[u'free_clusters'])
+        free_clusters_second_fio = int(lvs['free_clusters'])
         # check that free clusters on lvol store was decremented by 2
         if free_clusters_start != free_clusters_second_fio + 3:
             fail_count += 1
@@ -1085,7 +1080,7 @@ class TestCases(object):
         # write data to lvol bdev to the end of its size
         fail_count += self.run_fio_test(nbd_name, offset, size, "write", "0xcc")
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_third_fio = int(lvs[u'free_clusters'])
+        free_clusters_third_fio = int(lvs['free_clusters'])
         # check that lvol store free clusters number equals to 0
         if free_clusters_third_fio != 0:
             fail_count += 1
@@ -1094,7 +1089,7 @@ class TestCases(object):
         # destroy thin provisioned lvol bdev
         fail_count += self.c.destroy_lvol_bdev(lvol_bdev['name'])
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_end = int(lvs[u'free_clusters'])
+        free_clusters_end = int(lvs['free_clusters'])
         # check that saved number of free clusters equals to current free clusters
         if free_clusters_start != free_clusters_end:
             fail_count += 1
@@ -1268,7 +1263,7 @@ class TestCases(object):
                                                 bdev_size, thin=True)
 
         lvs = self.c.get_lvol_stores(self.lvs_name)[0]
-        free_clusters_create_lvol = int(lvs[u'free_clusters'])
+        free_clusters_create_lvol = int(lvs['free_clusters'])
         if free_clusters_start != free_clusters_create_lvol:
             fail_count += 1
         lvol_bdev0 = self.c.get_lvol_bdev_with_name(bdev_name0)
@@ -1375,20 +1370,21 @@ class TestCases(object):
         tasting_positive
 
         Positive test for tasting a multi lvol bdev configuration.
-        Create a lvol store with some lvol bdevs on NVMe drive and restart vhost app.
+        Create a lvol store with some lvol bdevs on aio bdev and restart vhost app.
         After restarting configuration should be automatically loaded and should be exactly
         the same as before restarting.
         Check that running configuration can be modified after restarting and tasting.
         """
         fail_count = 0
         uuid_bdevs = []
-        base_name = "Nvme0n1p0"
+        base_name = "aio_bdev0"
 
         base_path = path.dirname(sys.argv[0])
         vhost_path = path.join(self.app_path, 'vhost')
-        config_path = path.join(base_path, 'vhost.conf')
         pid_path = path.join(base_path, 'vhost.pid')
+        aio_bdev0 = path.join(base_path, 'aio_bdev_0')
 
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
         # Create initial configuration on running vhost instance
         # create lvol store, create 5 bdevs
         # save info of all lvs and lvol bdevs
@@ -1398,8 +1394,7 @@ class TestCases(object):
                                                    uuid_store,
                                                    self.cluster_size)
 
-        # size = approx 2% of total NVMe disk size
-        size = self.get_lvol_bdev_split_size(50)
+        size = self.get_lvs_divided_size(10)
 
         for i in range(5):
             uuid_bdev = self.c.construct_lvol_bdev(uuid_store,
@@ -1415,10 +1410,11 @@ class TestCases(object):
         # Shut down vhost instance and restart with new instance
         fail_count += self._stop_vhost(pid_path)
         remove(pid_path)
-        if self._start_vhost(vhost_path, config_path, pid_path) != 0:
+        if self._start_vhost(vhost_path, pid_path) != 0:
             fail_count += 1
             return fail_count
 
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
         # Check if configuration was properly loaded after tasting
         # get all info all lvs and lvol bdevs, compare with previous info
         new_bdevs = sorted(self.c.get_lvol_bdevs(), key=lambda x: x["name"])
@@ -1443,6 +1439,7 @@ class TestCases(object):
                 pprint.pprint([o, n])
 
         if fail_count != 0:
+            self.c.delete_aio_bdev(aio_bdev0)
             return fail_count
 
         # Try modifying loaded configuration
@@ -1463,7 +1460,7 @@ class TestCases(object):
 
         uuid_bdevs = []
 
-        # Create lvol store on NVMe bdev, create ten lvol bdevs on lvol store and
+        # Create lvol store on aio bdev, create ten lvol bdevs on lvol store and
         # verify all configuration call results
         uuid_store = self.c.construct_lvol_store(base_name,
                                                  self.lvs_name)
@@ -1482,6 +1479,8 @@ class TestCases(object):
         if self.c.destroy_lvol_store(uuid_store) != 0:
             fail_count += 1
 
+        self.c.delete_aio_bdev(base_name)
+
         return fail_count
 
     @case_message
@@ -1491,29 +1490,151 @@ class TestCases(object):
 
         Positive test for tasting lvol store.
         """
-        base_name = "Nvme0n1p0"
-        # construct lvol store on NVMe bdev
+        base_path = path.dirname(sys.argv[0])
+        aio_bdev0 = path.join(base_path, 'aio_bdev_0')
+        base_name = "aio_bdev0"
+
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
+        # construct lvol store on aio bdev
         uuid_store = self.c.construct_lvol_store(base_name,
                                                  self.lvs_name)
         fail_count = self.c.check_get_lvol_stores(base_name, uuid_store,
                                                   self.cluster_size)
-        traddr = self._find_traddress_for_nvme("Nvme0")
-        if traddr != -1:
-            # delete NVMe bdev
-            self.c.delete_nvme_controller("Nvme0")
-            # add NVMe bdev
-            self.c.construct_nvme_bdev("Nvme0", "PCIe", traddr)
-            # wait 1 second to allow time for lvolstore tasting
-            sleep(1)
-        else:
-            fail_count += 1
+
+        self.c.delete_aio_bdev(base_name)
+        self.c.construct_aio_bdev(aio_bdev0, base_name, 4096)
+        # wait 1 second to allow time for lvolstore tasting
+        sleep(1)
         # check if lvol store still exists in vhost configuration
         if self.c.check_get_lvol_stores(base_name, uuid_store,
                                         self.cluster_size) != 0:
             fail_count += 1
-        # destroy lvol store from NVMe bdev
+        # destroy lvol store from aio bdev
         if self.c.destroy_lvol_store(uuid_store) != 0:
             fail_count += 1
+
+        self.c.delete_aio_bdev(base_name)
+        return fail_count
+
+    @case_message
+    def test_case702(self):
+        """
+        tasting_positive_with_different_lvol_store_cluster_size
+
+        Positive test for tasting a multi lvol bdev configuration.
+        Create two lvol stores with different cluster sizes with some lvol bdevs on aio
+        drive and restart vhost app.
+        After restarting configuration should be automatically loaded and should be exactly
+        the same as before restarting.
+        """
+        fail_count = 0
+        uuid_bdevs = []
+        cluster_size_1M = MEGABYTE
+        cluster_size_32M = 32 * MEGABYTE
+        base_name_1M = "aio_bdev0"
+        base_name_32M = "aio_bdev1"
+
+        base_path = path.dirname(sys.argv[0])
+        vhost_path = path.join(self.app_path, 'vhost')
+        pid_path = path.join(base_path, 'vhost.pid')
+        aio_bdev0 = path.join(base_path, 'aio_bdev_0')
+        aio_bdev1 = path.join(base_path, 'aio_bdev_1')
+
+        self.c.construct_aio_bdev(aio_bdev0, base_name_1M, 4096)
+        self.c.construct_aio_bdev(aio_bdev1, base_name_32M, 4096)
+
+        # Create initial configuration on running vhost instance
+        # create lvol store, create 5 bdevs
+        # save info of all lvs and lvol bdevs
+        uuid_store_1M = self.c.construct_lvol_store(base_name_1M,
+                                                    self.lvs_name + "_1M",
+                                                    cluster_size_1M)
+
+        fail_count += self.c.check_get_lvol_stores(base_name_1M,
+                                                   uuid_store_1M,
+                                                   cluster_size_1M)
+
+        uuid_store_32M = self.c.construct_lvol_store(base_name_32M,
+                                                     self.lvs_name + "_32M",
+                                                     cluster_size_32M)
+
+        fail_count += self.c.check_get_lvol_stores(base_name_32M,
+                                                   uuid_store_32M,
+                                                   cluster_size_32M)
+
+        # size = approx 20% of total aio bdev size
+        size_1M = self.get_lvs_divided_size(5, self.lvs_name + "_1M")
+        size_32M = self.get_lvs_divided_size(5, self.lvs_name + "_32M")
+
+        for i in range(5):
+            uuid_bdev = self.c.construct_lvol_bdev(uuid_store_1M,
+                                                   self.lbd_name + str(i) + "_1M",
+                                                   size_1M)
+            uuid_bdevs.append(uuid_bdev)
+            # Using get_bdevs command verify lvol bdevs were correctly created
+            fail_count += self.c.check_get_bdevs_methods(uuid_bdev, size_1M)
+
+        for i in range(5):
+            uuid_bdev = self.c.construct_lvol_bdev(uuid_store_32M,
+                                                   self.lbd_name + str(i) + "_32M",
+                                                   size_32M)
+            uuid_bdevs.append(uuid_bdev)
+            # Using get_bdevs command verify lvol bdevs were correctly created
+            fail_count += self.c.check_get_bdevs_methods(uuid_bdev, size_32M)
+
+        old_bdevs = sorted(self.c.get_lvol_bdevs(), key=lambda x: x["name"])
+        old_stores = sorted(self.c.get_lvol_stores(), key=lambda x: x["name"])
+
+        # Shut down vhost instance and restart with new instance
+        fail_count += self._stop_vhost(pid_path)
+        remove(pid_path)
+        if self._start_vhost(vhost_path, pid_path) != 0:
+            fail_count += 1
+            return fail_count
+
+        self.c.construct_aio_bdev(aio_bdev0, base_name_1M, 4096)
+        self.c.construct_aio_bdev(aio_bdev1, base_name_32M, 4096)
+
+        # Check if configuration was properly loaded after tasting
+        # get all info all lvs and lvol bdevs, compare with previous info
+        new_bdevs = sorted(self.c.get_lvol_bdevs(), key=lambda x: x["name"])
+        new_stores = sorted(self.c.get_lvol_stores(), key=lambda x: x["name"])
+
+        if old_stores != new_stores:
+            fail_count += 1
+            print("ERROR: old and loaded lvol store is not the same")
+            print("DIFF:")
+            print(old_stores)
+            print(new_stores)
+
+        if len(old_bdevs) != len(new_bdevs):
+            fail_count += 1
+            print("ERROR: old and loaded lvol bdev list count is not equal")
+
+        for o, n in zip(old_bdevs, new_bdevs):
+            if o != n:
+                fail_count += 1
+                print("ERROR: old and loaded lvol bdev is not the same")
+                print("DIFF:")
+                pprint.pprint([o, n])
+
+        if fail_count != 0:
+            self.c.delete_aio_bdev(base_name_1M)
+            self.c.delete_aio_bdev(base_name_32M)
+            return fail_count
+
+        for uuid_bdev in uuid_bdevs:
+            self.c.destroy_lvol_bdev(uuid_bdev)
+
+        if self.c.destroy_lvol_store(uuid_store_1M) != 0:
+            fail_count += 1
+
+        if self.c.destroy_lvol_store(uuid_store_32M) != 0:
+            fail_count += 1
+
+        self.c.delete_aio_bdev(base_name_1M)
+        self.c.delete_aio_bdev(base_name_32M)
+
         return fail_count
 
     @case_message
@@ -1537,7 +1658,7 @@ class TestCases(object):
 
         lvs = self.c.get_lvol_stores()[0]
         free_clusters_start = int(lvs['free_clusters'])
-        bdev_size = self.get_lvol_bdev_split_size(3)
+        bdev_size = self.get_lvs_divided_size(3)
         # Create lvol bdev with 33% of lvol store space
         bdev_name = self.c.construct_lvol_bdev(uuid_store, self.lbd_name,
                                                bdev_size)
@@ -1588,7 +1709,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
-        size = self.get_lvol_bdev_split_size(6)
+        size = self.get_lvs_divided_size(6)
         lbd_name0 = self.lbd_name + str(0)
         lbd_name1 = self.lbd_name + str(1)
         # Create thin provisioned lvol bdev with size less than 25% of lvs
@@ -1664,7 +1785,7 @@ class TestCases(object):
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
         # Create thin provisioned lvol bdev with size equal to 50% of lvs space
-        size = self.get_lvol_bdev_split_size(2)
+        size = self.get_lvs_divided_size(2)
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store, self.lbd_name,
                                                size, thin=True)
 
@@ -1719,7 +1840,7 @@ class TestCases(object):
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
         # Create thick provisioned lvol bdev
-        size = self.get_lvol_bdev_split_size(2)
+        size = self.get_lvs_divided_size(2)
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store, self.lbd_name,
                                                size, thin=False)
 
@@ -1767,7 +1888,7 @@ class TestCases(object):
                                                    self.cluster_size)
         lvs = self.c.get_lvol_stores()
         # Create thick provisioned lvol bdev with size equal to 50% of lvs space
-        size = self.get_lvol_bdev_split_size(2)
+        size = self.get_lvs_divided_size(2)
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store, self.lbd_name,
                                                size, thin=False)
 
@@ -1828,7 +1949,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
-        size = self.get_lvol_bdev_split_size(6)
+        size = self.get_lvs_divided_size(6)
         lbd_name0 = self.lbd_name + str(0)
         # Construct thick provisioned lvol bdev
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store,
@@ -1901,7 +2022,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
-        size = self.get_lvol_bdev_split_size(6)
+        size = self.get_lvs_divided_size(6)
 
         # Construct thick provisioned lvol bdev
         uuid_bdev = self.c.construct_lvol_bdev(uuid_store,
@@ -1991,7 +2112,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
 
         # Construct thick provisioned lvol bdev
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store,
@@ -2082,7 +2203,7 @@ class TestCases(object):
                                                  self.lvs_name)
         fail_count += self.c.check_get_lvol_stores(base_name, uuid_store,
                                                    self.cluster_size)
-        size = self.get_lvol_bdev_split_size(4)
+        size = self.get_lvs_divided_size(4)
 
         # Construct thin provisioned lvol bdev
         uuid_bdev0 = self.c.construct_lvol_bdev(uuid_store,
@@ -2262,7 +2383,7 @@ class TestCases(object):
                                                    lvs_uuid,
                                                    self.cluster_size,
                                                    self.lvs_name)
-        bdev_size = self.get_lvol_bdev_split_size(4)
+        bdev_size = self.get_lvs_divided_size(4)
         for name, alias in zip(bdev_names, bdev_aliases):
             uuid = self.c.construct_lvol_bdev(lvs_uuid,
                                               name,
@@ -2358,21 +2479,22 @@ class TestCases(object):
                                                    lvs_name_2)
 
         # Create 4 lvol bdevs on top of each lvol store
-        bdev_size = self.get_lvol_bdev_split_size(4)
+        bdev_size_1 = self.get_lvs_divided_size(4, lvs_name_1)
+        bdev_size_2 = self.get_lvs_divided_size(4, lvs_name_2)
         for name, alias in zip(bdev_names_1, bdev_aliases_1):
             uuid = self.c.construct_lvol_bdev(lvs_uuid_1,
                                               name,
-                                              bdev_size)
+                                              bdev_size_1)
             fail_count += self.c.check_get_bdevs_methods(uuid,
-                                                         bdev_size,
+                                                         bdev_size_1,
                                                          alias)
             bdev_uuids_1.append(uuid)
         for name, alias in zip(bdev_names_2, bdev_aliases_2):
             uuid = self.c.construct_lvol_bdev(lvs_uuid_2,
                                               name,
-                                              bdev_size)
+                                              bdev_size_2)
             fail_count += self.c.check_get_bdevs_methods(uuid,
-                                                         bdev_size,
+                                                         bdev_size_2,
                                                          alias)
             bdev_uuids_2.append(uuid)
 
@@ -2392,12 +2514,12 @@ class TestCases(object):
 
         for name, alias, uuid in zip(bdev_names_1, bdev_aliases_1, bdev_uuids_1):
             fail_count += self.c.check_get_bdevs_methods(uuid,
-                                                         bdev_size,
+                                                         bdev_size_1,
                                                          alias)
 
         for name, alias, uuid in zip(bdev_names_2, bdev_aliases_2, bdev_uuids_2):
             fail_count += self.c.check_get_bdevs_methods(uuid,
-                                                         bdev_size,
+                                                         bdev_size_2,
                                                          alias)
 
         # Clean configuration
@@ -2429,7 +2551,7 @@ class TestCases(object):
                                                    lvs_uuid,
                                                    self.cluster_size,
                                                    self.lvs_name)
-        bdev_size = self.get_lvol_bdev_split_size(2)
+        bdev_size = self.get_lvs_divided_size(2)
         bdev_uuid_1 = self.c.construct_lvol_bdev(lvs_uuid,
                                                  self.lbd_name + "1",
                                                  bdev_size)

@@ -321,6 +321,7 @@ systemctl enable ceph-mon.target
 # Enable mgr (http://docs.ceph.com/docs/master/mgr/administrator/#mgr-administrator-guide)
 mkdir -p /var/lib/ceph/mgr/ceph-host-0/
 ceph auth get-or-create mgr.host-0 mon 'allow profile mgr' osd 'allow *' mds 'allow *' >/var/lib/ceph/mgr/ceph-host-0/keyring
+ceph auth get-or-create client.kubernetes mon 'profile rbd' osd 'profile rbd pool=rbd' >/etc/ceph/ceph.client.kubernetes.keyring
 systemctl enable ceph-mgr@host-0
 systemctl start ceph-mgr@host-0
 systemctl enable ceph-mgr.target
@@ -354,6 +355,19 @@ _work/ssh-clear-kvm.0 ceph status
 # http://docs.ceph.com/docs/mimic/rados/operations/pools/#create-a-pool
 _work/ssh-clear-kvm.0 ceph osd pool create rbd 128 128
 _work/ssh-clear-kvm.0 rbd pool init rbd
+
+# Create secret for ceph-csi (https://github.com/ceph/ceph-csi/blob/master/examples/rbd/secret.yaml).
+_work/ssh-clear-kvm kubectl create -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: csi-rbd-secret
+  namespace: default
+data:
+  admin: $(_work/ssh-clear-kvm grep key /etc/ceph/ceph.client.admin.keyring | sed -e 's/.* //' | base64 -w 0)
+  kubernetes: $(_work/ssh-clear-kvm grep key /etc/ceph/ceph.client.kubernetes.keyring | sed -e 's/.* //' | base64 -w 0)
+  monitors: $(echo 192.168.7.2:6789 | tr -d "\n" | base64 -w 0)
+EOF
 
 # Clean shutdown.
 for i in $(seq 0 $LAST_NODE); do

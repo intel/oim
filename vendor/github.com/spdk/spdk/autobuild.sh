@@ -14,6 +14,8 @@ cd $rootdir
 date -u
 git describe --tags
 
+./configure $config_params
+
 # Print some test system info out for the log
 echo "** START ** Info for Hostname: $HOSTNAME"
 uname -a
@@ -23,13 +25,19 @@ echo "** END ** Info for Hostname: $HOSTNAME"
 
 timing_enter autobuild
 
-./configure $config_params
-
 timing_enter check_format
 if [ $SPDK_RUN_CHECK_FORMAT -eq 1 ]; then
 	./scripts/check_format.sh
 fi
 timing_exit check_format
+
+$MAKE $MAKEFLAGS clean
+if [ $SPDK_BUILD_SHARED_OBJECT -eq 1 ]; then
+	./configure $config_params --with-shared
+	$MAKE $MAKEFLAGS
+	$MAKE $MAKEFLAGS clean
+	report_test_completion "shared_object_build"
+fi
 
 scanbuild=''
 make_timing_label='make'
@@ -53,10 +61,10 @@ if [ $SPDK_RUN_UBSAN -eq 1 ]; then
 fi
 
 echo $scanbuild
-$MAKE $MAKEFLAGS clean
 
 timing_enter "$make_timing_label"
 fail=0
+./configure $config_params
 time $scanbuild $MAKE $MAKEFLAGS || fail=1
 if [ $fail -eq 1 ]; then
 	if [ -d $out/scan-build-tmp ]; then

@@ -46,26 +46,33 @@ ifneq ($(wildcard $(SPDK_ROOT_DIR)/intel-ipsec-mb/README),)
 INTEL_IPSEC_MB_LIB=$(SPDK_ROOT_DIR)/intel-ipsec-mb/libIPSec_MB.a
 IPSEC_MB_CFLAGS = -fPIC
 CRYPTO_ENABLED = y
-DPDK_OPTS += AESNI_MULTI_BUFFER_LIB_PATH=$(SPDK_ROOT_DIR)/intel-ipsec-mb
 DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_AESNI_MB=y
 DPDK_OPTS += CONFIG_RTE_LIBRTE_CRYPTODEV=y
 DPDK_OPTS += CONFIG_RTE_LIBRTE_REORDER=y
-DPDK_OPTS += CONFIG_RTE_LIBRTE_KVARGS=y
+DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_QAT=y
+DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_QAT_SYM=y
+ifeq ($(CONFIG_IGB_UIO_DRIVER),y)
+DPDK_OPTS += CONFIG_RTE_EAL_IGB_UIO=y
+else
+DPDK_OPTS += CONFIG_RTE_EAL_IGB_UIO=n
+endif
 endif
 endif
 endif
 
 ifeq ($(CRYPTO_ENABLED),n)
+DPDK_OPTS += CONFIG_RTE_EAL_IGB_UIO=n
 DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_AESNI_MB=n
 DPDK_OPTS += CONFIG_RTE_LIBRTE_CRYPTODEV=n
 DPDK_OPTS += CONFIG_RTE_LIBRTE_REORDER=n
-DPDK_OPTS += CONFIG_RTE_LIBRTE_KVARGS=n
+DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_QAT=n
+DPDK_OPTS += CONFIG_RTE_LIBRTE_PMD_QAT_SYM=n
 endif
 
 ifeq ($(TARGET_MACHINE),aarch64)
 DPDK_CONFIG := arm64-armv8a
 else
-DPDK_CONFIG := spdk
+DPDK_CONFIG := $(TARGET_MACHINE)-native
 endif
 
 ifeq ($(OS),Linux)
@@ -98,6 +105,14 @@ DPDK_CFLAGS += -Werror
 else
 DPDK_CFLAGS += -Wno-error
 endif
+
+ifdef EXTRA_DPDK_CFLAGS
+$(warning EXTRA_DPDK_CFLAGS defined, possibly to work around an unsupported compiler version)
+$(shell sleep 1)
+endif
+
+# Allow users to specify EXTRA_DPDK_CFLAGS if they want to build DPDK using unsupported compiler versions
+DPDK_CFLAGS += $(EXTRA_DPDK_CFLAGS)
 
 $(SPDK_ROOT_DIR)/dpdk/build: $(INTEL_IPSEC_MB_LIB)
 	$(Q)$(MAKE) -C $(SPDK_ROOT_DIR)/dpdk config T=$(DPDK_CONFIG) $(DPDK_OPTS)

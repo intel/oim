@@ -41,7 +41,7 @@
 #include "spdk/rpc.h"
 #include "spdk/util.h"
 #include "spdk/event.h"
-
+#include "spdk/string.h"
 #include "spdk_internal/log.h"
 
 static void
@@ -1035,6 +1035,75 @@ invalid:
 }
 SPDK_RPC_REGISTER("target_node_add_lun", spdk_rpc_target_node_add_lun, SPDK_RPC_RUNTIME)
 
+struct rpc_target_auth {
+	char *name;
+	bool disable_chap;
+	bool require_chap;
+	bool mutual_chap;
+	int32_t chap_group;
+};
+
+static void
+free_rpc_target_auth(struct rpc_target_auth *req)
+{
+	free(req->name);
+}
+
+static const struct spdk_json_object_decoder rpc_target_auth_decoders[] = {
+	{"name", offsetof(struct rpc_target_auth, name), spdk_json_decode_string},
+	{"disable_chap", offsetof(struct rpc_target_auth, disable_chap), spdk_json_decode_bool, true},
+	{"require_chap", offsetof(struct rpc_target_auth, require_chap), spdk_json_decode_bool, true},
+	{"mutual_chap", offsetof(struct rpc_target_auth, mutual_chap), spdk_json_decode_bool, true},
+	{"chap_group", offsetof(struct rpc_target_auth, chap_group), spdk_json_decode_int32, true},
+};
+
+static void
+spdk_rpc_set_iscsi_target_node_auth(struct spdk_jsonrpc_request *request,
+				    const struct spdk_json_val *params)
+{
+	struct rpc_target_auth req = {};
+	struct spdk_json_write_ctx *w;
+	struct spdk_iscsi_tgt_node *target;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_target_auth_decoders,
+				    SPDK_COUNTOF(rpc_target_auth_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		return;
+	}
+
+	target = spdk_iscsi_find_tgt_node(req.name);
+	if (target == NULL) {
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not find target %s", req.name);
+		free_rpc_target_auth(&req);
+		return;
+	}
+
+	rc = spdk_iscsi_tgt_node_set_chap_params(target, req.disable_chap, req.require_chap,
+			req.mutual_chap, req.chap_group);
+	if (rc < 0) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid combination of auth params");
+		free_rpc_target_auth(&req);
+		return;
+	}
+
+	free_rpc_target_auth(&req);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("set_iscsi_target_node_auth", spdk_rpc_set_iscsi_target_node_auth,
+		  SPDK_RPC_RUNTIME)
+
 static void
 spdk_rpc_get_iscsi_global_params(struct spdk_jsonrpc_request *request,
 				 const struct spdk_json_val *params)
@@ -1057,3 +1126,417 @@ spdk_rpc_get_iscsi_global_params(struct spdk_jsonrpc_request *request,
 	spdk_jsonrpc_end_result(request, w);
 }
 SPDK_RPC_REGISTER("get_iscsi_global_params", spdk_rpc_get_iscsi_global_params, SPDK_RPC_RUNTIME)
+
+struct rpc_discovery_auth {
+	bool disable_chap;
+	bool require_chap;
+	bool mutual_chap;
+	int32_t chap_group;
+};
+
+static const struct spdk_json_object_decoder rpc_discovery_auth_decoders[] = {
+	{"disable_chap", offsetof(struct rpc_discovery_auth, disable_chap), spdk_json_decode_bool, true},
+	{"require_chap", offsetof(struct rpc_discovery_auth, require_chap), spdk_json_decode_bool, true},
+	{"mutual_chap", offsetof(struct rpc_discovery_auth, mutual_chap), spdk_json_decode_bool, true},
+	{"chap_group", offsetof(struct rpc_discovery_auth, chap_group), spdk_json_decode_int32, true},
+};
+
+static void
+spdk_rpc_set_iscsi_discovery_auth(struct spdk_jsonrpc_request *request,
+				  const struct spdk_json_val *params)
+{
+	struct rpc_discovery_auth req = {};
+	struct spdk_json_write_ctx *w;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_discovery_auth_decoders,
+				    SPDK_COUNTOF(rpc_discovery_auth_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		return;
+	}
+
+	rc = spdk_iscsi_set_discovery_auth(req.disable_chap, req.require_chap,
+					   req.mutual_chap, req.chap_group);
+	if (rc < 0) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid combination of CHAP params");
+		return;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("set_iscsi_discovery_auth", spdk_rpc_set_iscsi_discovery_auth, SPDK_RPC_RUNTIME)
+
+
+#define MAX_AUTH_SECRETS	64
+
+struct rpc_auth_secret {
+	char *user;
+	char *secret;
+	char *muser;
+	char *msecret;
+};
+
+static void
+free_rpc_auth_secret(struct rpc_auth_secret *_secret)
+{
+	free(_secret->user);
+	free(_secret->secret);
+	free(_secret->muser);
+	free(_secret->msecret);
+}
+
+static const struct spdk_json_object_decoder rpc_auth_secret_decoders[] = {
+	{"user", offsetof(struct rpc_auth_secret, user), spdk_json_decode_string},
+	{"secret", offsetof(struct rpc_auth_secret, secret), spdk_json_decode_string},
+	{"muser", offsetof(struct rpc_auth_secret, muser), spdk_json_decode_string, true},
+	{"msecret", offsetof(struct rpc_auth_secret, msecret), spdk_json_decode_string, true},
+};
+
+static int
+decode_rpc_auth_secret(const struct spdk_json_val *val, void *out)
+{
+	struct rpc_auth_secret *_secret = out;
+
+	return spdk_json_decode_object(val, rpc_auth_secret_decoders,
+				       SPDK_COUNTOF(rpc_auth_secret_decoders), _secret);
+}
+
+struct rpc_auth_secrets {
+	size_t num_secret;
+	struct rpc_auth_secret secrets[MAX_AUTH_SECRETS];
+};
+
+static void
+free_rpc_auth_secrets(struct rpc_auth_secrets *secrets)
+{
+	size_t i;
+
+	for (i = 0; i < secrets->num_secret; i++) {
+		free_rpc_auth_secret(&secrets->secrets[i]);
+	}
+}
+
+static int
+decode_rpc_auth_secrets(const struct spdk_json_val *val, void *out)
+{
+	struct rpc_auth_secrets *secrets = out;
+
+	return spdk_json_decode_array(val, decode_rpc_auth_secret, secrets->secrets,
+				      MAX_AUTH_SECRETS, &secrets->num_secret,
+				      sizeof(struct rpc_auth_secret));
+}
+
+struct rpc_auth_group {
+	int32_t tag;
+	struct rpc_auth_secrets secrets;
+};
+
+static void
+free_rpc_auth_group(struct rpc_auth_group *group)
+{
+	free_rpc_auth_secrets(&group->secrets);
+}
+
+static const struct spdk_json_object_decoder rpc_auth_group_decoders[] = {
+	{"tag", offsetof(struct rpc_auth_group, tag), spdk_json_decode_int32},
+	{"secrets", offsetof(struct rpc_auth_group, secrets), decode_rpc_auth_secrets, true},
+};
+
+static void
+spdk_rpc_add_iscsi_auth_group(struct spdk_jsonrpc_request *request,
+			      const struct spdk_json_val *params)
+{
+	struct rpc_auth_group req = {};
+	struct rpc_auth_secret *_secret;
+	struct spdk_json_write_ctx *w;
+	struct spdk_iscsi_auth_group *group = NULL;
+	int rc;
+	size_t i;
+
+	if (spdk_json_decode_object(params, rpc_auth_group_decoders,
+				    SPDK_COUNTOF(rpc_auth_group_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		free_rpc_auth_group(&req);
+		return;
+	}
+
+	pthread_mutex_lock(&g_spdk_iscsi.mutex);
+
+	rc = spdk_iscsi_add_auth_group(req.tag, &group);
+	if (rc != 0) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not add auth group (%d), %s",
+						     req.tag, spdk_strerror(-rc));
+		free_rpc_auth_group(&req);
+		return;
+	}
+
+	for (i = 0; i < req.secrets.num_secret; i++) {
+		_secret = &req.secrets.secrets[i];
+		rc = spdk_iscsi_auth_group_add_secret(group, _secret->user, _secret->secret,
+						      _secret->muser, _secret->msecret);
+		if (rc != 0) {
+			spdk_iscsi_delete_auth_group(group);
+			pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+			spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+							     "Could not add secret to auth group (%d), %s",
+							     req.tag, spdk_strerror(-rc));
+			free_rpc_auth_group(&req);
+			return;
+		}
+	}
+
+	pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+	free_rpc_auth_group(&req);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("add_iscsi_auth_group", spdk_rpc_add_iscsi_auth_group, SPDK_RPC_RUNTIME)
+
+struct rpc_delete_auth_group {
+	int32_t tag;
+};
+
+static const struct spdk_json_object_decoder rpc_delete_auth_group_decoders[] = {
+	{"tag", offsetof(struct rpc_delete_auth_group, tag), spdk_json_decode_int32},
+};
+
+static void
+spdk_rpc_delete_iscsi_auth_group(struct spdk_jsonrpc_request *request,
+				 const struct spdk_json_val *params)
+{
+	struct rpc_delete_auth_group req = {};
+	struct spdk_json_write_ctx *w;
+	struct spdk_iscsi_auth_group *group;
+
+	if (spdk_json_decode_object(params, rpc_delete_auth_group_decoders,
+				    SPDK_COUNTOF(rpc_delete_auth_group_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		return;
+	}
+
+	pthread_mutex_lock(&g_spdk_iscsi.mutex);
+
+	group = spdk_iscsi_find_auth_group_by_tag(req.tag);
+	if (group == NULL) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not find auth group (%d)", req.tag);
+		return;
+	}
+
+	spdk_iscsi_delete_auth_group(group);
+
+	pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("delete_iscsi_auth_group", spdk_rpc_delete_iscsi_auth_group, SPDK_RPC_RUNTIME)
+
+struct rpc_add_auth_secret {
+	int32_t tag;
+	char *user;
+	char *secret;
+	char *muser;
+	char *msecret;
+};
+
+static void
+free_rpc_add_auth_secret(struct rpc_add_auth_secret *_secret)
+{
+	free(_secret->user);
+	free(_secret->secret);
+	free(_secret->muser);
+	free(_secret->msecret);
+}
+
+static const struct spdk_json_object_decoder rpc_add_auth_secret_decoders[] = {
+	{"tag", offsetof(struct rpc_add_auth_secret, tag), spdk_json_decode_int32},
+	{"user", offsetof(struct rpc_add_auth_secret, user), spdk_json_decode_string},
+	{"secret", offsetof(struct rpc_add_auth_secret, secret), spdk_json_decode_string},
+	{"muser", offsetof(struct rpc_add_auth_secret, muser), spdk_json_decode_string, true},
+	{"msecret", offsetof(struct rpc_add_auth_secret, msecret), spdk_json_decode_string, true},
+};
+
+static void
+spdk_rpc_add_secret_to_iscsi_auth_group(struct spdk_jsonrpc_request *request,
+					const struct spdk_json_val *params)
+{
+	struct rpc_add_auth_secret req = {};
+	struct spdk_json_write_ctx *w;
+	struct spdk_iscsi_auth_group *group;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_add_auth_secret_decoders,
+				    SPDK_COUNTOF(rpc_add_auth_secret_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		free_rpc_add_auth_secret(&req);
+		return;
+	}
+
+	pthread_mutex_lock(&g_spdk_iscsi.mutex);
+
+	group = spdk_iscsi_find_auth_group_by_tag(req.tag);
+	if (group == NULL) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not find auth group (%d)", req.tag);
+		free_rpc_add_auth_secret(&req);
+		return;
+	}
+
+	rc = spdk_iscsi_auth_group_add_secret(group, req.user, req.secret, req.muser, req.msecret);
+	if (rc != 0) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not add secret to auth group (%d), %s",
+						     req.tag, spdk_strerror(-rc));
+		free_rpc_add_auth_secret(&req);
+		return;
+	}
+
+	pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+	free_rpc_add_auth_secret(&req);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("add_secret_to_iscsi_auth_group", spdk_rpc_add_secret_to_iscsi_auth_group,
+		  SPDK_RPC_RUNTIME)
+
+struct rpc_delete_auth_secret {
+	int32_t tag;
+	char *user;
+};
+
+static void
+free_rpc_delete_auth_secret(struct rpc_delete_auth_secret *_secret)
+{
+	free(_secret->user);
+}
+
+static const struct spdk_json_object_decoder rpc_delete_auth_secret_decoders[] = {
+	{"tag", offsetof(struct rpc_delete_auth_secret, tag), spdk_json_decode_int32},
+	{"user", offsetof(struct rpc_delete_auth_secret, user), spdk_json_decode_string},
+};
+
+static void
+spdk_rpc_delete_secret_from_iscsi_auth_group(struct spdk_jsonrpc_request *request,
+		const struct spdk_json_val *params)
+{
+	struct rpc_delete_auth_secret req = {};
+	struct spdk_json_write_ctx *w;
+	struct spdk_iscsi_auth_group *group;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_delete_auth_secret_decoders,
+				    SPDK_COUNTOF(rpc_delete_auth_secret_decoders), &req)) {
+		SPDK_ERRLOG("spdk_json_decode_object failed\n");
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
+		free_rpc_delete_auth_secret(&req);
+		return;
+	}
+
+	pthread_mutex_lock(&g_spdk_iscsi.mutex);
+
+	group = spdk_iscsi_find_auth_group_by_tag(req.tag);
+	if (group == NULL) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not find auth group (%d)", req.tag);
+		free_rpc_delete_auth_secret(&req);
+		return;
+	}
+
+	rc = spdk_iscsi_auth_group_delete_secret(group, req.user);
+	if (rc != 0) {
+		pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Could not delete secret from CHAP group (%d), %s",
+						     req.tag, spdk_strerror(-rc));
+		free_rpc_delete_auth_secret(&req);
+		return;
+	}
+
+	pthread_mutex_unlock(&g_spdk_iscsi.mutex);
+
+	free_rpc_delete_auth_secret(&req);
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("delete_secret_from_iscsi_auth_group",
+		  spdk_rpc_delete_secret_from_iscsi_auth_group, SPDK_RPC_RUNTIME)
+
+static void
+spdk_rpc_get_iscsi_auth_groups(struct spdk_jsonrpc_request *request,
+			       const struct spdk_json_val *params)
+{
+	struct spdk_json_write_ctx *w;
+
+	if (params != NULL) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "get_iscsi_auth_groups requires no parameters");
+		return;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_array_begin(w);
+	spdk_iscsi_auth_groups_info_json(w);
+	spdk_json_write_array_end(w);
+
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("get_iscsi_auth_groups", spdk_rpc_get_iscsi_auth_groups, SPDK_RPC_RUNTIME)

@@ -17,12 +17,12 @@ timing_exit rbd_setup
 
 timing_enter rbd
 
-rpc_py="python $rootdir/scripts/rpc.py"
-fio_py="python $rootdir/scripts/fio.py"
+rpc_py="$rootdir/scripts/rpc.py"
+fio_py="$rootdir/scripts/fio.py"
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -m $ISCSI_TEST_CORE_MASK -w &
+$ISCSI_APP -m $ISCSI_TEST_CORE_MASK --wait-for-rpc &
 pid=$!
 
 trap "killprocess $pid; rbd_cleanup; exit 1" SIGINT SIGTERM EXIT

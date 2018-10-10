@@ -11,10 +11,11 @@ rootdir=$(readlink -f $(dirname $0)/../..)
 
 cd "$rootdir"
 
+
 # if ASAN is enabled, use it.  If not use valgrind if installed but allow
 # the env variable to override the default shown below.
 if [ -z ${valgrind+x} ]; then
-	if grep -q '#undef SPDK_CONFIG_ASAN' $rootdir/config.h && hash valgrind; then
+	if grep -q '#undef SPDK_CONFIG_ASAN' $rootdir/include/spdk/config.h && hash valgrind; then
 		valgrind='valgrind --leak-check=full --error-exitcode=2'
 	else
 		valgrind=''
@@ -22,7 +23,7 @@ if [ -z ${valgrind+x} ]; then
 fi
 
 # setup local unit test coverage if cov is available
-if hash lcov && grep -q '#define SPDK_CONFIG_COVERAGE 1' $rootdir/config.h; then
+if hash lcov && grep -q '#define SPDK_CONFIG_COVERAGE 1' $rootdir/include/spdk/config.h; then
 	cov_avail="yes"
 else
 	cov_avail="no"
@@ -54,7 +55,11 @@ $valgrind $testdir/lib/bdev/scsi_nvme.c/scsi_nvme_ut
 $valgrind $testdir/lib/bdev/gpt/gpt.c/gpt_ut
 $valgrind $testdir/lib/bdev/vbdev_lvol.c/vbdev_lvol_ut
 
-if grep -q '#define SPDK_CONFIG_PMDK 1' $rootdir/config.h; then
+if grep -q '#define SPDK_CONFIG_CRYPTO 1' $rootdir/include/spdk/config.h; then
+	$valgrind $testdir/lib/bdev/crypto.c/crypto_ut
+fi
+
+if grep -q '#define SPDK_CONFIG_PMDK 1' $rootdir/include/spdk/config.h; then
 	$valgrind $testdir/lib/bdev/pmem/bdev_pmem_ut
 fi
 
@@ -68,6 +73,7 @@ $valgrind $testdir/lib/blobfs/blobfs_async_ut/blobfs_async_ut
 $testdir/lib/blobfs/blobfs_sync_ut/blobfs_sync_ut
 
 $valgrind $testdir/lib/event/subsystem.c/subsystem_ut
+$valgrind $testdir/lib/event/app.c/app_ut
 
 $valgrind $testdir/lib/sock/sock.c/sock_ut
 
@@ -81,6 +87,9 @@ $valgrind $testdir/lib/nvme/nvme_ns_ocssd_cmd.c/nvme_ns_ocssd_cmd_ut
 $valgrind $testdir/lib/nvme/nvme_qpair.c/nvme_qpair_ut
 $valgrind $testdir/lib/nvme/nvme_pcie.c/nvme_pcie_ut
 $valgrind $testdir/lib/nvme/nvme_quirks.c/nvme_quirks_ut
+if grep -q '#define SPDK_CONFIG_RDMA 1' $rootdir/config.h; then
+	$valgrind $testdir/lib/nvme/nvme_rdma.c/nvme_rdma_ut
+fi
 
 $valgrind $testdir/lib/ioat/ioat.c/ioat_ut
 
@@ -156,7 +165,7 @@ if [ "$cov_avail" = "yes" ]; then
 else
 	echo "WARN: lcov not installed or SPDK built without coverage!"
 fi
-if grep -q '#undef SPDK_CONFIG_ASAN' $rootdir/config.h && [ "$valgrind" = "" ]; then
+if grep -q '#undef SPDK_CONFIG_ASAN' $rootdir/include/spdk/config.h && [ "$valgrind" = "" ]; then
 	echo "WARN: neither valgrind nor ASAN is enabled!"
 fi
 

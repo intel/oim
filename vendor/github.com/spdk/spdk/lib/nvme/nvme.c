@@ -181,7 +181,8 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 	uint64_t phys_addr;
 
 	if (buffer && payload_size) {
-		dma_buffer = spdk_dma_zmalloc(payload_size, 4096, &phys_addr);
+		dma_buffer = spdk_zmalloc(payload_size, 4096, &phys_addr,
+					  SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
 		if (!dma_buffer) {
 			return NULL;
 		}
@@ -194,7 +195,7 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 	req = nvme_allocate_request_contig(qpair, dma_buffer, payload_size, nvme_user_copy_cmd_complete,
 					   NULL);
 	if (!req) {
-		spdk_dma_free(dma_buffer);
+		spdk_free(dma_buffer);
 		return NULL;
 	}
 
@@ -405,8 +406,8 @@ nvme_init_controllers(void *cb_ctx, spdk_nvme_attach_cb attach_cb)
 	while (!TAILQ_EMPTY(&g_nvme_init_ctrlrs)) {
 		TAILQ_FOREACH_SAFE(ctrlr, &g_nvme_init_ctrlrs, tailq, ctrlr_tmp) {
 			/* Drop the driver lock while calling nvme_ctrlr_process_init()
-			 *  since it needs to acquire the driver lock internally when calling
-			 *  nvme_ctrlr_start().
+			 *  since it needs to acquire the driver lock internally when initializing
+			 *  controller.
 			 *
 			 * TODO: Rethink the locking - maybe reset should take the lock so that start() and
 			 *  the functions it calls (in particular nvme_ctrlr_set_num_qpairs())
@@ -710,7 +711,7 @@ spdk_nvme_transport_id_adrfam_str(enum spdk_nvmf_adrfam adrfam)
 int
 spdk_nvme_transport_id_parse(struct spdk_nvme_transport_id *trid, const char *str)
 {
-	const char *sep;
+	const char *sep, *sep1;
 	const char *whitespace = " \t\n";
 	size_t key_len, val_len;
 	char key[32];
@@ -729,6 +730,11 @@ spdk_nvme_transport_id_parse(struct spdk_nvme_transport_id *trid, const char *st
 			if (!sep) {
 				SPDK_ERRLOG("Key without ':' or '=' separator\n");
 				return -EINVAL;
+			}
+		} else {
+			sep1 = strchr(str, '=');
+			if ((sep1 != NULL) && (sep1 < sep)) {
+				sep = sep1;
 			}
 		}
 

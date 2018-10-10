@@ -45,22 +45,31 @@ SPDK_FILTER_LIB_LIST += $(filter %_rpc,$(SPDK_LIB_LIST))
 SPDK_FILTER_LIB_LIST += $(filter iscsi,$(SPDK_LIB_LIST))
 SPDK_FILTER_LIB_LIST += $(filter nbd,$(SPDK_LIB_LIST))
 SPDK_FILTER_LIB_LIST += $(filter net,$(SPDK_LIB_LIST))
-SPDK_FILTER_LIB_LIST += $(filter scsi,$(SPDK_LIB_LIST))
 SPDK_FILTER_LIB_LIST += $(filter vhost,$(SPDK_LIB_LIST))
+SPDK_FILTER_LIB_LIST += $(filter scsi,$(SPDK_LIB_LIST))
 
 # The unit test mock wrappers need to be wrapped in whole-archive so they don't get
 # automatically removed with LTO.
 SPDK_FILTER_LIB_LIST += $(filter spdk_mock,$(SPDK_LIB_LIST))
 
-SPDK_WHOLE_ARCHIVE_LIB_LIST = $(sort $(SPDK_FILTER_LIB_LIST))
+SPDK_WHOLE_ARCHIVE_LIB_LIST = $(SPDK_FILTER_LIB_LIST)
 SPDK_REMAINING_LIB_LIST = $(filter-out $(SPDK_WHOLE_ARCHIVE_LIB_LIST),$(SPDK_LIB_LIST))
 
-SPDK_LIB_FILES = $(call spdk_lib_list_to_files,$(SPDK_LIB_LIST))
+SPDK_LIB_FILES = $(call spdk_lib_list_to_static_libs,$(SPDK_LIB_LIST))
 SPDK_LIB_LINKER_ARGS = \
 	-L$(SPDK_ROOT_DIR)/build/lib \
 	-Wl,--whole-archive \
 	$(SPDK_WHOLE_ARCHIVE_LIB_LIST:%=-lspdk_%) \
 	-Wl,--no-whole-archive \
 	$(SPDK_REMAINING_LIB_LIST:%=-lspdk_%)
+
+# This is primarily used for unit tests to ensure they link when shared library
+# build is enabled.  Shared libraries can't get their mock implementation from
+# the unit test file.
+SPDK_STATIC_LIB_LINKER_ARGS = \
+	-Wl,--whole-archive \
+	$(SPDK_WHOLE_ARCHIVE_LIB_LIST:%=$(SPDK_ROOT_DIR)/build/lib/libspdk_%.a) \
+	-Wl,--no-whole-archive \
+	$(SPDK_REMAINING_LIB_LIST:%=$(SPDK_ROOT_DIR)/build/lib/libspdk_%.a)
 
 install: all

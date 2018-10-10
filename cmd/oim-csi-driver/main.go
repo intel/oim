@@ -28,6 +28,7 @@ var (
 	spdkSocket         = flag.String("spdk-socket", "", "SPDK VHost socket path. If set, then the driver will controll that SPDK instance directly.")
 	oimRegistryAddress = flag.String("oim-registry-address", "", "OIM registry address in the format expected by grpc.Dial. If set, then the driver will use a OIM controller via the registry instead of a local SPDK daemon.")
 	controllerID       = flag.String("controller-id", "", "The ID under which the OIM controller can be found in the registry.")
+	emulate            = flag.String("emulate", "", "name of CSI driver to emulate for node operations")
 	_                  = log.InitSimpleFlags()
 )
 
@@ -50,6 +51,7 @@ func main() {
 		oimcsidriver.WithVHostEndpoint(*spdkSocket),
 		oimcsidriver.WithOIMRegistryAddress(*oimRegistryAddress),
 		oimcsidriver.WithOIMControllerID(*controllerID),
+		oimcsidriver.WithEmulation(*emulate),
 	}
 	driver, err := oimcsidriver.New(options...)
 	if err != nil {

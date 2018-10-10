@@ -37,11 +37,14 @@ def set_nvmf_target_options(client,
     return client.call('set_nvmf_target_options', params)
 
 
-def set_nvmf_target_config(client, acceptor_poll_rate=None):
+def set_nvmf_target_config(client,
+                           acceptor_poll_rate=None,
+                           conn_sched=None):
     """Set NVMe-oF target subsystem configuration.
 
     Args:
         acceptor_poll_rate: Acceptor poll period in microseconds (optional)
+        conn_sched: Scheduling of incoming connections (optional)
 
     Returns:
         True or False
@@ -50,7 +53,49 @@ def set_nvmf_target_config(client, acceptor_poll_rate=None):
 
     if acceptor_poll_rate:
         params['acceptor_poll_rate'] = acceptor_poll_rate
+    if conn_sched:
+        params['conn_sched'] = conn_sched
     return client.call('set_nvmf_target_config', params)
+
+
+def nvmf_create_transport(client,
+                          trtype,
+                          max_queue_depth=None,
+                          max_qpairs_per_ctrlr=None,
+                          in_capsule_data_size=None,
+                          max_io_size=None,
+                          io_unit_size=None,
+                          max_aq_depth=None):
+    """NVMf Transport Create options.
+
+    Args:
+        trtype: Transport type (ex. RDMA)
+        max_queue_depth: Max number of outstanding I/O per queue (optional)
+        max_qpairs_per_ctrlr: Max number of SQ and CQ per controller (optional)
+        in_capsule_data_size: Maximum in-capsule data size in bytes (optional)
+        max_io_size: Maximum I/O data size in bytes (optional)
+        io_unit_size: I/O unit size in bytes (optional)
+        max_aq_depth: Max size admin quque per controller (optional)
+
+    Returns:
+        True or False
+    """
+    params = {}
+
+    params['trtype'] = trtype
+    if max_queue_depth:
+        params['max_queue_depth'] = max_queue_depth
+    if max_qpairs_per_ctrlr:
+        params['max_qpairs_per_ctrlr'] = max_qpairs_per_ctrlr
+    if in_capsule_data_size:
+        params['in_capsule_data_size'] = in_capsule_data_size
+    if max_io_size:
+        params['max_io_size'] = max_io_size
+    if io_unit_size:
+        params['io_unit_size'] = io_unit_size
+    if max_aq_depth:
+        params['max_aq_depth'] = max_aq_depth
+    return client.call('nvmf_create_transport', params)
 
 
 def get_nvmf_subsystems(client):
@@ -105,6 +150,38 @@ def construct_nvmf_subsystem(client,
         params['namespaces'] = namespaces
 
     return client.call('construct_nvmf_subsystem', params)
+
+
+def nvmf_subsystem_create(client,
+                          nqn,
+                          serial_number,
+                          allow_any_host=False,
+                          max_namespaces=0):
+    """Construct an NVMe over Fabrics target subsystem.
+
+    Args:
+        nqn: Subsystem NQN.
+        serial_number: Serial number of virtual controller.
+        allow_any_host: Allow any host (True) or enforce allowed host whitelist (False). Default: False.
+        max_namespaces: Maximum number of namespaces that can be attached to the subsystem (optional). Default: 0 (Unlimited).
+
+    Returns:
+        True or False
+    """
+    params = {
+        'nqn': nqn,
+    }
+
+    if serial_number:
+        params['serial_number'] = serial_number
+
+    if allow_any_host:
+        params['allow_any_host'] = True
+
+    if max_namespaces:
+        params['max_namespaces'] = max_namespaces
+
+    return client.call('nvmf_subsystem_create', params)
 
 
 def nvmf_subsystem_add_listener(client, nqn, trtype, traddr, trsvcid, adrfam):

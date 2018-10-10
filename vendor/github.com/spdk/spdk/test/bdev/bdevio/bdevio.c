@@ -38,6 +38,7 @@
 #include "spdk/env.h"
 #include "spdk/log.h"
 #include "spdk/thread.h"
+#include "spdk/event.h"
 
 #include "CUnit/Basic.h"
 
@@ -45,14 +46,12 @@
 #define BUFFER_SIZE		260 * 1024
 #define BDEV_TASK_ARRAY_SIZE	2048
 
-#define LCORE_ID_INIT		0
-#define LCORE_ID_UT		1
-#define LCORE_ID_IO		2
-
-#include "../common.c"
-
 pthread_mutex_t g_test_mutex;
 pthread_cond_t g_test_cond;
+
+static uint32_t g_lcore_id_init;
+static uint32_t g_lcore_id_ut;
+static uint32_t g_lcore_id_io;
 
 struct io_target {
 	struct spdk_bdev	*bdev;
@@ -77,7 +76,7 @@ execute_spdk_function(spdk_event_fn fn, void *arg1, void *arg2)
 {
 	struct spdk_event *event;
 
-	event = spdk_event_allocate(LCORE_ID_IO, fn, arg1, arg2);
+	event = spdk_event_allocate(g_lcore_id_io, fn, arg1, arg2);
 	pthread_mutex_lock(&g_test_mutex);
 	spdk_event_call(event);
 	pthread_cond_wait(&g_test_cond, &g_test_mutex);
@@ -845,7 +844,7 @@ stop_init_thread(unsigned num_failures)
 {
 	struct spdk_event *event;
 
-	event = spdk_event_allocate(LCORE_ID_INIT, __stop_init_thread,
+	event = spdk_event_allocate(g_lcore_id_init, __stop_init_thread,
 				    (void *)(uintptr_t)num_failures, NULL);
 	spdk_event_call(event);
 }
@@ -920,33 +919,55 @@ test_main(void *arg1, void *arg2)
 	pthread_mutex_init(&g_test_mutex, NULL);
 	pthread_cond_init(&g_test_cond, NULL);
 
+	g_lcore_id_init = spdk_env_get_first_core();
+	g_lcore_id_ut = spdk_env_get_next_core(g_lcore_id_init);
+	g_lcore_id_io = spdk_env_get_next_core(g_lcore_id_ut);
+
+	if (g_lcore_id_init == SPDK_ENV_LCORE_ID_ANY ||
+	    g_lcore_id_ut == SPDK_ENV_LCORE_ID_ANY ||
+	    g_lcore_id_io == SPDK_ENV_LCORE_ID_ANY) {
+		SPDK_ERRLOG("Could not reserve 3 separate threads.\n");
+		spdk_app_stop(-1);
+	}
+
 	if (bdevio_construct_targets() < 0) {
 		spdk_app_stop(-1);
 		return;
 	}
 
-	event = spdk_event_allocate(LCORE_ID_UT, __run_ut_thread, NULL, NULL);
+	event = spdk_event_allocate(g_lcore_id_ut, __run_ut_thread, NULL, NULL);
 	spdk_event_call(event);
+}
+
+static void
+bdevio_usage(void)
+{
+}
+
+static void
+bdevio_parse_arg(int ch, char *arg)
+{
 }
 
 int
 main(int argc, char **argv)
 {
-	const char		*config_file;
-	int			num_failures;
+	int			rc;
 	struct spdk_app_opts	opts = {};
 
-	if (argc == 1) {
-		config_file = "/usr/local/etc/spdk/iscsi.conf";
-	} else {
-		config_file = argv[1];
+	spdk_app_opts_init(&opts);
+	opts.name = "bdevtest";
+	opts.rpc_addr = NULL;
+	opts.reactor_mask = "0x7";
+
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "", NULL,
+				      bdevio_parse_arg, bdevio_usage)) !=
+	    SPDK_APP_PARSE_ARGS_SUCCESS) {
+		return rc;
 	}
 
-	bdevtest_init(config_file, "0x7", &opts);
-	opts.rpc_addr = NULL;
-
-	num_failures = spdk_app_start(&opts, test_main, NULL, NULL);
+	rc = spdk_app_start(&opts, test_main, NULL, NULL);
 	spdk_app_fini();
 
-	return num_failures;
+	return rc;
 }

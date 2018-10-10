@@ -40,26 +40,15 @@
 static int g_trace_fd = -1;
 static char g_shm_name[64];
 
-static struct spdk_trace_histories *g_trace_histories;
+struct spdk_trace_histories *g_trace_histories;
 
 void
-spdk_trace_record(uint16_t tpoint_id, uint16_t poller_id, uint32_t size,
-		  uint64_t object_id, uint64_t arg1)
+_spdk_trace_record(uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id, uint32_t size,
+		   uint64_t object_id, uint64_t arg1)
 {
 	struct spdk_trace_history *lcore_history;
 	struct spdk_trace_entry *next_entry;
-	uint64_t tsc;
 	unsigned lcore;
-
-	/*
-	 * Tracepoint group ID is encoded in the tpoint_id.  Lower 6 bits determine the tracepoint
-	 *  within the group, the remaining upper bits determine the tracepoint group.  Each
-	 *  tracepoint group has its own tracepoint mask.
-	 */
-	if (g_trace_histories == NULL ||
-	    !((1ULL << (tpoint_id & 0x3F)) & g_trace_histories->flags.tpoint_mask[tpoint_id >> 6])) {
-		return;
-	}
 
 	lcore = spdk_env_get_current_core();
 	if (lcore >= SPDK_TRACE_MAX_LCORE) {
@@ -67,7 +56,9 @@ spdk_trace_record(uint16_t tpoint_id, uint16_t poller_id, uint32_t size,
 	}
 
 	lcore_history = &g_trace_histories->per_lcore_history[lcore];
-	tsc = spdk_get_ticks();
+	if (tsc == 0) {
+		tsc = spdk_get_ticks();
+	}
 
 	lcore_history->tpoint_count[tpoint_id]++;
 
@@ -111,6 +102,20 @@ spdk_trace_init(const char *shm_name)
 		goto trace_init_err;
 	}
 
+	/* TODO: On FreeBSD, mlock on shm_open'd memory doesn't seem to work.  Docs say that kern.ipc.shm_use_phys=1
+	 * should allow it, but forcing that doesn't seem to work either.  So for now just skip mlock on FreeBSD
+	 * altogether.
+	 */
+#if defined(__linux__)
+	if (mlock(g_trace_histories, sizeof(*g_trace_histories)) != 0) {
+		fprintf(stderr, "Could not mlock shm for tracing - %s.\n", spdk_strerror(errno));
+		if (errno == ENOMEM) {
+			fprintf(stderr, "Check /dev/shm for old tracing files that can be deleted.\n");
+		}
+		goto trace_init_err;
+	}
+#endif
+
 	memset(g_trace_histories, 0, sizeof(*g_trace_histories));
 
 	g_trace_flags = &g_trace_histories->flags;
@@ -126,9 +131,13 @@ spdk_trace_init(const char *shm_name)
 	return 0;
 
 trace_init_err:
+	if (g_trace_histories != MAP_FAILED) {
+		munmap(g_trace_histories, sizeof(*g_trace_histories));
+	}
 	close(g_trace_fd);
 	g_trace_fd = -1;
 	shm_unlink(shm_name);
+	g_trace_histories = NULL;
 
 	return 1;
 
@@ -137,10 +146,23 @@ trace_init_err:
 void
 spdk_trace_cleanup(void)
 {
-	if (g_trace_histories) {
-		munmap(g_trace_histories, sizeof(struct spdk_trace_histories));
-		g_trace_histories = NULL;
-		close(g_trace_fd);
+	bool unlink;
+
+	if (g_trace_histories == NULL) {
+		return;
 	}
-	shm_unlink(g_shm_name);
+
+	/*
+	 * Only unlink the shm if there were no tracepoints enabled.  This ensures the file
+	 * can be used after this process exits/crashes for debugging.
+	 * Note that we have to calculate this value before g_trace_histories gets unmapped.
+	 */
+	unlink = spdk_mem_all_zero(g_trace_flags->tpoint_mask, sizeof(g_trace_flags->tpoint_mask));
+	munmap(g_trace_histories, sizeof(struct spdk_trace_histories));
+	g_trace_histories = NULL;
+	close(g_trace_fd);
+
+	if (unlink) {
+		shm_unlink(g_shm_name);
+	}
 }

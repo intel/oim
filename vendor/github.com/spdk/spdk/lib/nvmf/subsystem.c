@@ -289,6 +289,9 @@ spdk_nvmf_subsystem_create(struct spdk_nvmf_tgt *tgt,
 		}
 	}
 
+	memset(subsystem->sn, '0', sizeof(subsystem->sn) - 1);
+	subsystem->sn[sizeof(subsystem->sn) - 1] = '\n';
+
 	tgt->subsystems[sid] = subsystem;
 	tgt->discovery_genctr++;
 
@@ -388,6 +391,11 @@ spdk_nvmf_subsystem_set_state(struct spdk_nvmf_subsystem *subsystem,
 		if (actual_old_state == SPDK_NVMF_SUBSYSTEM_RESUMING &&
 		    state == SPDK_NVMF_SUBSYSTEM_ACTIVE) {
 			expected_old_state = SPDK_NVMF_SUBSYSTEM_RESUMING;
+		}
+		/* This is for the case when activating the subsystem fails. */
+		if (actual_old_state == SPDK_NVMF_SUBSYSTEM_ACTIVATING &&
+		    state == SPDK_NVMF_SUBSYSTEM_DEACTIVATING) {
+			expected_old_state = SPDK_NVMF_SUBSYSTEM_ACTIVATING;
 		}
 		actual_old_state = __sync_val_compare_and_swap(&subsystem->state, expected_old_state, state);
 	}
@@ -777,16 +785,13 @@ spdk_nvmf_subsystem_remove_listener(struct spdk_nvmf_subsystem *subsystem,
 	return 0;
 }
 
-/*
- * TODO: this is the whitelist and will be called during connection setup
- */
 bool
 spdk_nvmf_subsystem_listener_allowed(struct spdk_nvmf_subsystem *subsystem,
 				     struct spdk_nvme_transport_id *trid)
 {
 	struct spdk_nvmf_listener *listener;
 
-	if (TAILQ_EMPTY(&subsystem->listeners)) {
+	if (!strcmp(subsystem->subnqn, SPDK_NVMF_DISCOVERY_NQN)) {
 		return true;
 	}
 
@@ -898,6 +903,7 @@ _spdk_nvmf_subsystem_remove_ns(struct spdk_nvmf_subsystem *subsystem, uint32_t n
 
 	subsystem->ns[nsid - 1] = NULL;
 
+	spdk_bdev_module_release_bdev(ns->bdev);
 	spdk_bdev_close(ns->desc);
 	free(ns);
 
@@ -970,6 +976,11 @@ spdk_nvmf_ns_opts_get_defaults(struct spdk_nvmf_ns_opts *opts, size_t opts_size)
 	/* All current fields are set to 0 by default. */
 	memset(opts, 0, opts_size);
 }
+
+/* Dummy bdev module used to to claim bdevs. */
+static struct spdk_bdev_module ns_bdev_module = {
+	.name	= "NVMe-oF Target",
+};
 
 uint32_t
 spdk_nvmf_subsystem_add_ns(struct spdk_nvmf_subsystem *subsystem, struct spdk_bdev *bdev,
@@ -1057,6 +1068,12 @@ spdk_nvmf_subsystem_add_ns(struct spdk_nvmf_subsystem *subsystem, struct spdk_bd
 	if (rc != 0) {
 		SPDK_ERRLOG("Subsystem %s: bdev %s cannot be opened, error=%d\n",
 			    subsystem->subnqn, spdk_bdev_get_name(bdev), rc);
+		free(ns);
+		return 0;
+	}
+	rc = spdk_bdev_module_claim_bdev(bdev, ns->desc, &ns_bdev_module);
+	if (rc != 0) {
+		spdk_bdev_close(ns->desc);
 		free(ns);
 		return 0;
 	}

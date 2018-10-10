@@ -516,6 +516,7 @@ struct spdk_ring;
 enum spdk_ring_type {
 	SPDK_RING_TYPE_SP_SC,		/* Single-producer, single-consumer */
 	SPDK_RING_TYPE_MP_SC,		/* Multi-producer, single-consumer */
+	SPDK_RING_TYPE_MP_MC,		/* Multi-producer, multi-consumer */
 };
 
 /**
@@ -978,17 +979,27 @@ typedef int (*spdk_mem_map_notify_cb)(void *cb_ctx, struct spdk_mem_map *map,
 				      enum spdk_mem_map_notify_action action,
 				      void *vaddr, size_t size);
 
+typedef int (*spdk_mem_map_contiguous_translations)(uint64_t addr_1, uint64_t addr_2);
+
+/**
+ * A function table to be implemented by each memory map.
+ */
+struct spdk_mem_map_ops {
+	spdk_mem_map_notify_cb notify_cb;
+	spdk_mem_map_contiguous_translations are_contiguous;
+};
+
 /**
  * Allocate a virtual memory address translation map.
  *
  * \param default_translation Default translation for the map.
- * \param notify_cb Callback function to notify the mapping.
+ * \param ops Table of callback functions for map operations.
  * \param cb_ctx Argument passed to the callback function.
  *
  * \return a pointer to the allocated virtual memory address translation map.
  */
 struct spdk_mem_map *spdk_mem_map_alloc(uint64_t default_translation,
-					spdk_mem_map_notify_cb notify_cb, void *cb_ctx);
+					const struct spdk_mem_map_ops *ops, void *cb_ctx);
 
 /**
  * Free a memory map previously allocated by spdk_mem_map_alloc().
@@ -1032,12 +1043,13 @@ int spdk_mem_map_clear_translation(struct spdk_mem_map *map, uint64_t vaddr, uin
  *
  * \param map Memory map.
  * \param vaddr Virtual address.
- * \param size Size of memory region.
+ * \param size Contains the size of the memory region pointed to by vaddr.
+ * Updated with the size of the memory region for which the translation is valid.
  *
  * \return the translation of vaddr stored in the map, or default_translation
  * as specified in spdk_mem_map_alloc() if vaddr is not present in the map.
  */
-uint64_t spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t size);
+uint64_t spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t *size);
 
 /**
  * Register the specified memory region for address translation.

@@ -381,11 +381,6 @@ struct spdk_bdev *create_malloc_disk(const char *name, const struct spdk_uuid *u
 	struct malloc_disk	*mdisk;
 	int			rc;
 
-	if (block_size % 512 != 0) {
-		SPDK_ERRLOG("Block size %u is not a multiple of 512.\n", block_size);
-		return NULL;
-	}
-
 	if (num_blocks == 0) {
 		SPDK_ERRLOG("Disk must be more than 0 blocks\n");
 		return NULL;
@@ -471,7 +466,6 @@ static int bdev_malloc_initialize(void)
 		BlockSize = spdk_conf_section_get_intval(sp, "BlockSize");
 		if ((NumberOfLuns < 1) || (LunSizeInMB < 1)) {
 			SPDK_ERRLOG("Malloc section present, but no devices specified\n");
-			rc = EINVAL;
 			goto end;
 		}
 		if (BlockSize < 1) {

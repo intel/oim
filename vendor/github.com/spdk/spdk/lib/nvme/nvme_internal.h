@@ -34,6 +34,7 @@
 #ifndef __NVME_INTERNAL_H__
 #define __NVME_INTERNAL_H__
 
+#include "spdk/config.h"
 #include "spdk/likely.h"
 #include "spdk/stdinc.h"
 
@@ -106,6 +107,13 @@ extern pid_t g_spdk_nvme_pid;
  * bits of the namespace identify structure is set.
  */
 #define NVME_QUIRK_OCSSD 0x80
+
+/*
+ * The controller has an Intel vendor ID but does not support Intel vendor-specific
+ * log pages.  This is primarily for QEMU emulated SSDs which report an Intel vendor
+ * ID but do not support these log pages.
+ */
+#define NVME_INTEL_QUIRK_NO_LOG_PAGES 0x100
 
 #define NVME_MAX_ASYNC_EVENTS	(8)
 
@@ -381,6 +389,11 @@ struct spdk_nvme_ns {
  */
 enum nvme_ctrlr_state {
 	/**
+	 * Wait before initializing the controller.
+	 */
+	NVME_CTRLR_STATE_INIT_DELAY,
+
+	/**
 	 * Controller has not been initialized yet.
 	 */
 	NVME_CTRLR_STATE_INIT,
@@ -406,9 +419,130 @@ enum nvme_ctrlr_state {
 	NVME_CTRLR_STATE_ENABLE_WAIT_FOR_READY_1,
 
 	/**
+	 * Enable the Admin queue of the controller.
+	 */
+	NVME_CTRLR_STATE_ENABLE_ADMIN_QUEUE,
+
+	/**
+	 * Identify Controller command will be sent to then controller.
+	 */
+	NVME_CTRLR_STATE_IDENTIFY,
+
+	/**
+	 * Waiting for Identify Controller command be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY,
+
+	/**
+	 * Set Number of Queues of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_NUM_QUEUES,
+
+	/**
+	 * Waiting for Set Num of Queues command to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_SET_NUM_QUEUES,
+
+	/**
+	 * Get Number of Queues of the controller.
+	 */
+	NVME_CTRLR_STATE_GET_NUM_QUEUES,
+
+	/**
+	 * Waiting for Get Num of Queues command to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_GET_NUM_QUEUES,
+
+	/**
+	 * Construct Namespace data structures of the controller.
+	 */
+	NVME_CTRLR_STATE_CONSTRUCT_NS,
+
+	/**
+	 * Get active Namespace list of the controller.
+	 */
+	NVME_CTRLR_STATE_IDENTIFY_ACTIVE_NS,
+
+	/**
+	 * Get Identify Namespace Data structure for each NS.
+	 */
+	NVME_CTRLR_STATE_IDENTIFY_NS,
+
+	/**
+	 * Waiting for the Identify Namespace commands to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_NS,
+
+	/**
+	 * Get Identify Namespace Identification Descriptors.
+	 */
+	NVME_CTRLR_STATE_IDENTIFY_ID_DESCS,
+
+	/**
+	 * Waiting for the Identify Namespace Identification
+	 * Descriptors to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_ID_DESCS,
+
+	/**
+	 * Configure AER of the controller.
+	 */
+	NVME_CTRLR_STATE_CONFIGURE_AER,
+
+	/**
+	 * Waiting for the Configure AER to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_CONFIGURE_AER,
+
+	/**
+	 * Set supported log pages of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_SUPPORTED_LOG_PAGES,
+
+	/**
+	 * Set supported features of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_SUPPORTED_FEATURES,
+
+	/**
+	 * Set Doorbell Buffer Config of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_DB_BUF_CFG,
+
+	/**
+	 * Waiting for Doorbell Buffer Config to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_DB_BUF_CFG,
+
+	/**
+	 * Set Keep Alive Timeout of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT,
+
+	/**
+	 * Waiting for Set Keep Alive Timeout to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_KEEP_ALIVE_TIMEOUT,
+
+	/**
+	 * Set Host ID of the controller.
+	 */
+	NVME_CTRLR_STATE_SET_HOST_ID,
+
+	/**
+	 * Waiting for Set Host ID to be completed.
+	 */
+	NVME_CTRLR_STATE_WAIT_FOR_HOST_ID,
+
+	/**
 	 * Controller initialization has completed and the controller is ready.
 	 */
-	NVME_CTRLR_STATE_READY
+	NVME_CTRLR_STATE_READY,
+
+	/**
+	 * Controller inilialization has an error.
+	 */
+	NVME_CTRLR_STATE_ERROR
 };
 
 #define NVME_TIMEOUT_INFINITE	UINT64_MAX
@@ -665,7 +799,6 @@ void	nvme_ctrlr_destruct_finish(struct spdk_nvme_ctrlr *ctrlr);
 void	nvme_ctrlr_destruct(struct spdk_nvme_ctrlr *ctrlr);
 void	nvme_ctrlr_fail(struct spdk_nvme_ctrlr *ctrlr, bool hot_remove);
 int	nvme_ctrlr_process_init(struct spdk_nvme_ctrlr *ctrlr);
-int	nvme_ctrlr_start(struct spdk_nvme_ctrlr *ctrlr);
 void	nvme_ctrlr_connected(struct spdk_nvme_ctrlr *ctrlr);
 
 int	nvme_ctrlr_submit_admin_request(struct spdk_nvme_ctrlr *ctrlr,
@@ -685,6 +818,7 @@ int	nvme_qpair_submit_request(struct spdk_nvme_qpair *qpair,
 				  struct nvme_request *req);
 
 int	nvme_ctrlr_identify_active_ns(struct spdk_nvme_ctrlr *ctrlr);
+void	nvme_ns_set_identify_data(struct spdk_nvme_ns *ns);
 int	nvme_ns_construct(struct spdk_nvme_ns *ns, uint32_t id,
 			  struct spdk_nvme_ctrlr *ctrlr);
 void	nvme_ns_destruct(struct spdk_nvme_ns *ns);

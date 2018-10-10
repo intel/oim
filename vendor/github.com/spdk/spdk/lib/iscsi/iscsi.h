@@ -46,10 +46,8 @@
 #include "iscsi/tgt_node.h"
 
 #include "spdk/assert.h"
+#include "spdk/util.h"
 
-#define SPDK_ISCSI_BUILD_ETC "/usr/local/etc/spdk"
-#define SPDK_ISCSI_DEFAULT_CONFIG SPDK_ISCSI_BUILD_ETC "/iscsi.conf"
-#define SPDK_ISCSI_DEFAULT_AUTHFILE SPDK_ISCSI_BUILD_ETC "/auth.conf"
 #define SPDK_ISCSI_DEFAULT_NODEBASE "iqn.2016-06.io.spdk"
 
 #define DEFAULT_MAXR2T 4
@@ -114,7 +112,19 @@
 #define SPDK_ISCSI_MAX_BURST_LENGTH	\
 		(SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH * MAX_DATA_OUT_PER_CONNECTION)
 
+/*
+ * Defines default maximum amount in bytes of unsolicited data the iSCSI
+ *  initiator may send to the SPDK iSCSI target during the execution of
+ *  a single SCSI command. And it is smaller than the MaxBurstLength.
+ */
 #define SPDK_ISCSI_FIRST_BURST_LENGTH	8192
+
+/*
+ * Defines minimum amount in bytes of unsolicited data the iSCSI initiator
+ *  may send to the SPDK iSCSI target during the execution of a single
+ *  SCSI command.
+ */
+#define SPDK_ISCSI_MIN_FIRST_BURST_LENGTH	512
 
 /** Defines how long we should wait for a TCP close after responding to a
  *   logout request, before terminating the connection ourselves.
@@ -207,14 +217,17 @@ enum session_type {
 	SESSION_TYPE_DISCOVERY = 2,
 };
 
-#define ISCSI_CHAP_CHALLENGE_LEN 1024
+#define ISCSI_CHAP_CHALLENGE_LEN	1024
+#define ISCSI_CHAP_MAX_USER_LEN		255
+#define ISCSI_CHAP_MAX_SECRET_LEN	255
+
 struct iscsi_chap_auth {
 	enum iscsi_chap_phase chap_phase;
 
-	char *user;
-	char *secret;
-	char *muser;
-	char *msecret;
+	char user[ISCSI_CHAP_MAX_USER_LEN + 1];
+	char secret[ISCSI_CHAP_MAX_SECRET_LEN + 1];
+	char muser[ISCSI_CHAP_MAX_USER_LEN + 1];
+	char msecret[ISCSI_CHAP_MAX_SECRET_LEN + 1];
 
 	uint8_t chap_id[1];
 	uint8_t chap_mid[1];
@@ -222,6 +235,20 @@ struct iscsi_chap_auth {
 	uint8_t chap_challenge[ISCSI_CHAP_CHALLENGE_LEN];
 	int chap_mchallenge_len;
 	uint8_t chap_mchallenge[ISCSI_CHAP_CHALLENGE_LEN];
+};
+
+struct spdk_iscsi_auth_secret {
+	char user[ISCSI_CHAP_MAX_USER_LEN + 1];
+	char secret[ISCSI_CHAP_MAX_SECRET_LEN + 1];
+	char muser[ISCSI_CHAP_MAX_USER_LEN + 1];
+	char msecret[ISCSI_CHAP_MAX_SECRET_LEN + 1];
+	TAILQ_ENTRY(spdk_iscsi_auth_secret) tailq;
+};
+
+struct spdk_iscsi_auth_group {
+	int32_t tag;
+	TAILQ_HEAD(, spdk_iscsi_auth_secret) secret_head;
+	TAILQ_ENTRY(spdk_iscsi_auth_group) tailq;
 };
 
 struct spdk_iscsi_sess {
@@ -270,16 +297,17 @@ struct spdk_iscsi_opts {
 	char *nodebase;
 	int32_t timeout;
 	int32_t nopininterval;
-	bool no_discovery_auth;
-	bool req_discovery_auth;
-	bool req_discovery_auth_mutual;
-	int32_t discovery_auth_group;
+	bool disable_chap;
+	bool require_chap;
+	bool mutual_chap;
+	int32_t chap_group;
 	uint32_t MaxSessions;
 	uint32_t MaxConnectionsPerSession;
 	uint32_t MaxConnections;
 	uint32_t MaxQueueDepth;
 	uint32_t DefaultTime2Wait;
 	uint32_t DefaultTime2Retain;
+	uint32_t FirstBurstLength;
 	bool ImmediateData;
 	uint32_t ErrorRecoveryLevel;
 	bool AllowDuplicateIsid;
@@ -294,13 +322,14 @@ struct spdk_iscsi_globals {
 	TAILQ_HEAD(, spdk_iscsi_portal_grp)	pg_head;
 	TAILQ_HEAD(, spdk_iscsi_init_grp)	ig_head;
 	TAILQ_HEAD(, spdk_iscsi_tgt_node)	target_head;
+	TAILQ_HEAD(, spdk_iscsi_auth_group)	auth_group_head;
 
 	int32_t timeout;
 	int32_t nopininterval;
-	bool no_discovery_auth;
-	bool req_discovery_auth;
-	bool req_discovery_auth_mutual;
-	int32_t discovery_auth_group;
+	bool disable_chap;
+	bool require_chap;
+	bool mutual_chap;
+	int32_t chap_group;
 
 	uint32_t MaxSessions;
 	uint32_t MaxConnectionsPerSession;
@@ -308,6 +337,7 @@ struct spdk_iscsi_globals {
 	uint32_t MaxQueueDepth;
 	uint32_t DefaultTime2Wait;
 	uint32_t DefaultTime2Retain;
+	uint32_t FirstBurstLength;
 	bool ImmediateData;
 	uint32_t ErrorRecoveryLevel;
 	bool AllowDuplicateIsid;
@@ -364,6 +394,19 @@ struct spdk_iscsi_opts *spdk_iscsi_opts_alloc(void);
 void spdk_iscsi_opts_free(struct spdk_iscsi_opts *opts);
 struct spdk_iscsi_opts *spdk_iscsi_opts_copy(struct spdk_iscsi_opts *src);
 void spdk_iscsi_opts_info_json(struct spdk_json_write_ctx *w);
+int spdk_iscsi_set_discovery_auth(bool disable_chap, bool require_chap,
+				  bool mutual_chap, int32_t chap_group);
+int spdk_iscsi_chap_get_authinfo(struct iscsi_chap_auth *auth, const char *authuser,
+				 int ag_tag);
+int spdk_iscsi_add_auth_group(int32_t tag, struct spdk_iscsi_auth_group **_group);
+struct spdk_iscsi_auth_group *spdk_iscsi_find_auth_group_by_tag(int32_t tag);
+void spdk_iscsi_delete_auth_group(struct spdk_iscsi_auth_group *group);
+int spdk_iscsi_auth_group_add_secret(struct spdk_iscsi_auth_group *group,
+				     const char *user, const char *secret,
+				     const char *muser, const char *msecret);
+int spdk_iscsi_auth_group_delete_secret(struct spdk_iscsi_auth_group *group,
+					const char *user);
+void spdk_iscsi_auth_groups_info_json(struct spdk_json_write_ctx *w);
 
 void spdk_iscsi_send_nopin(struct spdk_iscsi_conn *conn);
 void spdk_iscsi_task_response(struct spdk_iscsi_conn *conn,
@@ -408,7 +451,7 @@ spdk_get_immediate_data_buffer_size(void)
 	 *  take up much space and we need to make sure the worst-case scenario
 	 *  can be satisified by the size returned here.
 	 */
-	return SPDK_ISCSI_FIRST_BURST_LENGTH +
+	return g_spdk_iscsi.FirstBurstLength +
 	       ISCSI_DIGEST_LEN + /* data digest */
 	       ISCSI_DIGEST_LEN + /* header digest */
 	       8 +		   /* bidirectional AHS */

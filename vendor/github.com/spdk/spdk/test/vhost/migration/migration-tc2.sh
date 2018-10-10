@@ -68,7 +68,7 @@ function migration_tc2_configure_vhost()
 {
 	timing_enter migration_tc2_configure_vhost
 
-	# Those are global intentionaly - they will be unset in cleanup handler
+	# Those are global intentionally - they will be unset in cleanup handler
 	nvmf_dir="$TEST_DIR/nvmf_tgt"
 
 	incoming_vm=1
@@ -76,9 +76,9 @@ function migration_tc2_configure_vhost()
 	incoming_vm_ctrlr=naa.VhostScsi0.$incoming_vm
 	target_vm_ctrlr=naa.VhostScsi0.$target_vm
 
-	rpc_nvmf="python $SPDK_BUILD_DIR/scripts/rpc.py -s $nvmf_dir/rpc.sock"
-	rpc_0="python $SPDK_BUILD_DIR/scripts/rpc.py -s $(get_vhost_dir 0)/rpc.sock"
-	rpc_1="python $SPDK_BUILD_DIR/scripts/rpc.py -s $(get_vhost_dir 1)/rpc.sock"
+	rpc_nvmf="$SPDK_BUILD_DIR/scripts/rpc.py -s $nvmf_dir/rpc.sock"
+	rpc_0="$SPDK_BUILD_DIR/scripts/rpc.py -s $(get_vhost_dir 0)/rpc.sock"
+	rpc_1="$SPDK_BUILD_DIR/scripts/rpc.py -s $(get_vhost_dir 1)/rpc.sock"
 
 	# Default cleanup/error handlers will not shutdown nvmf_tgt app so setup it
 	# here to teardown in cleanup function
@@ -93,17 +93,17 @@ function migration_tc2_configure_vhost()
 	notice "Running nvmf_tgt..."
 	mkdir -p $nvmf_dir
 	rm -f $nvmf_dir/*
-	$SPDK_BUILD_DIR/app/nvmf_tgt/nvmf_tgt -s 512 -m 0x4 -r $nvmf_dir/rpc.sock -w &
+	$SPDK_BUILD_DIR/app/nvmf_tgt/nvmf_tgt -s 512 -m 0x4 -r $nvmf_dir/rpc.sock --wait-for-rpc &
 	local nvmf_tgt_pid=$!
 	echo $nvmf_tgt_pid > $nvmf_dir/nvmf_tgt.pid
 	waitforlisten "$nvmf_tgt_pid" "$nvmf_dir/rpc.sock"
-	$rpc_nvmf set_nvmf_target_options -u 8192 -p 4
 	$rpc_nvmf start_subsystem_init
+	$rpc_nvmf nvmf_create_transport -t RDMA -u 8192 -p 4
 	$SPDK_BUILD_DIR/scripts/gen_nvme.sh --json | $rpc_nvmf load_subsystem_config
 	timing_exit start_nvmf_tgt
 
 	spdk_vhost_run --memory=512 --vhost-num=0 --no-pci
-	# Those are global intentionaly
+	# Those are global intentionally
 	vhost_1_reactor_mask=0x2
 	vhost_1_master_core=1
 	spdk_vhost_run --memory=512 --vhost-num=1 --no-pci
@@ -118,8 +118,9 @@ function migration_tc2_configure_vhost()
 	notice "Configuring nvmf_tgt, vhost devices & controllers via RPC ..."
 
 	# Construct shared bdevs and controllers
-	$rpc_nvmf construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode1 \
-		"trtype:RDMA traddr:$nvmf_target_ip trsvcid:4420" "" -a -s SPDK00000000000001 -n Nvme0n1
+	$rpc_nvmf nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
+	$rpc_nvmf nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 Nvme0n1
+	$rpc_nvmf nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t rdma -a $nvmf_target_ip -s 4420
 
 	$rpc_0 construct_nvme_bdev -b Nvme0 -t rdma -f ipv4 -a $nvmf_target_ip -s 4420 -n "nqn.2016-06.io.spdk:cnode1"
 	$rpc_0 construct_vhost_scsi_controller $incoming_vm_ctrlr

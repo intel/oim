@@ -78,6 +78,9 @@ struct nbd_io {
 	 */
 	uint32_t		offset;
 
+	/* for bdev io_wait */
+	struct spdk_bdev_io_wait_entry bdev_io_wait;
+
 	TAILQ_ENTRY(nbd_io)	tailq;
 };
 
@@ -116,6 +119,9 @@ struct spdk_nbd_disk_globals {
 };
 
 static struct spdk_nbd_disk_globals g_spdk_nbd;
+
+static int
+nbd_submit_bdev_io(struct spdk_nbd_disk *nbd, struct nbd_io *io);
 
 int
 spdk_nbd_init(void)
@@ -211,7 +217,7 @@ spdk_nbd_disk_get_bdev_name(struct spdk_nbd_disk *nbd)
 }
 
 void
-spdk_nbd_write_config_json(struct spdk_json_write_ctx *w, struct spdk_event *done_ev)
+spdk_nbd_write_config_json(struct spdk_json_write_ctx *w)
 {
 	struct spdk_nbd_disk *nbd;
 
@@ -231,7 +237,6 @@ spdk_nbd_write_config_json(struct spdk_json_write_ctx *w, struct spdk_event *don
 	}
 
 	spdk_json_write_array_end(w);
-	spdk_event_call(done_ev);
 }
 
 void
@@ -452,6 +457,37 @@ nbd_io_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	}
 }
 
+static void
+nbd_resubmit_io(void *arg)
+{
+	struct nbd_io *io = (struct nbd_io *)arg;
+	struct spdk_nbd_disk *nbd = io->nbd;
+	int rc = 0;
+
+	rc = nbd_submit_bdev_io(nbd, io);
+	if (rc) {
+		SPDK_INFOLOG(SPDK_LOG_NBD, "nbd: io resubmit for dev %s , io_type %d, returned %d.\n",
+			     spdk_nbd_disk_get_bdev_name(nbd), from_be32(&io->req.type), rc);
+	}
+}
+
+static void
+nbd_queue_io(struct nbd_io *io)
+{
+	int rc;
+	struct spdk_bdev *bdev = io->nbd->bdev;
+
+	io->bdev_io_wait.bdev = bdev;
+	io->bdev_io_wait.cb_fn = nbd_resubmit_io;
+	io->bdev_io_wait.cb_arg = io;
+
+	rc = spdk_bdev_queue_io_wait(bdev, io->nbd->ch, &io->bdev_io_wait);
+	if (rc != 0) {
+		SPDK_ERRLOG("Queue io failed in nbd_queue_io, rc=%d.\n", rc);
+		nbd_io_done(NULL, false, io);
+	}
+}
+
 static int
 nbd_submit_bdev_io(struct spdk_nbd_disk *nbd, struct nbd_io *io)
 {
@@ -490,7 +526,13 @@ nbd_submit_bdev_io(struct spdk_nbd_disk *nbd, struct nbd_io *io)
 	}
 
 	if (rc < 0) {
-		nbd_io_done(NULL, false, io);
+		if (rc == -ENOMEM) {
+			SPDK_INFOLOG(SPDK_LOG_NBD, "No memory, start to queue io.\n");
+			nbd_queue_io(io);
+		} else {
+			SPDK_ERRLOG("nbd io failed in nbd_queue_io, rc=%d.\n", rc);
+			nbd_io_done(NULL, false, io);
+		}
 	}
 
 	return 0;
@@ -650,13 +692,19 @@ spdk_nbd_io_xmit_internal(struct spdk_nbd_disk *nbd)
 		return 0;
 	}
 
+	/* Remove IO from list now assuming it will be completed.  It will be inserted
+	 *  back to the head if it cannot be completed.  This approach is specifically
+	 *  taken to work around a scan-build use-after-free mischaracterization.
+	 */
+	TAILQ_REMOVE(&nbd->executed_io_list, io, tailq);
+
 	/* resp error and handler are already set in io_done */
 
 	if (io->state == NBD_IO_XMIT_RESP) {
 		ret = write_to_socket(nbd->spdk_sp_fd, (char *)&io->resp + io->offset,
 				      sizeof(io->resp) - io->offset);
 		if (ret <= 0) {
-			return ret;
+			goto reinsert;
 		}
 
 		io->offset += ret;
@@ -667,7 +715,6 @@ spdk_nbd_io_xmit_internal(struct spdk_nbd_disk *nbd)
 
 			/* transmit payload only when NBD_CMD_READ with no resp error */
 			if (from_be32(&io->req.type) != NBD_CMD_READ || io->resp.error != 0) {
-				TAILQ_REMOVE(&nbd->executed_io_list, io, tailq);
 				spdk_put_nbd_io(nbd, io);
 				return 0;
 			} else {
@@ -679,19 +726,21 @@ spdk_nbd_io_xmit_internal(struct spdk_nbd_disk *nbd)
 	if (io->state == NBD_IO_XMIT_PAYLOAD) {
 		ret = write_to_socket(nbd->spdk_sp_fd, io->payload + io->offset, io->payload_size - io->offset);
 		if (ret <= 0) {
-			return ret;
+			goto reinsert;
 		}
 
 		io->offset += ret;
 
 		/* read payload is fully transmitted */
 		if (io->offset == io->payload_size) {
-			TAILQ_REMOVE(&nbd->executed_io_list, io, tailq);
 			spdk_put_nbd_io(nbd, io);
+			return 0;
 		}
 	}
 
-	return 0;
+reinsert:
+	TAILQ_INSERT_HEAD(&nbd->executed_io_list, io, tailq);
+	return ret;
 }
 
 static int

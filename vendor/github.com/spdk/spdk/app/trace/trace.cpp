@@ -37,6 +37,7 @@
 
 extern "C" {
 #include "spdk/trace.h"
+#include "spdk/util.h"
 }
 
 static struct spdk_trace_histories *g_histories;
@@ -79,13 +80,11 @@ struct object_stats {
 
 struct object_stats g_stats[SPDK_TRACE_MAX_OBJECT];
 
-static char *exe_name;
-static int verbose = 1;
-static int g_fudge_factor = 20;
+static char *g_exe_name;
+static int g_verbose = 1;
 
-static uint64_t tsc_rate;
-static uint64_t first_tsc = 0x0;
-static uint64_t last_tsc = -1ULL;
+static uint64_t g_tsc_rate;
+static uint64_t g_first_tsc = 0x0;
 
 static float
 get_us_from_tsc(uint64_t tsc, uint64_t tsc_rate)
@@ -136,6 +135,7 @@ static void
 print_arg(bool arg_is_ptr, const char *arg_string, uint64_t arg)
 {
 	if (arg_string[0] == 0) {
+		printf("%24s", "");
 		return;
 	}
 
@@ -164,12 +164,6 @@ print_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 		stats->size[e->object_id] = e->size;
 	}
 
-	if (d->arg1_is_alias) {
-		stats->index[e->arg1] = stats->index[e->object_id];
-		stats->start[e->arg1] = stats->start[e->object_id];
-		stats->size[e->arg1] = stats->size[e->object_id];
-	}
-
 	us = get_us_from_tsc(e->tsc - tsc_offset, tsc_rate);
 
 	printf("%2d: %10.3f (%9ju) ", lcore, us, e->tsc - tsc_offset);
@@ -182,8 +176,8 @@ print_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 	printf("%-*s ", (int)sizeof(d->name), d->name);
 	print_size(e->size);
 
+	print_arg(d->arg1_is_ptr, d->arg1_name, e->arg1);
 	if (d->new_object) {
-		print_arg(d->arg1_is_ptr, d->arg1_name, e->arg1);
 		print_object_id(d->object_type, stats->index[e->object_id]);
 	} else if (d->object_type != OBJECT_NONE) {
 		if (stats->start.find(e->object_id) != stats->start.end()) {
@@ -200,8 +194,8 @@ print_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 		} else {
 			printf("id:    N/A");
 		}
-	} else {
-		print_arg(d->arg1_is_ptr, d->arg1_name, e->arg1);
+	} else if (e->object_id != 0) {
+		print_arg(true, "object: ", e->object_id);
 	}
 	printf("\n");
 }
@@ -210,7 +204,7 @@ static void
 process_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 	      uint64_t tsc_offset, uint16_t lcore)
 {
-	if (verbose) {
+	if (g_verbose) {
 		print_event(e, tsc_rate, tsc_offset, lcore);
 	}
 }
@@ -218,15 +212,13 @@ process_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 static int
 populate_events(struct spdk_trace_history *history)
 {
-	int i, entry_size, history_size, num_entries, num_entries_filled;
+	int i, num_entries, num_entries_filled;
 	struct spdk_trace_entry *e;
 	int first, last, lcore;
 
 	lcore = history->lcore;
 
-	entry_size = sizeof(history->entries[0]);
-	history_size = sizeof(history->entries);
-	num_entries = history_size / entry_size;
+	num_entries = SPDK_COUNTOF(history->entries);
 
 	e = history->entries;
 
@@ -245,33 +237,19 @@ populate_events(struct spdk_trace_history *history)
 				last = i;
 			}
 		}
-
-		first += g_fudge_factor;
-		if (first >= num_entries) {
-			first -= num_entries;
-		}
-
-		last -= g_fudge_factor;
-		if (last < 0) {
-			last += num_entries;
-		}
 	} else {
 		first = 0;
 		last = num_entries_filled - 1;
 	}
 
 	/*
-	 * We keep track of the highest first TSC out of all reactors and
-	 *  the lowest last TSC out of all reactors.  We will ignore any
-	 *  events outside the range of these two TSC values.  This will
-	 *  ensure we only print data for the subset of time where we have
-	 *  data across all reactors.
+	 * We keep track of the highest first TSC out of all reactors.
+	 *  We will ignore any events that occured before this TSC on any
+	 *  other reactors.  This will ensure we only print data for the
+	 *  subset of time where we have data across all reactors.
 	 */
-	if (e[first].tsc > first_tsc) {
-		first_tsc = e[first].tsc;
-	}
-	if (e[last].tsc < last_tsc) {
-		last_tsc = e[last].tsc;
+	if (e[first].tsc > g_first_tsc) {
+		g_first_tsc = e[first].tsc;
 	}
 
 	i = first;
@@ -292,15 +270,17 @@ populate_events(struct spdk_trace_history *history)
 static void usage(void)
 {
 	fprintf(stderr, "usage:\n");
-	fprintf(stderr, "   %s <option> <lcore#>\n", exe_name);
+	fprintf(stderr, "   %s <option> <lcore#>\n", g_exe_name);
 	fprintf(stderr, "        option = '-q' to disable verbose mode\n");
-	fprintf(stderr, "                 '-s' to specify spdk_trace shm name\n");
 	fprintf(stderr, "                 '-c' to display single lcore history\n");
-	fprintf(stderr, "                 '-f' to specify number of events to ignore at\n");
-	fprintf(stderr, "                      beginning and end of trace (default: 20)\n");
+	fprintf(stderr, "                 '-s' to specify spdk_trace shm name for a\n");
+	fprintf(stderr, "                      currently running process\n");
 	fprintf(stderr, "                 '-i' to specify the shared memory ID\n");
 	fprintf(stderr, "                 '-p' to specify the trace PID\n");
-	fprintf(stderr, "                 (One of -i or -p must be specified)\n");
+	fprintf(stderr, "                      (If -s is specified, then one of\n");
+	fprintf(stderr, "                       -i or -p must be specified)\n");
+	fprintf(stderr, "                 '-f' to specify a tracepoint file name\n");
+	fprintf(stderr, "                      (-s and -f are mutually exclusive)\n");
 }
 
 int main(int argc, char **argv)
@@ -310,12 +290,13 @@ int main(int argc, char **argv)
 	int			fd, i;
 	int			lcore = SPDK_TRACE_MAX_LCORE;
 	uint64_t		tsc_offset;
-	const char		*app_name = "spdk";
+	const char		*app_name = NULL;
+	const char		*file_name = NULL;
 	int			op;
 	char			shm_name[64];
 	int			shm_id = -1, shm_pid = -1;
 
-	exe_name = argv[0];
+	g_exe_name = argv[0];
 	while ((op = getopt(argc, argv, "c:f:i:p:qs:")) != -1) {
 		switch (op) {
 		case 'c':
@@ -327,9 +308,6 @@ int main(int argc, char **argv)
 				exit(1);
 			}
 			break;
-		case 'f':
-			g_fudge_factor = atoi(optarg);
-			break;
 		case 'i':
 			shm_id = atoi(optarg);
 			break;
@@ -337,15 +315,30 @@ int main(int argc, char **argv)
 			shm_pid = atoi(optarg);
 			break;
 		case 'q':
-			verbose = 0;
+			g_verbose = 0;
 			break;
 		case 's':
 			app_name = optarg;
+			break;
+		case 'f':
+			file_name = optarg;
 			break;
 		default:
 			usage();
 			exit(1);
 		}
+	}
+
+	if (file_name != NULL && app_name != NULL) {
+		fprintf(stderr, "-f and -s are mutually exclusive\n");
+		usage();
+		exit(1);
+	}
+
+	if (file_name == NULL && app_name == NULL) {
+		fprintf(stderr, "One of -f and -s must be specified\n");
+		usage();
+		exit(1);
 	}
 
 	if (shm_id >= 0) {
@@ -354,9 +347,13 @@ int main(int argc, char **argv)
 		snprintf(shm_name, sizeof(shm_name), "/%s_trace.pid%d", app_name, shm_pid);
 	}
 
-	fd = shm_open(shm_name, O_RDONLY, 0600);
+	if (file_name) {
+		fd = open(file_name, O_RDONLY);
+	} else {
+		fd = shm_open(shm_name, O_RDONLY, 0600);
+	}
 	if (fd < 0) {
-		fprintf(stderr, "Could not open shm %s.\n", shm_name);
+		fprintf(stderr, "Could not open %s.\n", file_name ? file_name : shm_name);
 		usage();
 		exit(-1);
 	}
@@ -370,15 +367,15 @@ int main(int argc, char **argv)
 
 	g_histories = (struct spdk_trace_histories *)history_ptr;
 
-	tsc_rate = g_histories->flags.tsc_rate;
-	if (tsc_rate == 0) {
-		fprintf(stderr, "Invalid tsc_rate %ju\n", tsc_rate);
+	g_tsc_rate = g_histories->flags.tsc_rate;
+	if (g_tsc_rate == 0) {
+		fprintf(stderr, "Invalid tsc_rate %ju\n", g_tsc_rate);
 		usage();
 		exit(-1);
 	}
 
-	if (verbose) {
-		printf("TSC Rate: %ju\n", tsc_rate);
+	if (g_verbose) {
+		printf("TSC Rate: %ju\n", g_tsc_rate);
 	}
 
 	history_entries = (struct spdk_trace_history *)malloc(sizeof(g_histories->per_lcore_history));
@@ -403,12 +400,12 @@ int main(int argc, char **argv)
 		}
 	}
 
-	tsc_offset = first_tsc;
+	tsc_offset = g_first_tsc;
 	for (entry_map::iterator it = g_entry_map.begin(); it != g_entry_map.end(); it++) {
-		if (it->first.tsc < first_tsc || it->first.tsc > last_tsc) {
+		if (it->first.tsc < g_first_tsc) {
 			continue;
 		}
-		process_event(it->second, tsc_rate, tsc_offset, it->first.lcore);
+		process_event(it->second, g_tsc_rate, tsc_offset, it->first.lcore);
 	}
 
 	free(history_entries);

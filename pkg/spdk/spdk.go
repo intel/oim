@@ -75,6 +75,21 @@ func ConstructMallocBDev(ctx context.Context, client *Client, args ConstructMall
 	return response, err
 }
 
+type ConstructRBDBDevArgs struct {
+	BlockSize int64             `json:"block_size"`
+	Name      string            `json:"name,omitempty"`
+	UserID    string            `json:"user_id,omitempty"`
+	PoolName  string            `json:"pool_name"`
+	RBDName   string            `json:"rbd_name"`
+	Config    map[string]string `json:"config,omitempty"`
+}
+
+func ConstructRBDBDev(ctx context.Context, client *Client, args ConstructRBDBDevArgs) (ConstructBDevResponse, error) {
+	var response ConstructBDevResponse
+	err := client.Invoke(ctx, "construct_rbd_bdev", args, &response)
+	return response, err
+}
+
 type StartNBDDiskArgs struct {
 	BDevName  string `json:"bdev_name"`
 	NBDDevice string `json:"nbd_device"`

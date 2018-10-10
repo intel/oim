@@ -39,23 +39,38 @@ use [etcd](https://coreos.com/etcd/) with multiple OIM registry
 instances as frontend to increase scalability. Communication with the
 control plane is limited to short-lived, infrequent connections.
 
-### Storage
-
-The goal is to make existing network attached block volumes available
-as local block devices. Depending on the cloud environment, either the
-block devices or filesystems mounted on top of the devices will then
-be used by applications.
+### Storage + CSI
 
 Provisioning new block volumes is specific to the storage provider and
-as such may require additional components that know how to control
+therefore requires additional components that know how to control
 certain storage providers.
 
-### CSI
+The main goal for OIM itself is to make already provisioned network
+attached block volumes available as local block devices. Depending on
+the cloud environment, either the block devices or filesystems mounted
+on top of the devices will then be used by applications.
 
 OIM implements a
 [Container Storage Interface(CSI)](https://github.com/container-storage-interface/spec)
 driver which can be used by any container orchestrator that supports
-CSI. Operation as part of Kubernetes is specifically tested.
+CSI. Operation as part of Kubernetes is specifically tested. The
+`deploy/kubernetes` directory contains `.yaml` files that show how to
+deploy OIM on Kubernetes.
+
+Real deployments are expected to consist of:
+- some third-party CSI driver for volume provisioning
+- that same third-party CSI driver for mounting on nodes
+  *without* hardware acceleration
+- the OIM CSI driver in "emulation" mode for that driver
+  for mounting on nodes *with* hardware acceleration
+
+The OIM CSI driver needs to understand the parameters that it is
+getting passed when asked to mount a volume. These parameters are
+defined by the third-party driver and not standardized, therefore
+compile-time extensions of the OIM CSI driver are needed to support
+other third-party drivers - see
+[`ceph-csi.go`](pkg/oim-csi-driver/ceph-csi.go) for an example. All
+supported drivers are described below.
 
 ### Controller ID
 
@@ -109,7 +124,6 @@ DB.
 
 But this is optional. This mapping can also be configured manually
 with the oim-registry-tool (NOT YET IMPLEMENTED).
-
 
 ### OIM CSI Driver
 
@@ -291,6 +305,10 @@ for installing those. In OIM, that script can be invoked as:
 
     sudo ./vendor/github.com/spdk/spdk/scripts/pkgdep.sh
 
+However, the script only covers the dependencies of the core
+functionality in SPDK. For Ceph RBD support, `librbd-dev` or some
+similar package also needs to be installed.
+
 SPDK will be built automatically from known-good source code bundled in the repository
 when selecting it with:
 
@@ -336,9 +354,14 @@ tools (OIM registry, OIM controller, SPDK vhost) on the host.
 to bring up missing pieces each time it is invoked.
 
 Once it completes, everything is ready for interactive use via
-`kubectl` inside the virtual machine. There are two `.yaml` files
-which can be used to create a persistent volume claim (PVC) and to use
-that PVC inside a pod:
+`kubectl` inside the virtual machine. Only the first node in the
+cluster is connected to a `virtio-scsi` device provided by the SPDK
+daemon on the host, so only that node can use hardware accelerated
+storage. It has been labeled with `intel.com/oim=1` to make that
+information available to Kubernetes.
+
+There are two `.yaml` files which can be used to create a persistent
+volume claim (PVC) and to use that PVC inside a pod:
 
     $ cat doc/csi-pvc.yaml | _work/ssh-clear-kvm kubectl create -f -
     persistentvolumeclaim/csi-pvc created
@@ -390,6 +413,71 @@ this command can be used to retrieve the log of the CSI driver:
     DEBUG sending | method: /csi.v0.Node/NodePublishVolume response: <empty>
 
 Once done, `make stop` will clean up the cluster and shut everything down.
+
+### Ceph Rados Block Device (RBD)
+
+The demo cluster has Ceph already up and running directly in the virtual machine:
+
+    $ _work/ssh-clear-kvm ceph status
+      cluster:
+        id:     b799b7a3-4180-4766-8757-02a66eb45711
+        health: HEALTH_WARN
+                3 modules have failed dependencies
+     
+      services:
+        mon: 1 daemons, quorum host-0
+        mgr: host-0(active)
+        osd: 4 osds: 4 up, 4 in
+     
+      data:
+        pools:   1 pools, 128 pgs
+        objects: 0  objects, 0 B
+        usage:   4.0 GiB used, 4.0 GiB / 8 GiB avail
+        pgs:     128 active+clean
+
+In order to use it, one has to deploy the combination of ceph-csi + OIM CSI driver:
+
+    $ for i in deploy/kubernetes/ceph-csi/*.yaml; do cat $i | _work/ssh-clear-kvm kubectl create -f -; done
+    daemonset.apps/oim-driver-ceph-rbd created
+    daemonset.apps/oim-ceph-rbd created
+    serviceaccount/oim-rbd-cluster-sa created
+    clusterrole.rbac.authorization.k8s.io/oim-rbd-attacher-role created
+    clusterrolebinding.rbac.authorization.k8s.io/oim-rbd-attacher-rb created
+    clusterrole.rbac.authorization.k8s.io/oim-rbd-provisioner-role created
+    clusterrolebinding.rbac.authorization.k8s.io/oim-rbd-provisioner-rb created
+    serviceaccount/oim-rbd-node-sa created
+    clusterrole.rbac.authorization.k8s.io/oim-rbd-node-role created
+    clusterrolebinding.rbac.authorization.k8s.io/oim-rbd-node-rb created
+    statefulset.apps/oim-rbd-cluster created
+    storageclass.storage.k8s.io/oim-rbd-sc created
+
+This deployment schedules the OIM CSI driver onto nodes with the
+`intel.com/oim` label, in this case just the first node. The original
+ceph-csi rbdplugin runs on the rest of the nodes. Cluster-wide
+operations like provisioning are handled by the `StatefulSet` which
+contains `external-provisioner`, `external-attacher` and the original
+ceph-csi rbdplugin:
+
+    $ _work/ssh-clear-kvm kubectl get pods -o wide --sort-by="{.spec.nodeName}"
+    NAME                        READY     STATUS    RESTARTS   AGE       IP            NODE      NOMINATED NODE
+    oim-driver-ceph-rbd-zxz5r   2/2       Running   2          9m        172.17.0.3    host-0    <none>
+    oim-malloc-vk5zf            4/4       Running   0          7m        172.17.0.5    host-0    <none>
+    oim-ceph-rbd-hnz8b          2/2       Running   2          9m        192.168.7.4   host-1    <none>
+    oim-ceph-rbd-gxjhg          2/2       Running   2          9m        192.168.7.6   host-2    <none>
+    oim-ceph-rbd-7dqnq          2/2       Running   1          9m        192.168.7.8   host-3    <none>
+    oim-rbd-cluster-0           3/3       Running   0          9m        172.17.0.2    host-3    <none>
+
+PVCs and apps can use this new storage class like before:
+
+    $ cat deploy/kubernetes/ceph-csi/example/rbd-pvc.yaml | _work/ssh-clear-kvm kubectl create -f -
+    persistentvolumeclaim/oim-rbd-pvc created
+    $ cat deploy/kubernetes/ceph-csi/example/rbd-app.yaml | _work/ssh-clear-kvm kubectl create -f -
+    pod/oim-rbd-app created
+    $ _work/ssh-clear-kvm kubectl get pvc
+    NAME          STATUS    VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+    oim-rbd-pvc   Bound     pvc-78de5c73-db99-11e8-8266-deadbeef0100   1Gi        RWO            oim-rbd-sc     1m
+    $ _work/ssh-clear-kvm rbd list
+    pvc-78de5c73-db99-11e8-8266-deadbeef0100
 
 
 ## Troubleshooting

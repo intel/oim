@@ -12,8 +12,8 @@ timing_enter reset
 MALLOC_BDEV_SIZE=64
 MALLOC_BLOCK_SIZE=512
 
-rpc_py="python $rootdir/scripts/rpc.py"
-fio_py="python $rootdir/scripts/fio.py"
+rpc_py="$rootdir/scripts/rpc.py"
+fio_py="$rootdir/scripts/fio.py"
 
 if ! hash sg_reset; then
 	exit 1
@@ -21,7 +21,7 @@ fi
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -w &
+$ISCSI_APP --wait-for-rpc &
 pid=$!
 echo "Process pid: $pid"
 

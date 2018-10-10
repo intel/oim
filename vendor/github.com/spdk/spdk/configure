@@ -2,6 +2,8 @@
 
 set -e
 
+trap 'echo -e "\n\nConfiguration failed\n\n" >&2' ERR
+
 function usage()
 {
 	echo "'configure' configures SPDK to compile on supported platforms."
@@ -16,8 +18,7 @@ function usage()
 	echo " --prefix=path             Configure installation prefix (default: /usr/local)"
 	echo ""
 	echo " --enable-debug            Configure for debug builds"
-	echo " --enable-log-bt=lvl       Show backtrace using libunwind when logging message at level <= lvl."
-	echo "                           Valid values are: ERROR, WARN, NOTICE, DEBUG."
+	echo " --enable-log-bt           Enable support of backtrace printing in SPDK logs (requires libunwind)."
 	echo " --enable-werror           Treat compiler warnings as errors"
 	echo " --enable-asan             Enable address sanitizer"
 	echo " --enable-ubsan            Enable undefined behavior sanitizer"
@@ -39,6 +40,8 @@ function usage()
 	echo "                           example: /usr/share/dpdk/x86_64-default-linuxapp-gcc"
 	echo " fio                       Required to build fio_plugin."
 	echo "                           example: /usr/src/fio"
+	echo " igb-uio-driver            Required on some systems to use qat devices"
+	echo "                           No path required"
 	echo " vhost                     Required to build vhost target."
 	echo "                           No path required."
 	echo " virtio                    Required to build vhost initiator (Virtio) bdev module."
@@ -51,9 +54,9 @@ function usage()
 	echo "                           No path required."
 	echo " rdma                      [disabled]"
 	echo "                           No path required."
-	echo " iscsi-initiator           [disabled]"
+	echo " shared                    Required to build spdk shared libraries."
 	echo "                           No path required."
-	echo " raid                      [disabled]"
+	echo " iscsi-initiator           [disabled]"
 	echo "                           No path required."
 	echo " vtune                     Required to profile I/O under Intel VTune Amplifier XE."
 	echo "                           example: /opt/intel/vtune_amplifier_xe_version"
@@ -66,6 +69,14 @@ function usage()
 	echo "DESTDIR                    Destination for 'make install'"
 	echo ""
 }
+
+# Load default values
+# Convert config to sourcable configuration file
+sed -r 's/CONFIG_([[:alnum:]_]+)=(.*)/CONFIG[\1]=\2/g' CONFIG > CONFIG.sh
+declare -A CONFIG
+source CONFIG.sh
+rm CONFIG.sh
+
 
 function check_dir() {
 	arg="$1"
@@ -83,151 +94,166 @@ for i in "$@"; do
 			exit 0
 			;;
 		--prefix=*)
-			CONFIG_PREFIX="${i#*=}"
+			CONFIG[PREFIX]="${i#*=}"
 			;;
 		--enable-debug)
-			CONFIG_DEBUG=y
+			CONFIG[DEBUG]=y
 			;;
 		--disable-debug)
-			CONFIG_DEBUG=n
+			CONFIG[DEBUG]=n
 			;;
-		--enable-log-bt=*)
-			CONFIG_LOG_BACKTRACE=${i#*=}
+		--enable-log-bt)
+			CONFIG[LOG_BACKTRACE]=y
+			;;
+		--disable-log-bt)
+			CONFIG[LOG_BACKTRACE]=n
 			;;
 		--enable-asan)
-			CONFIG_ASAN=y
+			CONFIG[ASAN]=y
 			;;
 		--disable-asan)
-			CONFIG_ASAN=n
+			CONFIG[ASAN]=n
 			;;
 		--enable-ubsan)
-			CONFIG_UBSAN=y
+			CONFIG[UBSAN]=y
 			;;
 		--disable-ubsan)
-			CONFIG_UBSAN=n
+			CONFIG[UBSAN]=n
 			;;
 		--enable-tsan)
-			CONFIG_TSAN=y
+			CONFIG[TSAN]=y
 			;;
 		--disable-tsan)
-			CONFIG_TSAN=n
+			CONFIG[TSAN]=n
 			;;
 		--enable-coverage)
-			CONFIG_COVERAGE=y
+			CONFIG[COVERAGE]=y
 			;;
 		--disable-coverage)
-			CONFIG_COVERAGE=n
+			CONFIG[COVERAGE]=n
 			;;
 		--enable-lto)
-			CONFIG_LTO=y
+			CONFIG[LTO]=y
 			;;
 		--disable-lto)
-			CONFIG_LTO=n
+			CONFIG[LTO]=n
 			;;
 		--enable-tests)
-			CONFIG_TESTS=y
+			CONFIG[TESTS]=y
 			;;
 		--disable-tests)
-			CONFIG_TESTS=n
+			CONFIG[TESTS]=n
 			;;
 		--enable-werror)
-			CONFIG_WERROR=y
+			CONFIG[WERROR]=y
 			;;
 		--disable-werror)
-			CONFIG_WERROR=n
+			CONFIG[WERROR]=n
 			;;
 		--with-env=*)
-			CONFIG_ENV="${i#*=}"
+			CONFIG[ENV]="${i#*=}"
 			;;
 		--with-rbd)
-			CONFIG_RBD=y
+			CONFIG[RBD]=y
 			;;
 		--without-rbd)
-			CONFIG_RBD=n
+			CONFIG[RBD]=n
 			;;
 		--with-raid)
-			CONFIG_RAID=y
-			echo "Warning: vhost will not work with RAID module as multiple IOV support is not there"
+			echo "--with-raid option ignored and is now deprecated.  RAID module is always enabled."
 			;;
 		--without-raid)
-			CONFIG_RAID=n
+			echo "--without-raid option ignored and is now deprecated.  RAID module is always enabled."
 			;;
 		--with-rdma)
-			CONFIG_RDMA=y
+			CONFIG[RDMA]=y
 			;;
 		--without-rdma)
-			CONFIG_RDMA=n
+			CONFIG[RDMA]=n
+			;;
+		--with-shared)
+			CONFIG[SHARED]=y
+			;;
+		--without-shared)
+			CONFIG[SHARED]=n
 			;;
 		--with-iscsi-initiator)
-			CONFIG_ISCSI_INITIATOR=y
+			CONFIG[ISCSI_INITIATOR]=y
 			;;
 		--without-iscsi-initiator)
-			CONFIG_ISCSI_INITIATOR=n
+			CONFIG[ISCSI_INITIATOR]=n
 			;;
 		--with-dpdk=*)
 			check_dir "$i"
-			CONFIG_DPDK_DIR=$(readlink -f ${i#*=})
+			CONFIG[DPDK_DIR]=$(readlink -f ${i#*=})
 			;;
 		--without-dpdk)
-			CONFIG_DPDK_DIR=
+			CONFIG[DPDK_DIR]=
 			;;
 		--with-crypto)
-			CONFIG_CRYPTO=y
+			CONFIG[CRYPTO]=y
 			;;
 		--without-crypto)
-			CONFIG_CRYPTO=n
+			CONFIG[CRYPTO]=n
 			;;
 		--with-vhost)
-			CONFIG_VHOST=y
+			CONFIG[VHOST]=y
 			;;
 		--without-vhost)
-			CONFIG_VHOST=n
+			CONFIG[VHOST]=n
 			;;
 		--with-virtio)
-			CONFIG_VIRTIO=y
+			CONFIG[VIRTIO]=y
 			;;
 		--without-virtio)
-			CONFIG_VIRTIO=n
+			CONFIG[VIRTIO]=n
 			;;
 		--with-pmdk)
-			CONFIG_PMDK=y
+			CONFIG[PMDK]=y
+			CONFIG[PMDK_DIR]=""
 			;;
 		--with-pmdk=*)
-			CONFIG_PMDK=y
+			CONFIG[PMDK]=y
 			check_dir "$i"
-			CONFIG_PMDK_DIR=$(readlink -f ${i#*=})
+			CONFIG[PMDK_DIR]=$(readlink -f ${i#*=})
 			;;
 		--without-pmdk)
-			CONFIG_PMDK=n
+			CONFIG[PMDK]=n
 			;;
 		--with-vpp)
-			CONFIG_VPP=y
+			CONFIG[VPP]=y
 			;;
 		--with-vpp=*)
-			CONFIG_VPP=y
+			CONFIG[VPP]=y
 			check_dir "$i"
-			CONFIG_VPP_DIR=$(readlink -f ${i#*=})
+			CONFIG[VPP_DIR]=$(readlink -f ${i#*=})
 			;;
 		--without-vpp)
-			CONFIG_VPP=n
+			CONFIG[VPP]=n
 			;;
 		--with-fio=*)
 			check_dir "$i"
-			FIO_SOURCE_DIR="${i#*=}"
-			CONFIG_FIO_PLUGIN=y
+			CONFIG[FIO_SOURCE_DIR]="${i#*=}"
+			CONFIG[FIO_PLUGIN]=y
 			;;
 		--without-fio)
-			FIO_SOURCE_DIR=
-			CONFIG_FIO_PLUGIN=n
+			CONFIG[FIO_SOURCE_DIR]=
+			CONFIG[FIO_PLUGIN]=n
 			;;
 		--with-vtune=*)
 			check_dir "$i"
-			VTUNE_SOURCE_DIR="${i#*=}"
-			CONFIG_VTUNE=y
+			CONFIG[VTUNE_DIR]="${i#*=}"
+			CONFIG[VTUNE]=y
 			;;
 		--without-vtune)
-			VTUNE_SOURCE_DIR=
-			CONFIG_VTUNE=n
+			CONFIG[VTUNE_DIR]=
+			CONFIG[VTUNE]=n
+			;;
+		--with-igb-uio-driver)
+			CONFIG[IGB_UIO_DRIVER]=y
+			;;
+		--without-igb-uio-driver)
+			CONFIG[IGB_UIO_DRIVER]=n
 			;;
 		--)
 			break
@@ -239,174 +265,137 @@ for i in "$@"; do
 	esac
 done
 
-if [ -z "$CONFIG_ENV" ]; then
-	if [ -z "$CONFIG_DPDK_DIR" ]; then
-		rootdir=$(readlink -f $(dirname $0))
-		if [ ! -f "$rootdir"/dpdk/config/common_spdk ]; then
+if [ -z "${CONFIG[ENV]}" ]; then
+	rootdir=$(readlink -f $(dirname $0))
+	CONFIG[ENV]=$rootdir/lib/env_dpdk
+	echo "Using default SPDK env in ${CONFIG[ENV]}"
+	if [ -z "${CONFIG[DPDK_DIR]}" ]; then
+		if [ ! -f "$rootdir"/dpdk/config/common_base ]; then
 			echo "DPDK not found; please specify --with-dpdk=<path> or run:"
 			echo
 			echo "  git submodule update --init"
 			exit 1
+		else
+			CONFIG[DPDK_DIR]="${rootdir}/dpdk/build"
+			echo "Using default DPDK in ${CONFIG[DPDK_DIR]}"
 		fi
-		CONFIG_DPDK_DIR="$rootdir"/dpdk/build
 	fi
 else
-	if [ "$CONFIG_VHOST" = "y" ]; then
+	if [ "${CONFIG[VHOST]}" = "y" ]; then
 		echo "Vhost is only supported when using the default DPDK environment. Disabling it."
 	fi
 	# Always disable vhost, but only print the error message if the user explicitly turned it on.
-	CONFIG_VHOST="n"
-	if [ "$CONFIG_VIRTIO" = "y" ]; then
+	CONFIG[VHOST]="n"
+	if [ "${CONFIG[VIRTIO]}" = "y" ]; then
 		echo "Virtio is only supported when using the default DPDK environment. Disabling it."
 	fi
 	# Always disable virtio, but only print the error message if the user explicitly turned it on.
-	CONFIG_VIRTIO="n"
+	CONFIG[VIRTIO]="n"
 fi
 
-if [ "$CONFIG_FIO_PLUGIN" = "y" ]; then
-	if [ -z "$FIO_SOURCE_DIR" ]; then
+if [ "${CONFIG[FIO_PLUGIN]}" = "y" ]; then
+	if [ -z "${CONFIG[FIO_SOURCE_DIR]}" ]; then
 		echo "When fio is enabled, you must specify the fio directory using --with-fio=path"
 		exit 1
 	fi
+else
+	CONFIG[FIO_SOURCE_DIR]=
 fi
 
-if [ "$CONFIG_VTUNE" = "y" ]; then
-	if [ -z "$VTUNE_SOURCE_DIR" ]; then
+if [ "${CONFIG[VTUNE]}" = "y" ]; then
+	if [ -z "${CONFIG[VTUNE_DIR]}" ]; then
 		echo "When VTune is enabled, you must specify the VTune directory using --with-vtune=path"
 		exit 1
 	fi
 fi
 
-if [ "$CONFIG_ASAN" = "y" -a "$CONFIG_TSAN" = "y" ]; then
+if [ "${CONFIG[ASAN]}" = "y" -a "${CONFIG[TSAN]}" = "y" ]; then
 	echo "ERROR: ASAN and TSAN cannot be enabled at the same time."
 	exit 1
 fi
 
-if [[ "$OSTYPE" == "FreeBSD"* ]]; then
+if [[ "$OSTYPE" == "freebsd"* ]]; then
 	# FreeBSD doesn't support all configurations
-	if [[ "$CONFIG_COVERAGE" == "y" ]]; then
+	if [[ "${CONFIG[COVERAGE]}" == "y" ]]; then
 		echo "ERROR: CONFIG_COVERAGE not available on FreeBSD"
 		exit 1
 	fi
 fi
 
-echo -n "Creating CONFIG.local..."
+if [ "${CONFIG[RDMA]}" = "y" ]; then
+	if [ "$OSTYPE" != "FreeBSD"* ]; then
+		ibv_lib_file="$(readlink -f /usr/lib64/libibverbs.so)" || true
+		if [ -z $ibv_lib_file ]; then
+			ibv_lib_file="libibverbs.so.0.0.0"
+		fi
+		ibv_ver_str="$(basename $ibv_lib_file)"
+		ibv_maj_ver=`echo $ibv_ver_str | cut -d. -f3`
+		ibv_min_ver=`echo $ibv_ver_str | cut -d. -f4`
+		if [[ "$ibv_maj_var" > 1 || ("$ibv_maj_ver" -eq 1 && "$ibv_min_ver" -ge 1) ]]; then
+			CONFIG[RDMA_SEND_WITH_INVAL]="y"
+		else
+			CONFIG[RDMA_SEND_WITH_INVAL]="n"
+			echo "
+*******************************************************************************
+WARNING: The Infiniband Verbs opcode Send With Invalidate is either not
+supported or is not functional with the current version of libibverbs installed
+on this system. Please upgrade to at least version 1.1.
 
-# Write the configuration file
-rm -f CONFIG.local
-if [ -n "$CONFIG_PREFIX" ]; then
-	echo "CONFIG_PREFIX?=$CONFIG_PREFIX" >> CONFIG.local
-fi
-if [ -n "$CONFIG_DEBUG" ]; then
-	echo "CONFIG_DEBUG?=$CONFIG_DEBUG" >> CONFIG.local
-fi
-if [ -n "$CONFIG_LOG_BACKTRACE" ]; then
-	echo "CONFIG_LOG_BACKTRACE?=$CONFIG_LOG_BACKTRACE" >> CONFIG.local
-fi
-if [ -n "$CONFIG_WERROR" ]; then
-	echo "CONFIG_WERROR?=$CONFIG_WERROR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_COVERAGE" ]; then
-	echo "CONFIG_COVERAGE?=$CONFIG_COVERAGE" >> CONFIG.local
-fi
-if [ -n "$CONFIG_LTO" ]; then
-	echo "CONFIG_LTO?=$CONFIG_LTO" >> CONFIG.local
-fi
-if [ -n "$CONFIG_TESTS" ]; then
-	echo "CONFIG_TESTS?=$CONFIG_TESTS" >> CONFIG.local
-fi
-if [ -n "$CONFIG_ASAN" ]; then
-	echo "CONFIG_ASAN?=$CONFIG_ASAN" >> CONFIG.local
-fi
-if [ -n "$CONFIG_UBSAN" ]; then
-	echo "CONFIG_UBSAN?=$CONFIG_UBSAN" >> CONFIG.local
-fi
-if [ -n "$CONFIG_TSAN" ]; then
-	echo "CONFIG_TSAN?=$CONFIG_TSAN" >> CONFIG.local
-fi
-if [ -n "$CONFIG_ENV" ]; then
-	echo "CONFIG_ENV?=$CONFIG_ENV" >> CONFIG.local
-fi
-if [ -n "$CONFIG_DPDK_DIR" ]; then
-	echo "CONFIG_DPDK_DIR?=$CONFIG_DPDK_DIR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_CRYPTO" ]; then
-	echo "CONFIG_CRYPTO?=$CONFIG_CRYPTO" >> CONFIG.local
-fi
-if [ -n "$CONFIG_VHOST" ]; then
-	echo "CONFIG_VHOST?=$CONFIG_VHOST" >> CONFIG.local
-fi
-if [ -n "$CONFIG_VIRTIO" ]; then
-	echo "CONFIG_VIRTIO?=$CONFIG_VIRTIO" >> CONFIG.local
-fi
-if [ -n "$CONFIG_PMDK" ]; then
-	echo "CONFIG_PMDK?=$CONFIG_PMDK" >> CONFIG.local
-fi
-if [ -n "$CONFIG_PMDK_DIR" ]; then
-	echo "CONFIG_PMDK_DIR?=$CONFIG_PMDK_DIR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_VPP" ]; then
-	echo "CONFIG_VPP?=$CONFIG_VPP" >> CONFIG.local
-fi
-if [ -n "$CONFIG_VPP_DIR" ]; then
-	echo "CONFIG_VPP_DIR?=$CONFIG_VPP_DIR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_FIO_PLUGIN" ]; then
-	echo "CONFIG_FIO_PLUGIN?=$CONFIG_FIO_PLUGIN" >> CONFIG.local
-fi
-if [ -n "$FIO_SOURCE_DIR" ]; then
-	echo "FIO_SOURCE_DIR?=$FIO_SOURCE_DIR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_RDMA" ]; then
-	echo "CONFIG_RDMA?=$CONFIG_RDMA" >> CONFIG.local
-fi
-if [ -n "$CONFIG_ISCSI_INITIATOR" ]; then
-	echo "CONFIG_ISCSI_INITIATOR?=$CONFIG_ISCSI_INITIATOR" >> CONFIG.local
-fi
-if [ -n "$CONFIG_RBD" ]; then
-	echo "CONFIG_RBD?=$CONFIG_RBD" >> CONFIG.local
-fi
-if [ -n "$CONFIG_RAID" ]; then
-	echo "CONFIG_RAID?=$CONFIG_RAID" >> CONFIG.local
-fi
-if [ -n "$CONFIG_VTUNE" ]; then
-	echo "CONFIG_VTUNE?=$CONFIG_VTUNE" >> CONFIG.local
-fi
-if [ -n "$VTUNE_SOURCE_DIR" ]; then
-	echo "VTUNE_SOURCE_DIR?=$VTUNE_SOURCE_DIR" >> CONFIG.local
+Beginning with Linux kernel 4.14, the kernel NVMe-oF initiator leverages Send
+With Invalidate RDMA operations to improve performance. Failing to use the
+Send With Invalidate operation on the NVMe-oF target side results in full
+functionality, but greatly reduced performance. The SPDK NVMe-oF target will
+be unable to leverage that operation using the currently installed version
+of libibverbs, so Linux kernel NVMe-oF initiators based on kernels greater
+than or equal to 4.14 will see significantly reduced performance.
+*******************************************************************************"
+		fi
+	fi
 fi
 
-# Environment variables
-if [ -n "$CFLAGS" ]; then
-	echo "CFLAGS?=$CFLAGS" >> CONFIG.local
-fi
-if [ -n "$CXXFLAGS" ]; then
-	echo "CXXFLAGS?=$CXXFLAGS" >> CONFIG.local
-fi
-if [ -n "$LDFLAGS" ]; then
-	echo "LDFLAGS?=$LDFLAGS" >> CONFIG.local
-fi
-if [ -n "$DESTDIR" ]; then
-	echo "DESTDIR?=$DESTDIR" >> CONFIG.local
+if [[ "${CONFIG[CRYPTO]}" = "y" ]]; then
+	if [[ $(nasm -v | sed 's/[^0-9]*//g' | awk '{print substr ($0, 0, 5)}') -lt "21202" ]]; then
+		echo Crypto requires NASM version 2.12.02 or newer.  Please install
+		echo or upgrade then re-run this script.
+		exit 1
+        else
+		if [[ "$(find /usr -name intel-ipsec-mb.h 2>/dev/null)" == "" ]]; then
+			echo "To enable crypto you must first go to the intel-ipsec-mb directory and "
+			echo "run 'make' then 'sudo make install' then re-run this script."
+			exit 1
+		fi
+	fi
 fi
 
-python_command=
-for interpreter in python3 python2 python ; do
-	type $interpreter > /dev/null 2>&1 || continue
-	python_command=$interpreter
-	break
-done
-if [[ -z "$python_command" ]] ; then
-	echo "Could not find python interpreter! Bailing out."
+# We are now ready to generate final configuration. But first do sanity
+# check to see if all keys in CONFIG array have its reflection in CONFIG file.
+if [ $(egrep -c "^\s*CONFIG_[[:alnum:]_]+=" CONFIG) -ne ${#CONFIG[@]} ]; then
+	echo ""
+	echo "BUG: Some configuration options are not present in CONFIG file. Please update this file."
+	echo "Missing options in CONFIG (+) file and in current config (-): "
+	diff -u --label "CONFIG file" --label "CONFIG[@]" \
+		<(sed -r -e '/^\s*$/d; /^\s*#.*/d; s/(CONFIG_[[:alnum:]_]+)=.*/\1/g' CONFIG | sort) \
+		<(printf "CONFIG_%s\n" ${!CONFIG[@]} | sort)
 	exit 1
 fi
 
-rm -f PYTHON_COMMAND
-echo $python_command > PYTHON_COMMAND
-$python_command scripts/genconfig.py > config.h
+echo -n "Creating mk/config.mk..."
+cp -f CONFIG mk/config.mk
+for key in ${!CONFIG[@]}; do
+	sed -i.bak -r "s#^\s*CONFIG_${key}=.*#CONFIG_${key}\?=${CONFIG[$key]}#g" mk/config.mk
+done
+# On FreeBSD sed -i 'SUFFIX' - SUFFIX is mandatory. So no way but to delete the backed file.
+rm -f mk/config.mk.bak
+
+# Environment variables
+[ -n "$CFLAGS" ] && echo "CFLAGS?=$CFLAGS" >> mk/config.mk
+[ -n "$CXXFLAGS" ] && echo "CXXFLAGS?=$CXXFLAGS" >> mk/config.mk
+[ -n "$LDFLAGS" ] && echo "LDFLAGS?=$LDFLAGS" >> mk/config.mk
+[ -n "$DESTDIR" ] && echo "DESTDIR?=$DESTDIR" >> mk/config.mk
 
 echo "done."
-if [[ "$OSTYPE" == "FreeBSD"* ]]; then
+
+if [[ "$OSTYPE" == "freebsd"* ]]; then
 	echo "Type 'gmake' to build."
 else
 	echo "Type 'make' to build."

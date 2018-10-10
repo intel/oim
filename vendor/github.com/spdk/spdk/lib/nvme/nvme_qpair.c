@@ -344,7 +344,7 @@ nvme_completion_is_retry(const struct spdk_nvme_cpl *cpl)
 		}
 	case SPDK_NVME_SCT_PATH:
 		/*
-		 * Per NVMe TP 4028 (Path and Transport Error Enhancments), retries should be
+		 * Per NVMe TP 4028 (Path and Transport Error Enhancements), retries should be
 		 * based on the setting of the DNR bit for Internal Path Error
 		 */
 		switch ((int)cpl->status.sc) {
@@ -448,8 +448,11 @@ nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 
 	req_size_padded = (sizeof(struct nvme_request) + 63) & ~(size_t)63;
 
-	qpair->req_buf = spdk_dma_zmalloc(req_size_padded * num_requests, 64, NULL);
+	qpair->req_buf = spdk_zmalloc(req_size_padded * num_requests, 64, NULL,
+				      SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_SHARE);
 	if (qpair->req_buf == NULL) {
+		SPDK_ERRLOG("no memory to allocate qpair(cntlid:0x%x sqid:%d) req_buf with %d request\n",
+			    ctrlr->cntlid, qpair->id, num_requests);
 		return -ENOMEM;
 	}
 

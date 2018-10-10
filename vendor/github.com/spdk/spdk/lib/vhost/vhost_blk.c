@@ -53,6 +53,9 @@ struct spdk_vhost_blk_task {
 
 	uint16_t req_idx;
 
+	/* for io wait */
+	struct spdk_bdev_io_wait_entry bdev_io_wait;
+
 	/* If set, the task is currently used for I/O processing. */
 	bool used;
 
@@ -68,11 +71,16 @@ struct spdk_vhost_blk_dev {
 	struct spdk_bdev_desc *bdev_desc;
 	struct spdk_io_channel *bdev_io_channel;
 	struct spdk_poller *requestq_poller;
+	struct spdk_vhost_dev_destroy_ctx destroy_ctx;
 	bool readonly;
 };
 
 /* forward declaration */
 static const struct spdk_vhost_dev_backend vhost_blk_device_backend;
+
+static int
+process_blk_request(struct spdk_vhost_blk_task *task, struct spdk_vhost_blk_dev *bvdev,
+		    struct spdk_vhost_virtqueue *vq);
 
 static void
 blk_task_finish(struct spdk_vhost_blk_task *task)
@@ -182,6 +190,38 @@ blk_request_complete_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg
 	blk_request_finish(success, task);
 }
 
+static void
+blk_request_resubmit(void *arg)
+{
+	struct spdk_vhost_blk_task *task = (struct spdk_vhost_blk_task *)arg;
+	int rc = 0;
+
+	rc = process_blk_request(task, task->bvdev, task->vq);
+	if (rc == 0) {
+		SPDK_DEBUGLOG(SPDK_LOG_VHOST_BLK, "====== Task %p resubmitted ======\n", task);
+	} else {
+		SPDK_DEBUGLOG(SPDK_LOG_VHOST_BLK, "====== Task %p failed ======\n", task);
+	}
+}
+
+static inline void
+blk_request_queue_io(struct spdk_vhost_blk_task *task)
+{
+	int rc;
+	struct spdk_vhost_blk_dev *bvdev = task->bvdev;
+	struct spdk_bdev *bdev = bvdev->bdev;
+
+	task->bdev_io_wait.bdev = bdev;
+	task->bdev_io_wait.cb_fn = blk_request_resubmit;
+	task->bdev_io_wait.cb_arg = task;
+
+	rc = spdk_bdev_queue_io_wait(bdev, bvdev->bdev_io_channel, &task->bdev_io_wait);
+	if (rc != 0) {
+		SPDK_ERRLOG("Queue io failed in vhost_blk, rc=%d\n", rc);
+		invalid_blk_request(task, VIRTIO_BLK_S_IOERR);
+	}
+}
+
 static int
 process_blk_request(struct spdk_vhost_blk_task *task, struct spdk_vhost_blk_dev *bvdev,
 		    struct spdk_vhost_virtqueue *vq)
@@ -255,8 +295,13 @@ process_blk_request(struct spdk_vhost_blk_task *task, struct spdk_vhost_blk_dev 
 		}
 
 		if (rc) {
-			invalid_blk_request(task, VIRTIO_BLK_S_IOERR);
-			return -1;
+			if (rc == -ENOMEM) {
+				SPDK_DEBUGLOG(SPDK_LOG_VHOST_BLK, "No memory, start to queue io.\n");
+				blk_request_queue_io(task);
+			} else {
+				invalid_blk_request(task, VIRTIO_BLK_S_IOERR);
+				return -1;
+			}
 		}
 		break;
 	case VIRTIO_BLK_T_GET_ID:
@@ -373,6 +418,11 @@ no_bdev_vdev_worker(void *arg)
 	}
 
 	spdk_vhost_dev_used_signal(&bvdev->vdev);
+
+	if (bvdev->vdev.task_cnt == 0 && bvdev->bdev_io_channel) {
+		spdk_put_io_channel(bvdev->bdev_io_channel);
+		bvdev->bdev_io_channel = NULL;
+	}
 
 	return -1;
 }
@@ -523,6 +573,7 @@ spdk_vhost_blk_start(struct spdk_vhost_dev *vdev, void *event_ctx)
 	if (bvdev->bdev) {
 		bvdev->bdev_io_channel = spdk_bdev_get_io_channel(bvdev->bdev_desc);
 		if (!bvdev->bdev_io_channel) {
+			free_task_pool(bvdev);
 			SPDK_ERRLOG("Controller %s: IO channel allocation failed\n", vdev->name);
 			rc = -1;
 			goto out;
@@ -538,17 +589,10 @@ out:
 	return rc;
 }
 
-struct spdk_vhost_dev_destroy_ctx {
-	struct spdk_vhost_blk_dev *bvdev;
-	struct spdk_poller *poller;
-	void *event_ctx;
-};
-
 static int
 destroy_device_poller_cb(void *arg)
 {
-	struct spdk_vhost_dev_destroy_ctx *ctx = arg;
-	struct spdk_vhost_blk_dev *bvdev = ctx->bvdev;
+	struct spdk_vhost_blk_dev *bvdev = arg;
 	int i;
 
 	if (bvdev->vdev.task_cnt > 0) {
@@ -568,10 +612,8 @@ destroy_device_poller_cb(void *arg)
 	}
 
 	free_task_pool(bvdev);
-
-	spdk_poller_unregister(&ctx->poller);
-	spdk_vhost_dev_backend_event_done(ctx->event_ctx, 0);
-	spdk_dma_free(ctx);
+	spdk_poller_unregister(&bvdev->destroy_ctx.poller);
+	spdk_vhost_dev_backend_event_done(bvdev->destroy_ctx.event_ctx, 0);
 
 	return -1;
 }
@@ -580,7 +622,6 @@ static int
 spdk_vhost_blk_stop(struct spdk_vhost_dev *vdev, void *event_ctx)
 {
 	struct spdk_vhost_blk_dev *bvdev;
-	struct spdk_vhost_dev_destroy_ctx *destroy_ctx;
 
 	bvdev = to_blk_dev(vdev);
 	if (bvdev == NULL) {
@@ -588,18 +629,10 @@ spdk_vhost_blk_stop(struct spdk_vhost_dev *vdev, void *event_ctx)
 		goto err;
 	}
 
-	destroy_ctx = spdk_dma_zmalloc(sizeof(*destroy_ctx), SPDK_CACHE_LINE_SIZE, NULL);
-	if (destroy_ctx == NULL) {
-		SPDK_ERRLOG("Failed to alloc memory for destroying device.\n");
-		goto err;
-	}
-
-	destroy_ctx->bvdev = bvdev;
-	destroy_ctx->event_ctx = event_ctx;
-
+	bvdev->destroy_ctx.event_ctx = event_ctx;
 	spdk_poller_unregister(&bvdev->requestq_poller);
-	destroy_ctx->poller = spdk_poller_register(destroy_device_poller_cb,
-			      destroy_ctx, 1000);
+	bvdev->destroy_ctx.poller = spdk_poller_register(destroy_device_poller_cb,
+				    bvdev, 1000);
 	return 0;
 
 err:
@@ -685,8 +718,24 @@ spdk_vhost_blk_get_config(struct spdk_vhost_dev *vdev, uint8_t *config,
 	}
 
 	bdev = bvdev->bdev;
-	blk_size = spdk_bdev_get_block_size(bdev);
-	blkcnt = spdk_bdev_get_num_blocks(bdev);
+	if (bdev == NULL) {
+		/* We can't just return -1 here as this GET_CONFIG message might
+		 * be caused by a QEMU VM reboot. Returning -1 will indicate an
+		 * error to QEMU, who might then decide to terminate itself.
+		 * We don't want that. A simple reboot shouldn't break the system.
+		 *
+		 * Presenting a block device with block size 0 and block count 0
+		 * doesn't cause any problems on QEMU side and the virtio-pci
+		 * device is even still available inside the VM, but there will
+		 * be no block device created for it - the kernel drivers will
+		 * silently reject it.
+		 */
+		blk_size = 0;
+		blkcnt = 0;
+	} else {
+		blk_size = spdk_bdev_get_block_size(bdev);
+		blkcnt = spdk_bdev_get_num_blocks(bdev);
+	}
 
 	memset(blkcfg, 0, sizeof(*blkcfg));
 	blkcfg->blk_size = blk_size;
@@ -777,13 +826,13 @@ spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_
 	if (bdev == NULL) {
 		SPDK_ERRLOG("Controller %s: bdev '%s' not found\n",
 			    name, dev_name);
-		ret = -1;
+		ret = -ENODEV;
 		goto out;
 	}
 
 	bvdev = spdk_dma_zmalloc(sizeof(*bvdev), SPDK_CACHE_LINE_SIZE, NULL);
 	if (bvdev == NULL) {
-		ret = -1;
+		ret = -ENOMEM;
 		goto out;
 	}
 
@@ -791,7 +840,6 @@ spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_
 	if (ret != 0) {
 		SPDK_ERRLOG("Controller %s: could not open bdev '%s', error=%d\n",
 			    name, dev_name, ret);
-		ret = -1;
 		goto out;
 	}
 
@@ -800,7 +848,6 @@ spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_
 	ret = spdk_vhost_dev_register(&bvdev->vdev, name, cpumask, &vhost_blk_device_backend);
 	if (ret != 0) {
 		spdk_bdev_close(bvdev->bdev_desc);
-		ret = -1;
 		goto out;
 	}
 

@@ -98,6 +98,10 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	device := ""
 	if ns.od.vhostEndpoint != "" {
+		if ns.od.emulate != nil {
+			return nil, fmt.Errorf("emulating CSI driver %q not currently implemented without SPDK", ns.od.emulate.CSIDriverName)
+		}
+
 		// Connect to SPDK.
 		client, err := spdk.New(ns.od.vhostEndpoint)
 		if err != nil {
@@ -170,14 +174,20 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 		// Make volume available and/or find out where it is.
 		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", ns.od.oimControllerID)
-		reply, err := controllerClient.MapVolume(ctx, &oim.MapVolumeRequest{
+		request := &oim.MapVolumeRequest{
 			VolumeId: volumeID,
 			// TODO: map attrib to params
 			// For now we assume that we map a Malloc BDev with the same name.
 			Params: &oim.MapVolumeRequest_Malloc{
 				Malloc: &oim.MallocParams{},
 			},
-		})
+		}
+		if ns.od.emulate != nil {
+			if err := ns.od.emulate.MapVolumeParams(req, request); err != nil {
+				return nil, errors.Wrap(err, "create MapVolumeRequest parameters")
+			}
+		}
+		reply, err := controllerClient.MapVolume(ctx, request)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("MapVolume for %s failed: %s", volumeID, err))
 		}

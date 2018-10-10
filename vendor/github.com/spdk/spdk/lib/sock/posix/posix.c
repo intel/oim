@@ -89,7 +89,8 @@ get_addr_str(struct sockaddr *sa, char *host, size_t hlen)
 #define __posix_group_impl(group) (struct spdk_posix_sock_group_impl *)group
 
 static int
-spdk_posix_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, char *caddr, int clen)
+spdk_posix_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *sport,
+			char *caddr, int clen, uint16_t *cport)
 {
 	struct spdk_posix_sock *sock = __posix_sock(_sock);
 	struct sockaddr_storage sa;
@@ -125,6 +126,14 @@ spdk_posix_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, char *ca
 		return -1;
 	}
 
+	if (sport) {
+		if (sa.ss_family == AF_INET) {
+			*sport = ntohs(((struct sockaddr_in *) &sa)->sin_port);
+		} else if (sa.ss_family == AF_INET6) {
+			*sport = ntohs(((struct sockaddr_in6 *) &sa)->sin6_port);
+		}
+	}
+
 	memset(&sa, 0, sizeof sa);
 	salen = sizeof sa;
 	rc = getpeername(sock->fd, (struct sockaddr *) &sa, &salen);
@@ -137,6 +146,14 @@ spdk_posix_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, char *ca
 	if (rc != 0) {
 		SPDK_ERRLOG("getnameinfo() failed (errno=%d)\n", errno);
 		return -1;
+	}
+
+	if (cport) {
+		if (sa.ss_family == AF_INET) {
+			*cport = ntohs(((struct sockaddr_in *) &sa)->sin_port);
+		} else if (sa.ss_family == AF_INET6) {
+			*cport = ntohs(((struct sockaddr_in6 *) &sa)->sin6_port);
+		}
 	}
 
 	return 0;
@@ -302,6 +319,7 @@ spdk_posix_sock_accept(struct spdk_sock *_sock)
 	socklen_t			salen;
 	int				rc;
 	struct spdk_posix_sock		*new_sock;
+	int				flag;
 
 	memset(&sa, 0, sizeof(sa));
 	salen = sizeof(sa);
@@ -311,6 +329,13 @@ spdk_posix_sock_accept(struct spdk_sock *_sock)
 	rc = accept(sock->fd, (struct sockaddr *)&sa, &salen);
 
 	if (rc == -1) {
+		return NULL;
+	}
+
+	flag = fcntl(rc, F_GETFL);
+	if ((!(flag & O_NONBLOCK)) && (fcntl(rc, F_SETFL, flag | O_NONBLOCK) < 0)) {
+		SPDK_ERRLOG("fcntl can't set nonblocking mode for socket, fd: %d (%d)\n", rc, errno);
+		close(rc);
 		return NULL;
 	}
 
@@ -329,8 +354,14 @@ static int
 spdk_posix_sock_close(struct spdk_sock *_sock)
 {
 	struct spdk_posix_sock *sock = __posix_sock(_sock);
+	int rc;
 
-	return close(sock->fd);
+	rc = close(sock->fd);
+	if (rc == 0) {
+		free(sock);
+	}
+
+	return rc;
 }
 
 static ssize_t

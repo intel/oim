@@ -35,8 +35,8 @@
 #include "spdk_cunit.h"
 #include "spdk/env.h"
 #include "spdk_internal/mock.h"
-#include "raid/bdev_raid.c"
-#include "raid/bdev_raid_rpc.c"
+#include "bdev/raid/bdev_raid.c"
+#include "bdev/raid/bdev_raid_rpc.c"
 
 #define MAX_BASE_DRIVES 255
 #define MAX_RAIDS 31
@@ -46,7 +46,6 @@
 struct io_output {
 	struct spdk_bdev_desc       *desc;
 	struct spdk_io_channel      *ch;
-	void                        *buf;
 	uint64_t                    offset_blocks;
 	uint64_t                    num_blocks;
 	spdk_bdev_io_completion_cb  cb;
@@ -155,6 +154,27 @@ base_bdevs_cleanup(void)
 	}
 }
 
+static void
+check_and_remove_raid_bdev(struct raid_bdev_config *raid_cfg)
+{
+	struct raid_bdev       *raid_bdev;
+
+	/* Get the raid structured allocated if exists */
+	raid_bdev = raid_cfg->raid_bdev;
+	if (raid_bdev == NULL) {
+		return;
+	}
+
+	for (uint32_t i = 0; i < raid_bdev->num_base_bdevs; i++) {
+		assert(raid_bdev->base_bdev_info != NULL);
+		if (raid_bdev->base_bdev_info[i].bdev) {
+			raid_bdev_free_base_bdev_resource(raid_bdev, i);
+		}
+	}
+	assert(raid_bdev->num_base_bdevs_discovered == 0);
+	raid_bdev_cleanup(raid_bdev);
+}
+
 /* Reset globals */
 static void
 reset_globals(void)
@@ -183,9 +203,10 @@ spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status sta
 
 /* It will cache the split IOs for verification */
 int
-spdk_bdev_write_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-		       void *buf, uint64_t offset_blocks, uint64_t num_blocks,
-		       spdk_bdev_io_completion_cb cb, void *cb_arg)
+spdk_bdev_writev_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			struct iovec *iov, int iovcnt,
+			uint64_t offset_blocks, uint64_t num_blocks,
+			spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct io_output *p = &g_io_output[g_io_output_index];
 	struct spdk_bdev_io *child_io;
@@ -202,7 +223,6 @@ spdk_bdev_write_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	if (g_bdev_io_submit_status == 0) {
 		p->desc = desc;
 		p->ch = ch;
-		p->buf = buf;
 		p->offset_blocks = offset_blocks;
 		p->num_blocks = num_blocks;
 		p->cb = cb;
@@ -215,6 +235,13 @@ spdk_bdev_write_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	}
 
 	return g_bdev_io_submit_status;
+}
+
+int
+spdk_bdev_reset(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+		spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+	return 0;
 }
 
 void
@@ -269,7 +296,8 @@ spdk_sprintf_alloc(const char *format, ...)
 
 void
 spdk_io_device_register(void *io_device, spdk_io_channel_create_cb create_cb,
-			spdk_io_channel_destroy_cb destroy_cb, uint32_t ctx_size)
+			spdk_io_channel_destroy_cb destroy_cb, uint32_t ctx_size,
+			const char *name)
 {
 }
 
@@ -307,6 +335,18 @@ int spdk_json_write_named_string(struct spdk_json_write_ctx *w, const char *name
 
 int
 spdk_json_write_object_begin(struct spdk_json_write_ctx *w)
+{
+	return 0;
+}
+
+int
+spdk_json_write_named_object_begin(struct spdk_json_write_ctx *w, const char *name)
+{
+	return 0;
+}
+
+int
+spdk_json_write_named_array_begin(struct spdk_json_write_ctx *w, const char *name)
 {
 	return 0;
 }
@@ -375,9 +415,10 @@ spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
 
 /* It will cache split IOs for verification */
 int
-spdk_bdev_read_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-		      void *buf, uint64_t offset_blocks, uint64_t num_blocks,
-		      spdk_bdev_io_completion_cb cb, void *cb_arg)
+spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+		       struct iovec *iov, int iovcnt,
+		       uint64_t offset_blocks, uint64_t num_blocks,
+		       spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct io_output *p = &g_io_output[g_io_output_index];
 	struct spdk_bdev_io *child_io;
@@ -390,7 +431,6 @@ spdk_bdev_read_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	if (g_bdev_io_submit_status == 0) {
 		p->desc = desc;
 		p->ch = ch;
-		p->buf = buf;
 		p->offset_blocks = offset_blocks;
 		p->num_blocks = num_blocks;
 		p->cb = cb;
@@ -591,6 +631,13 @@ spdk_jsonrpc_send_error_response(struct spdk_jsonrpc_request *request,
 }
 
 void
+spdk_jsonrpc_send_error_response_fmt(struct spdk_jsonrpc_request *request,
+				     int error_code, const char *fmt, ...)
+{
+	g_rpc_err = 1;
+}
+
+void
 spdk_jsonrpc_end_result(struct spdk_jsonrpc_request *request, struct spdk_json_write_ctx *w)
 {
 }
@@ -655,8 +702,10 @@ bdev_io_cleanup(struct spdk_bdev_io *bdev_io)
 }
 
 static void
-bdev_io_initialize(struct spdk_bdev_io *bdev_io, uint64_t lba, uint64_t blocks, int16_t iotype)
+bdev_io_initialize(struct spdk_bdev_io *bdev_io, struct spdk_bdev *bdev,
+		   uint64_t lba, uint64_t blocks, int16_t iotype)
 {
+	bdev_io->bdev = bdev;
 	bdev_io->u.bdev.offset_blocks = lba;
 	bdev_io->u.bdev.num_blocks = blocks;
 	bdev_io->type = iotype;
@@ -694,42 +743,32 @@ verify_io(struct spdk_bdev_io *bdev_io, uint8_t num_base_drives,
 	SPDK_CU_ASSERT_FATAL(raid_bdev != NULL);
 	SPDK_CU_ASSERT_FATAL(num_base_drives != 0);
 
-	if (raid_bdev->num_base_bdevs > 1) {
-		CU_ASSERT(splits_reqd == g_io_output_index);
-		for (strip = start_strip; strip <= end_strip; strip++, index++) {
-			pd_strip = strip / num_base_drives;
-			pd_idx = strip % num_base_drives;
-			if (strip == start_strip) {
-				offset_in_strip = bdev_io->u.bdev.offset_blocks & (g_strip_size - 1);
-				pd_lba = (pd_strip << strip_shift) + offset_in_strip;
-				if (strip == end_strip) {
-					pd_blocks = bdev_io->u.bdev.num_blocks;
-				} else {
-					pd_blocks = g_strip_size - offset_in_strip;
-				}
-			} else if (strip == end_strip) {
-				pd_lba = pd_strip << strip_shift;
-				pd_blocks = ((bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks - 1) &
-					     (g_strip_size - 1)) + 1;
+	CU_ASSERT(splits_reqd == g_io_output_index);
+	for (strip = start_strip; strip <= end_strip; strip++, index++) {
+		pd_strip = strip / num_base_drives;
+		pd_idx = strip % num_base_drives;
+		if (strip == start_strip) {
+			offset_in_strip = bdev_io->u.bdev.offset_blocks & (g_strip_size - 1);
+			pd_lba = (pd_strip << strip_shift) + offset_in_strip;
+			if (strip == end_strip) {
+				pd_blocks = bdev_io->u.bdev.num_blocks;
 			} else {
-				pd_lba = pd_strip << raid_bdev->strip_size_shift;
-				pd_blocks = raid_bdev->strip_size;
+				pd_blocks = g_strip_size - offset_in_strip;
 			}
-			CU_ASSERT(pd_lba == g_io_output[index].offset_blocks);
-			CU_ASSERT(pd_blocks == g_io_output[index].num_blocks);
-			CU_ASSERT(ch_ctx->base_bdevs_io_channel[pd_idx] == g_io_output[index].ch);
-			CU_ASSERT(raid_bdev->base_bdev_info[pd_idx].base_bdev_desc == g_io_output[index].desc);
-			CU_ASSERT(buf == g_io_output[index].buf);
-			CU_ASSERT(bdev_io->type == g_io_output[index].iotype);
-			buf += (pd_blocks << spdk_u32log2(g_block_len));
+		} else if (strip == end_strip) {
+			pd_lba = pd_strip << strip_shift;
+			pd_blocks = ((bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks - 1) &
+				     (g_strip_size - 1)) + 1;
+		} else {
+			pd_lba = pd_strip << raid_bdev->strip_size_shift;
+			pd_blocks = raid_bdev->strip_size;
 		}
-	} else {
-		CU_ASSERT(g_io_output_index == 1);
-		CU_ASSERT(bdev_io->u.bdev.offset_blocks == g_io_output[0].offset_blocks);
-		CU_ASSERT(bdev_io->u.bdev.num_blocks == g_io_output[0].num_blocks);
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel[0] == g_io_output[0].ch);
-		CU_ASSERT(raid_bdev->base_bdev_info[0].base_bdev_desc == g_io_output[0].desc);
-		CU_ASSERT(buf == g_io_output[index].buf);
+		CU_ASSERT(pd_lba == g_io_output[index].offset_blocks);
+		CU_ASSERT(pd_blocks == g_io_output[index].num_blocks);
+		CU_ASSERT(ch_ctx->base_channel[pd_idx] == g_io_output[index].ch);
+		CU_ASSERT(raid_bdev->base_bdev_info[pd_idx].desc == g_io_output[index].desc);
+		CU_ASSERT(bdev_io->type == g_io_output[index].iotype);
+		buf += (pd_blocks << spdk_u32log2(g_block_len));
 	}
 	CU_ASSERT(g_io_comp_status == io_status);
 }
@@ -761,14 +800,12 @@ verify_raid_config_present(const char *name, bool presence)
 static void
 verify_raid_bdev_present(const char *name, bool presence)
 {
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct raid_bdev *pbdev;
 	bool   pbdev_found;
 
 	pbdev_found = false;
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, name) == 0) {
 			pbdev_found = true;
 			break;
 		}
@@ -791,13 +828,13 @@ verify_raid_config(struct rpc_construct_raid_bdev *r, bool presence)
 			if (presence == false) {
 				break;
 			}
-			CU_ASSERT(raid_cfg->raid_bdev_ctxt != NULL);
+			CU_ASSERT(raid_cfg->raid_bdev != NULL);
 			CU_ASSERT(raid_cfg->strip_size == r->strip_size);
 			CU_ASSERT(raid_cfg->num_base_bdevs == r->base_bdevs.num_base_bdevs);
 			CU_ASSERT(raid_cfg->raid_level == r->raid_level);
 			if (raid_cfg->base_bdev != NULL) {
 				for (i = 0; i < raid_cfg->num_base_bdevs; i++) {
-					val = strcmp(raid_cfg->base_bdev[i].bdev_name, r->base_bdevs.base_bdevs[i]);
+					val = strcmp(raid_cfg->base_bdev[i].name, r->base_bdevs.base_bdevs[i]);
 					CU_ASSERT(val == 0);
 				}
 			}
@@ -815,7 +852,6 @@ verify_raid_config(struct rpc_construct_raid_bdev *r, bool presence)
 static void
 verify_raid_bdev(struct rpc_construct_raid_bdev *r, bool presence, uint32_t raid_state)
 {
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct raid_bdev *pbdev;
 	uint32_t i;
 	struct spdk_bdev *bdev = NULL;
@@ -823,14 +859,13 @@ verify_raid_bdev(struct rpc_construct_raid_bdev *r, bool presence, uint32_t raid
 	uint64_t min_blockcnt = 0xFFFFFFFFFFFFFFFF;
 
 	pbdev_found = false;
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, r->name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, r->name) == 0) {
 			pbdev_found = true;
 			if (presence == false) {
 				break;
 			}
-			CU_ASSERT(pbdev->raid_bdev_config->raid_bdev_ctxt == pbdev_ctxt);
+			CU_ASSERT(pbdev->config->raid_bdev == pbdev);
 			CU_ASSERT(pbdev->base_bdev_info != NULL);
 			CU_ASSERT(pbdev->strip_size == ((r->strip_size * 1024) / g_block_len));
 			CU_ASSERT(pbdev->strip_size_shift == spdk_u32log2(((r->strip_size * 1024) / g_block_len)));
@@ -841,10 +876,10 @@ verify_raid_bdev(struct rpc_construct_raid_bdev *r, bool presence, uint32_t raid
 			CU_ASSERT(pbdev->raid_level == r->raid_level);
 			CU_ASSERT(pbdev->destruct_called == false);
 			for (i = 0; i < pbdev->num_base_bdevs; i++) {
-				if (pbdev->base_bdev_info && pbdev->base_bdev_info[i].base_bdev) {
-					bdev = spdk_bdev_get_by_name(pbdev->base_bdev_info[i].base_bdev->name);
+				if (pbdev->base_bdev_info && pbdev->base_bdev_info[i].bdev) {
+					bdev = spdk_bdev_get_by_name(pbdev->base_bdev_info[i].bdev->name);
 					CU_ASSERT(bdev != NULL);
-					CU_ASSERT(pbdev->base_bdev_info[i].base_bdev_remove_scheduled == false);
+					CU_ASSERT(pbdev->base_bdev_info[i].remove_scheduled == false);
 				} else {
 					CU_ASSERT(0);
 				}
@@ -854,14 +889,20 @@ verify_raid_bdev(struct rpc_construct_raid_bdev *r, bool presence, uint32_t raid
 				}
 			}
 			CU_ASSERT((((min_blockcnt / (r->strip_size * 1024 / g_block_len)) * (r->strip_size * 1024 /
-					g_block_len)) * r->base_bdevs.num_base_bdevs) == pbdev_ctxt->bdev.blockcnt);
-			CU_ASSERT(strcmp(pbdev_ctxt->bdev.product_name, "Pooled Device") == 0);
-			CU_ASSERT(pbdev_ctxt->bdev.write_cache == 0);
-			CU_ASSERT(pbdev_ctxt->bdev.blocklen == g_block_len);
-			CU_ASSERT(pbdev_ctxt->bdev.optimal_io_boundary == 0);
-			CU_ASSERT(pbdev_ctxt->bdev.ctxt == pbdev_ctxt);
-			CU_ASSERT(pbdev_ctxt->bdev.fn_table == &g_raid_bdev_fn_table);
-			CU_ASSERT(pbdev_ctxt->bdev.module == &g_raid_if);
+					g_block_len)) * r->base_bdevs.num_base_bdevs) == pbdev->bdev.blockcnt);
+			CU_ASSERT(strcmp(pbdev->bdev.product_name, "Pooled Device") == 0);
+			CU_ASSERT(pbdev->bdev.write_cache == 0);
+			CU_ASSERT(pbdev->bdev.blocklen == g_block_len);
+			if (pbdev->num_base_bdevs > 1) {
+				CU_ASSERT(pbdev->bdev.optimal_io_boundary == pbdev->strip_size);
+				CU_ASSERT(pbdev->bdev.split_on_optimal_io_boundary == true);
+			} else {
+				CU_ASSERT(pbdev->bdev.optimal_io_boundary == 0);
+				CU_ASSERT(pbdev->bdev.split_on_optimal_io_boundary == false);
+			}
+			CU_ASSERT(pbdev->bdev.ctxt == pbdev);
+			CU_ASSERT(pbdev->bdev.fn_table == &g_raid_bdev_fn_table);
+			CU_ASSERT(pbdev->bdev.module == &g_raid_if);
 			break;
 		}
 	}
@@ -872,25 +913,22 @@ verify_raid_bdev(struct rpc_construct_raid_bdev *r, bool presence, uint32_t raid
 	}
 	pbdev_found = false;
 	if (raid_state == RAID_BDEV_STATE_ONLINE) {
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_configured_list, link_specific_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, r->name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_configured_list, state_link) {
+			if (strcmp(pbdev->bdev.name, r->name) == 0) {
 				pbdev_found = true;
 				break;
 			}
 		}
 	} else if (raid_state == RAID_BDEV_STATE_CONFIGURING) {
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_configuring_list, link_specific_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, r->name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_configuring_list, state_link) {
+			if (strcmp(pbdev->bdev.name, r->name) == 0) {
 				pbdev_found = true;
 				break;
 			}
 		}
 	} else if (raid_state == RAID_BDEV_STATE_OFFLINE) {
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_offline_list, link_specific_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, r->name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_offline_list, state_link) {
+			if (strcmp(pbdev->bdev.name, r->name) == 0) {
 				pbdev_found = true;
 				break;
 			}
@@ -1095,6 +1133,7 @@ test_construct_raid_invalid_args(void)
 {
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
+	struct raid_bdev_config *raid_cfg;
 
 	set_globals();
 	rpc_req = &req;
@@ -1180,10 +1219,14 @@ test_construct_raid_invalid_args(void)
 	g_rpc_err = 0;
 	g_json_decode_obj_construct = 1;
 	spdk_rpc_construct_raid_bdev(NULL, NULL);
-	CU_ASSERT(g_rpc_err == 1);
+	CU_ASSERT(g_rpc_err == 0);
 	free_test_req(&req);
-	verify_raid_config_present("raid2", false);
-	verify_raid_bdev_present("raid2", false);
+	verify_raid_config_present("raid2", true);
+	verify_raid_bdev_present("raid2", true);
+	raid_cfg = raid_bdev_config_find_by_name("raid2");
+	SPDK_CU_ASSERT_FATAL(raid_cfg != NULL);
+	check_and_remove_raid_bdev(raid_cfg);
+	raid_bdev_config_cleanup(raid_cfg);
 
 	create_test_req(&req, "raid2", g_max_base_drives, false);
 	g_rpc_err = 0;
@@ -1275,7 +1318,6 @@ test_io_channel(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct raid_bdev_io_channel *ch_ctx;
 	uint32_t i;
 
@@ -1294,24 +1336,21 @@ test_io_channel(void)
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
 
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	CU_ASSERT(pbdev_ctxt != NULL);
+	CU_ASSERT(pbdev != NULL);
 	ch_ctx = calloc(1, sizeof(struct raid_bdev_io_channel));
 	SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
 
-	CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
+	CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
 	for (i = 0; i < req.base_bdevs.num_base_bdevs; i++) {
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel && ch_ctx->base_bdevs_io_channel[i] == (void *)0x1);
+		CU_ASSERT(ch_ctx->base_channel && ch_ctx->base_channel[i] == (void *)0x1);
 	}
-	raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-	CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+	raid_bdev_destroy_cb(pbdev, ch_ctx);
+	CU_ASSERT(ch_ctx->base_channel == NULL);
 	free_test_req(&req);
 
 	destroy_req.name = strdup("raid1");
@@ -1336,7 +1375,6 @@ test_write_io(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct spdk_io_channel *ch;
 	struct raid_bdev_io_channel *ch_ctx;
 	uint32_t i;
@@ -1358,44 +1396,41 @@ test_write_io(void)
 	CU_ASSERT(g_rpc_err == 0);
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	CU_ASSERT(pbdev_ctxt != NULL);
+	CU_ASSERT(pbdev != NULL);
 	ch = calloc(1, sizeof(struct spdk_io_channel) + sizeof(struct raid_bdev_io_channel));
 	SPDK_CU_ASSERT_FATAL(ch != NULL);
 	ch_ctx = spdk_io_channel_get_ctx(ch);
 	SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
 
-	CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
+	CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
 	for (i = 0; i < req.base_bdevs.num_base_bdevs; i++) {
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel && ch_ctx->base_bdevs_io_channel[i] == (void *)0x1);
+		CU_ASSERT(ch_ctx->base_channel && ch_ctx->base_channel[i] == (void *)0x1);
 	}
 
 	lba = 0;
 	for (count = 0; count < g_max_qd; count++) {
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
-		io_len = (rand() % g_max_io_size) + 1;
-		bdev_io_initialize(bdev_io, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
-		lba += io_len;
+		io_len = (rand() % g_strip_size) + 1;
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
+		lba += g_strip_size;
 		memset(g_io_output, 0, (g_max_io_size / g_strip_size) + 1 * sizeof(struct io_output));
 		g_io_output_index = 0;
 		raid_bdev_submit_request(ch, bdev_io);
-		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, &pbdev_ctxt->raid_bdev,
+		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, pbdev,
 			  g_child_io_status_flag);
 		bdev_io_cleanup(bdev_io);
 		free(bdev_io);
 	}
 	free_test_req(&req);
 
-	raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-	CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+	raid_bdev_destroy_cb(pbdev, ch_ctx);
+	CU_ASSERT(ch_ctx->base_channel == NULL);
 	free(ch);
 	destroy_req.name = strdup("raid1");
 	rpc_req = &destroy_req;
@@ -1418,7 +1453,6 @@ test_read_io(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct spdk_io_channel *ch;
 	struct raid_bdev_io_channel *ch_ctx;
 	uint32_t i;
@@ -1440,22 +1474,20 @@ test_read_io(void)
 	CU_ASSERT(g_rpc_err == 0);
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	CU_ASSERT(pbdev_ctxt != NULL);
+	CU_ASSERT(pbdev != NULL);
 	ch = calloc(1, sizeof(struct spdk_io_channel) + sizeof(struct raid_bdev_io_channel));
 	SPDK_CU_ASSERT_FATAL(ch != NULL);
 	ch_ctx = spdk_io_channel_get_ctx(ch);
 	SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
 
-	CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
+	CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
 	for (i = 0; i < req.base_bdevs.num_base_bdevs; i++) {
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel && ch_ctx->base_bdevs_io_channel[i] == (void *)0x1);
+		CU_ASSERT(ch_ctx->base_channel && ch_ctx->base_channel[i] == (void *)0x1);
 	}
 	free_test_req(&req);
 
@@ -1463,21 +1495,20 @@ test_read_io(void)
 	for (count = 0; count < g_max_qd; count++) {
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
-		io_len = (rand() % g_max_io_size) + 1;
-		bdev_io_initialize(bdev_io, lba, io_len, SPDK_BDEV_IO_TYPE_READ);
-		lba += io_len;
+		io_len = (rand() % g_strip_size) + 1;
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, SPDK_BDEV_IO_TYPE_READ);
+		lba += g_strip_size;
 		memset(g_io_output, 0, (g_max_io_size / g_strip_size) + 1 * sizeof(struct io_output));
 		g_io_output_index = 0;
 		raid_bdev_submit_request(ch, bdev_io);
-		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, &pbdev_ctxt->raid_bdev,
+		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, pbdev,
 			  g_child_io_status_flag);
 		bdev_io_cleanup(bdev_io);
 		free(bdev_io);
 	}
 
-	raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-	CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+	raid_bdev_destroy_cb(pbdev, ch_ctx);
+	CU_ASSERT(ch_ctx->base_channel == NULL);
 	free(ch);
 	destroy_req.name = strdup("raid1");
 	rpc_req = &destroy_req;
@@ -1501,7 +1532,6 @@ test_io_failure(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct spdk_io_channel *ch;
 	struct raid_bdev_io_channel *ch_ctx;
 	uint32_t i;
@@ -1523,22 +1553,20 @@ test_io_failure(void)
 	CU_ASSERT(g_rpc_err == 0);
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	CU_ASSERT(pbdev_ctxt != NULL);
+	CU_ASSERT(pbdev != NULL);
 	ch = calloc(1, sizeof(struct spdk_io_channel) + sizeof(struct raid_bdev_io_channel));
 	SPDK_CU_ASSERT_FATAL(ch != NULL);
 	ch_ctx = spdk_io_channel_get_ctx(ch);
 	SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
 
-	CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
+	CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
 	for (i = 0; i < req.base_bdevs.num_base_bdevs; i++) {
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel && ch_ctx->base_bdevs_io_channel[i] == (void *)0x1);
+		CU_ASSERT(ch_ctx->base_channel && ch_ctx->base_channel[i] == (void *)0x1);
 	}
 	free_test_req(&req);
 
@@ -1546,13 +1574,13 @@ test_io_failure(void)
 	for (count = 0; count < 1; count++) {
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
-		io_len = (rand() % g_max_io_size) + 1;
-		bdev_io_initialize(bdev_io, lba, io_len, SPDK_BDEV_IO_TYPE_INVALID);
-		lba += io_len;
+		io_len = (rand() % g_strip_size) + 1;
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, SPDK_BDEV_IO_TYPE_INVALID);
+		lba += g_strip_size;
 		memset(g_io_output, 0, (g_max_io_size / g_strip_size) + 1 * sizeof(struct io_output));
 		g_io_output_index = 0;
 		raid_bdev_submit_request(ch, bdev_io);
-		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, &pbdev_ctxt->raid_bdev,
+		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, pbdev,
 			  INVALID_IO_SUBMIT);
 		bdev_io_cleanup(bdev_io);
 		free(bdev_io);
@@ -1564,21 +1592,20 @@ test_io_failure(void)
 	for (count = 0; count < 1; count++) {
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
-		io_len = (rand() % g_max_io_size) + 1;
-		bdev_io_initialize(bdev_io, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
-		lba += io_len;
+		io_len = (rand() % g_strip_size) + 1;
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
+		lba += g_strip_size;
 		memset(g_io_output, 0, (g_max_io_size / g_strip_size) + 1 * sizeof(struct io_output));
 		g_io_output_index = 0;
 		raid_bdev_submit_request(ch, bdev_io);
-		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, &pbdev_ctxt->raid_bdev,
+		verify_io(bdev_io, req.base_bdevs.num_base_bdevs, ch_ctx, pbdev,
 			  g_child_io_status_flag);
 		bdev_io_cleanup(bdev_io);
 		free(bdev_io);
 	}
 
-	raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-	CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+	raid_bdev_destroy_cb(pbdev, ch_ctx);
+	CU_ASSERT(ch_ctx->base_channel == NULL);
 	free(ch);
 	destroy_req.name = strdup("raid1");
 	rpc_req = &destroy_req;
@@ -1602,7 +1629,6 @@ test_io_waitq(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct spdk_io_channel *ch;
 	struct raid_bdev_io_channel *ch_ctx;
 	uint32_t i;
@@ -1626,23 +1652,21 @@ test_io_waitq(void)
 	CU_ASSERT(g_rpc_err == 0);
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	SPDK_CU_ASSERT_FATAL(pbdev_ctxt != NULL);
+	SPDK_CU_ASSERT_FATAL(pbdev != NULL);
 	ch = calloc(1, sizeof(struct spdk_io_channel) + sizeof(struct raid_bdev_io_channel));
 	SPDK_CU_ASSERT_FATAL(ch != NULL);
 	ch_ctx = spdk_io_channel_get_ctx(ch);
 	SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
 
-	CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
-	SPDK_CU_ASSERT_FATAL(ch_ctx->base_bdevs_io_channel != NULL);
+	CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
+	SPDK_CU_ASSERT_FATAL(ch_ctx->base_channel != NULL);
 	for (i = 0; i < req.base_bdevs.num_base_bdevs; i++) {
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel[i] == (void *)0x1);
+		CU_ASSERT(ch_ctx->base_channel[i] == (void *)0x1);
 	}
 	free_test_req(&req);
 
@@ -1652,10 +1676,10 @@ test_io_waitq(void)
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
 		TAILQ_INSERT_TAIL(&head_io, bdev_io, module_link);
-		io_len = (rand() % g_max_io_size) + 1;
-		bdev_io_initialize(bdev_io, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
+		io_len = (rand() % g_strip_size) + 1;
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
 		g_bdev_io_submit_status = -ENOMEM;
-		lba += io_len;
+		lba += g_strip_size;
 		raid_bdev_submit_request(ch, bdev_io);
 	}
 
@@ -1672,9 +1696,8 @@ test_io_waitq(void)
 		free(bdev_io);
 	}
 
-	raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-	CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-	CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+	raid_bdev_destroy_cb(pbdev, ch_ctx);
+	CU_ASSERT(ch_ctx->base_channel == NULL);
 	g_ignore_io_output = 0;
 	free(ch);
 	destroy_req.name = strdup("raid1");
@@ -1837,7 +1860,6 @@ test_multi_raid_with_io(void)
 	uint32_t count;
 	uint32_t bbdev_idx = 0;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 	struct spdk_io_channel *ch;
 	struct raid_bdev_io_channel *ch_ctx;
 	struct spdk_bdev_io *bdev_io;
@@ -1869,20 +1891,18 @@ test_multi_raid_with_io(void)
 		CU_ASSERT(g_rpc_err == 0);
 		verify_raid_config(&construct_req[i], true);
 		verify_raid_bdev(&construct_req[i], true, RAID_BDEV_STATE_ONLINE);
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, construct_req[i].name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+			if (strcmp(pbdev->bdev.name, construct_req[i].name) == 0) {
 				break;
 			}
 		}
-		CU_ASSERT(pbdev_ctxt != NULL);
+		CU_ASSERT(pbdev != NULL);
 		ch_ctx = spdk_io_channel_get_ctx(&ch[i]);
 		SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
-		CU_ASSERT(raid_bdev_create_cb(&pbdev_ctxt->raid_bdev, ch_ctx) == 0);
-		CU_ASSERT(ch_ctx->raid_bdev_ctxt == pbdev_ctxt);
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel != NULL);
+		CU_ASSERT(raid_bdev_create_cb(pbdev, ch_ctx) == 0);
+		CU_ASSERT(ch_ctx->base_channel != NULL);
 		for (j = 0; j < construct_req[i].base_bdevs.num_base_bdevs; j++) {
-			CU_ASSERT(ch_ctx->base_bdevs_io_channel[j] == (void *)0x1);
+			CU_ASSERT(ch_ctx->base_channel[j] == (void *)0x1);
 		}
 	}
 
@@ -1890,42 +1910,39 @@ test_multi_raid_with_io(void)
 	for (count = 0; count < g_max_qd; count++) {
 		bdev_io = calloc(1, sizeof(struct spdk_bdev_io) + sizeof(struct raid_bdev_io));
 		SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
-		io_len = (rand() % g_max_io_size) + 1;
+		io_len = (rand() % g_strip_size) + 1;
 		iotype = (rand() % 2) ? SPDK_BDEV_IO_TYPE_WRITE : SPDK_BDEV_IO_TYPE_READ;
-		bdev_io_initialize(bdev_io, lba, io_len, iotype);
-		lba += io_len;
 		memset(g_io_output, 0, (g_max_io_size / g_strip_size) + 1 * sizeof(struct io_output));
 		g_io_output_index = 0;
 		raid_random = rand() % g_max_raids;
 		ch_random = &ch[raid_random];
 		ch_ctx_random = spdk_io_channel_get_ctx(ch_random);
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, construct_req[raid_random].name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+			if (strcmp(pbdev->bdev.name, construct_req[raid_random].name) == 0) {
 				break;
 			}
 		}
-		CU_ASSERT(pbdev_ctxt != NULL);
+		bdev_io_initialize(bdev_io, &pbdev->bdev, lba, io_len, iotype);
+		lba += g_strip_size;
+		CU_ASSERT(pbdev != NULL);
 		raid_bdev_submit_request(ch_random, bdev_io);
-		verify_io(bdev_io, g_max_base_drives, ch_ctx_random, &pbdev_ctxt->raid_bdev,
+		verify_io(bdev_io, g_max_base_drives, ch_ctx_random, pbdev,
 			  g_child_io_status_flag);
 		bdev_io_cleanup(bdev_io);
 		free(bdev_io);
 	}
 
 	for (i = 0; i < g_max_raids; i++) {
-		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-			pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-			if (strcmp(pbdev_ctxt->bdev.name, construct_req[i].name) == 0) {
+		TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+			if (strcmp(pbdev->bdev.name, construct_req[i].name) == 0) {
 				break;
 			}
 		}
-		CU_ASSERT(pbdev_ctxt != NULL);
+		CU_ASSERT(pbdev != NULL);
 		ch_ctx = spdk_io_channel_get_ctx(&ch[i]);
 		SPDK_CU_ASSERT_FATAL(ch_ctx != NULL);
-		raid_bdev_destroy_cb(&pbdev_ctxt->raid_bdev, ch_ctx);
-		CU_ASSERT(ch_ctx->raid_bdev_ctxt == NULL);
-		CU_ASSERT(ch_ctx->base_bdevs_io_channel == NULL);
+		raid_bdev_destroy_cb(pbdev, ch_ctx);
+		CU_ASSERT(ch_ctx->base_channel == NULL);
 		destroy_req.name = strdup(construct_req[i].name);
 		count = snprintf(name, 16, "%s", destroy_req.name);
 		name[count] = '\0';
@@ -1963,6 +1980,9 @@ test_create_raid_from_config(void)
 	struct rpc_construct_raid_bdev req;
 	struct spdk_bdev *bdev;
 	struct rpc_destroy_raid_bdev destroy_req;
+	bool can_claim;
+	struct raid_bdev_config *raid_cfg;
+	uint32_t base_bdev_slot;
 
 	set_globals();
 	create_test_req(&req, "raid1", 0, true);
@@ -1973,19 +1993,14 @@ test_create_raid_from_config(void)
 	g_config_level_create = 0;
 
 	verify_raid_config_present("raid1", true);
-	verify_raid_bdev_present("raid1", false);
+	verify_raid_bdev_present("raid1", true);
 
 	TAILQ_FOREACH(bdev, &g_bdev_list, internal.link) {
 		raid_bdev_examine(bdev);
 	}
 
-	bdev = calloc(1, sizeof(struct spdk_bdev));
-	SPDK_CU_ASSERT_FATAL(bdev != NULL);
-	bdev->name = strdup("Invalid");
-	SPDK_CU_ASSERT_FATAL(bdev->name != NULL);
-	CU_ASSERT(raid_bdev_add_base_device(bdev) != 0);
-	free(bdev->name);
-	free(bdev);
+	can_claim = raid_bdev_can_claim_bdev("Invalid", &raid_cfg, &base_bdev_slot);
+	CU_ASSERT(can_claim == false);
 
 	verify_raid_config(&req, true);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
@@ -2083,7 +2098,6 @@ test_raid_json_dump_info(void)
 	struct rpc_construct_raid_bdev req;
 	struct rpc_destroy_raid_bdev destroy_req;
 	struct raid_bdev *pbdev;
-	struct raid_bdev_ctxt *pbdev_ctxt = NULL;
 
 	set_globals();
 	create_test_req(&req, "raid1", 0, true);
@@ -2099,15 +2113,14 @@ test_raid_json_dump_info(void)
 	CU_ASSERT(g_rpc_err == 0);
 	verify_raid_bdev(&req, true, RAID_BDEV_STATE_ONLINE);
 
-	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, link_global_list) {
-		pbdev_ctxt = SPDK_CONTAINEROF(pbdev, struct raid_bdev_ctxt, raid_bdev);
-		if (strcmp(pbdev_ctxt->bdev.name, req.name) == 0) {
+	TAILQ_FOREACH(pbdev, &g_spdk_raid_bdev_list, global_link) {
+		if (strcmp(pbdev->bdev.name, req.name) == 0) {
 			break;
 		}
 	}
-	CU_ASSERT(pbdev_ctxt != NULL);
+	CU_ASSERT(pbdev != NULL);
 
-	CU_ASSERT(raid_bdev_dump_info_json(pbdev_ctxt, NULL) == 0);
+	CU_ASSERT(raid_bdev_dump_info_json(pbdev, NULL) == 0);
 
 	free_test_req(&req);
 

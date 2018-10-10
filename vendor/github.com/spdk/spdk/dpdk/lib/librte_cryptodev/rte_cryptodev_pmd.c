@@ -66,13 +66,6 @@ rte_cryptodev_pmd_parse_input_args(
 			goto free_kvlist;
 
 		ret = rte_kvargs_process(kvlist,
-				RTE_CRYPTODEV_PMD_MAX_NB_SESS_ARG,
-				&rte_cryptodev_pmd_parse_uint_arg,
-				&params->max_nb_sessions);
-		if (ret < 0)
-			goto free_kvlist;
-
-		ret = rte_kvargs_process(kvlist,
 				RTE_CRYPTODEV_PMD_SOCKET_ID_ARG,
 				&rte_cryptodev_pmd_parse_uint_arg,
 				&params->socket_id);
@@ -109,10 +102,9 @@ rte_cryptodev_pmd_create(const char *name,
 			device->driver->name, name);
 
 	CDEV_LOG_INFO("[%s] - Initialisation parameters - name: %s,"
-			"socket id: %d, max queue pairs: %u, max sessions: %u",
+			"socket id: %d, max queue pairs: %u",
 			device->driver->name, name,
-			params->socket_id, params->max_nb_queue_pairs,
-			params->max_nb_sessions);
+			params->socket_id, params->max_nb_queue_pairs);
 
 	/* allocate device structure */
 	cryptodev = rte_cryptodev_pmd_allocate(name, params->socket_id);
@@ -123,7 +115,7 @@ rte_cryptodev_pmd_create(const char *name,
 	}
 
 	/* allocate private device structure */
-	if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
+	if (cryptodev->data->dev_private == NULL) {
 		cryptodev->data->dev_private =
 				rte_zmalloc_socket("cryptodev device private",
 						params->private_data_size,
@@ -162,8 +154,8 @@ rte_cryptodev_pmd_destroy(struct rte_cryptodev *cryptodev)
 	if (retval)
 		return retval;
 
-	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
-		rte_free(cryptodev->data->dev_private);
+	rte_free(cryptodev->data->dev_private);
+	cryptodev->data->dev_private = NULL;
 
 
 	cryptodev->device = NULL;

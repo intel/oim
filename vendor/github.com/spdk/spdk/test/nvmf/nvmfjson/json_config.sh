@@ -13,17 +13,17 @@ function test_subsystems() {
 
 	$rpc_py start_subsystem_init
 	create_nvmf_subsystem_config
-	$rpc_py save_config -f $base_nvmf_config
+	$rpc_py save_config > $base_nvmf_config
 	test_json_config
 
 	clear_nvmf_subsystem_config
 	kill_targets
 
 	run_spdk_tgt
-	$rpc_py load_config -f $base_nvmf_config
-	$rpc_py save_config -f $last_nvmf_config
+	$rpc_py load_config < $base_nvmf_config
+	$rpc_py save_config > $last_nvmf_config
 
-	diff $base_nvmf_config $last_nvmf_config
+	json_diff $base_nvmf_config $last_nvmf_config
 
 	clear_nvmf_subsystem_config
 	kill_targets
@@ -35,5 +35,6 @@ trap 'on_error_exit "${FUNCNAME}" "${LINENO}"; rm -f $base_nvmf_config $last_nvm
 timing_enter nvmf_json_config
 test_subsystems
 timing_exit nvmf_json_config
+revert_soft_roce
 
 report_test_completion nvmf_json_config

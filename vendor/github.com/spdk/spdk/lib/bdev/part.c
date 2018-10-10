@@ -37,6 +37,7 @@
 
 #include "spdk/bdev.h"
 #include "spdk/log.h"
+#include "spdk/string.h"
 
 #include "spdk/bdev_module.h"
 
@@ -114,6 +115,7 @@ spdk_bdev_part_free_cb(void *io_device)
 
 	spdk_bdev_destruct_done(&part->internal.bdev, 0);
 	free(part->internal.bdev.name);
+	free(part->internal.bdev.product_name);
 	free(part);
 }
 
@@ -144,7 +146,8 @@ spdk_bdev_part_io_type_supported(void *_part, enum spdk_bdev_io_type io_type)
 {
 	struct spdk_bdev_part *part = _part;
 
-	return part->internal.base->bdev->fn_table->io_type_supported(part->internal.base->bdev, io_type);
+	return part->internal.base->bdev->fn_table->io_type_supported(part->internal.base->bdev->ctxt,
+			io_type);
 }
 
 static struct spdk_io_channel *
@@ -189,7 +192,7 @@ spdk_bdev_part_complete_io(struct spdk_bdev_io *bdev_io, bool success, void *cb_
 	spdk_bdev_free_io(bdev_io);
 }
 
-void
+int
 spdk_bdev_part_submit_request(struct spdk_bdev_part_channel *ch, struct spdk_bdev_io *bdev_io)
 {
 	struct spdk_bdev_part *part = ch->part;
@@ -235,14 +238,12 @@ spdk_bdev_part_submit_request(struct spdk_bdev_part_channel *ch, struct spdk_bde
 		break;
 	default:
 		SPDK_ERRLOG("split: unknown I/O type %d\n", bdev_io->type);
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
-		return;
+		return SPDK_BDEV_IO_STATUS_FAILED;
 	}
 
-	if (rc != 0) {
-		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
-	}
+	return rc;
 }
+
 static int
 spdk_bdev_part_channel_create_cb(void *io_device, void *ctx_buf)
 {
@@ -321,17 +322,28 @@ spdk_bdev_part_construct(struct spdk_bdev_part *part, struct spdk_bdev_part_base
 			 char *name, uint64_t offset_blocks, uint64_t num_blocks,
 			 char *product_name)
 {
-	part->internal.bdev.name = name;
 	part->internal.bdev.blocklen = base->bdev->blocklen;
 	part->internal.bdev.blockcnt = num_blocks;
 	part->internal.offset_blocks = offset_blocks;
 
 	part->internal.bdev.write_cache = base->bdev->write_cache;
 	part->internal.bdev.need_aligned_buffer = base->bdev->need_aligned_buffer;
-	part->internal.bdev.product_name = product_name;
 	part->internal.bdev.ctxt = part;
 	part->internal.bdev.module = base->module;
 	part->internal.bdev.fn_table = base->fn_table;
+
+	part->internal.bdev.name = strdup(name);
+	part->internal.bdev.product_name = strdup(product_name);
+
+	if (part->internal.bdev.name == NULL) {
+		SPDK_ERRLOG("Failed to allocate name for new part of bdev %s\n", spdk_bdev_get_name(base->bdev));
+		return -1;
+	} else if (part->internal.bdev.product_name == NULL) {
+		free(part->internal.bdev.name);
+		SPDK_ERRLOG("Failed to allocate product name for new part of bdev %s\n",
+			    spdk_bdev_get_name(base->bdev));
+		return -1;
+	}
 
 	__sync_fetch_and_add(&base->ref, 1);
 	part->internal.base = base;
@@ -343,6 +355,7 @@ spdk_bdev_part_construct(struct spdk_bdev_part *part, struct spdk_bdev_part_base
 		if (rc) {
 			SPDK_ERRLOG("could not claim bdev %s\n", spdk_bdev_get_name(base->bdev));
 			free(part->internal.bdev.name);
+			free(part->internal.bdev.product_name);
 			return -1;
 		}
 		base->claimed = true;
@@ -350,7 +363,9 @@ spdk_bdev_part_construct(struct spdk_bdev_part *part, struct spdk_bdev_part_base
 
 	spdk_io_device_register(part, spdk_bdev_part_channel_create_cb,
 				spdk_bdev_part_channel_destroy_cb,
-				base->channel_size);
+				base->channel_size,
+				name);
+
 	spdk_vbdev_register(&part->internal.bdev, &base->bdev, 1);
 	TAILQ_INSERT_TAIL(base->tailq, part, tailq);
 

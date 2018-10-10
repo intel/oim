@@ -600,12 +600,13 @@
   version = "v1.2.0"
 
 [[projects]]
-  branch = "master"
-  digest = "1:c381d3f978ce7422293fa9f6484555536d6cb6733c798908551fb6c20c30cd75"
+  branch = "rbd"
+  digest = "1:e59b43038786cbe9aaefb3be7bd2d6eaf9f023fd971d8cd70a75b587e7222bf2"
   name = "github.com/spdk/spdk"
   packages = ["go"]
   pruneopts = ""
-  revision = "120c4f3c05a7dae7000dd70134fb8af21bb56336"
+  revision = "0372b37b798a656c5b6665ee5c6caf2149095d66"
+  source = "github.com/pohly/spdk"
 
 [[projects]]
   digest = "1:645cabccbb4fa8aab25a956cbcbdf6a6845ca736b2c64e197ca7cbb9d210b939"

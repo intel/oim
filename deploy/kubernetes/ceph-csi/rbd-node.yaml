@@ -1,0 +1,131 @@
+# Based on https://github.com/ceph/ceph-csi/blob/master/deploy/rbd/kubernetes/csi-rbdplugin.yaml,
+# changed so that it uses "oim-rbd" as driver name.
+
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: oim-ceph-rbd
+spec:
+  selector:
+    matchLabels:
+      app: oim-ceph-rbd
+  template:
+    metadata:
+      labels:
+        app: oim-ceph-rbd
+    spec:
+      serviceAccountName: oim-rbd-node-sa
+      hostNetwork: true
+      hostPID: true
+      # to use e.g. Rook orchestrated cluster, and mons' FQDN is
+      # resolved through k8s service, set dns policy to cluster first
+      dnsPolicy: ClusterFirstWithHostNet
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: intel.com/oim
+                  # Not set, or not set to 1.
+                  operator: NotIn
+                  values:
+                    - "1"
+      containers:
+        - name: rbdplugin
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          # https://github.com/ceph/ceph-csi/pull/92
+          #image: quay.io/cephcsi/rbdplugin:v0.3.0
+          image: 192.168.7.1:5000/rbdplugin:canary
+          args :
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--v=5"
+            - "--drivername=oim-rbd"
+            - "--containerized=true"
+          env:
+            - name: HOST_ROOTFS
+              value: "/rootfs"
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix://var/lib/kubelet/plugins/oim-rbd/csi.sock
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /var/lib/kubelet/plugins/oim-rbd
+            - name: controller-dir
+              # This name is hard-coded in the source and independent of --drivername.
+              # Probably should use --drivername, but it doesn't matter and we want
+              # to get rid of it entirely anyway - see below.
+              mountPath: /var/lib/kubelet/plugins/csi-rbdplugin/controller
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: "Bidirectional"
+            - mountPath: /dev
+              name: host-dev
+            - mountPath: /rootfs
+              name: host-rootfs
+            - mountPath: /sys
+              name: host-sys
+            - mountPath: /lib/modules
+              name: lib-modules
+              readOnly: true
+        - name: driver-registrar
+          image: quay.io/k8scsi/driver-registrar:v0.3.0
+          args:
+            - "--v=5"
+            - "--csi-address=$(ADDRESS)"
+          env:
+            - name: ADDRESS
+              value: /var/lib/kubelet/plugins/oim-rbd/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/oim-rbd/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /var/lib/kubelet/plugins/oim-rbd
+            - name: registration-dir
+              mountPath: /registration
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd
+            type: DirectoryOrCreate
+        # We need to get rid of this directory, ceph-rbd should not store data locally (https://github.com/ceph/ceph-csi/issues/66).
+        - name: controller-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd/controller
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd
+            type: DirectoryOrCreate
+        - name: host-dev
+          hostPath:
+            path: /dev
+        - name: host-rootfs
+          hostPath:
+            path: /
+        - name: host-sys
+          hostPath:
+            path: /sys
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules

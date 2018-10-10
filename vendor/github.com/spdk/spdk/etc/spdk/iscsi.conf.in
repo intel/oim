@@ -14,11 +14,6 @@
   # Default: <the process PID>
   #SharedMemoryID 0
 
-  # Users can restrict work items to only run on certain cores by
-  #  specifying a ReactorMask.  Default is to allow work items to run
-  #  on core 0.
-  #ReactorMask 0xFFFF
-
   # Disable PCI access. PCI is enabled by default. Setting this
   # option will hide any PCI device from all SPDK modules, making
   # SPDK act as if they don't exist.
@@ -26,7 +21,7 @@
 
   # Tracepoint group mask for spdk trace buffers
   # Default: 0x0 (all tracepoint groups disabled)
-  # Set to 0xFFFFFFFFFFFFFFFF to enable all tracepoint groups.
+  # Set to 0xFFFF to enable all tracepoint groups.
   #TpointGroupMask 0x0
 
 # Users may activate entries in this section to override default values for
@@ -62,6 +57,11 @@
   # NOTE: incorrect values might crash
   DefaultTime2Wait 2
   DefaultTime2Retain 60
+
+  # Maximum amount in bytes of unsolicited data the iSCSI
+  # initiator may send to the target during the execution of
+  # a single SCSI command.
+  FirstBurstLength 8192
 
   ImmediateData Yes
   ErrorRecoveryLevel 0

@@ -124,12 +124,19 @@ message MapVolumeRequest {
 message MallocParams {
 }
 
-// Defines a Ceph block device. This is currently a placeholder
-// to demonstrate how MapVolumeRequest.params will work.
+// Defines a Ceph block device.
 message CephParams {
-    string secret = 1;
-    // TODO: real ceph parameters
-    // TODO: do not log secret in debug output
+    // The user id (like "admin", but not "client.admin").
+    // Can be left out, the default in Ceph is "admin".
+    string user_id = 1;
+    // The "key" value from a Ceph keyring for the user.
+    string secret = 2;
+    // Comma-separated list of addr:port values.
+    string monitors = 3;
+    // Pool name
+    string pool = 4;
+    // Image name
+    string image = 5;
 }
 
 // The reply tells the caller enough about the mapped volume

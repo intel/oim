@@ -151,6 +151,7 @@ struct spdk_io_channel {
 	struct spdk_thread		*thread;
 	struct io_device		*dev;
 	uint32_t			ref;
+	uint32_t			destroy_ref;
 	TAILQ_ENTRY(spdk_io_channel)	tailq;
 	spdk_io_channel_destroy_cb	destroy_cb;
 
@@ -161,6 +162,18 @@ struct spdk_io_channel {
 	 *  virtual bdevs).
 	 */
 };
+
+/**
+ * Initialize the threading library. Must be called once prior to allocating any threads.
+ *
+ * \return 0 on success. Negated errno on failure.
+ */
+int spdk_thread_lib_init(void);
+
+/**
+ * Release all resources associated with this library.
+ */
+void spdk_thread_lib_fini(void);
 
 /**
  * Initializes the calling thread for I/O channel allocation.
@@ -279,9 +292,12 @@ void spdk_poller_unregister(struct spdk_poller **ppoller);
  * I/O channel.
  * \param ctx_size The size of the context buffer allocated to store references
  * to allocated I/O channel resources.
+ * \param name A string name for the device used only for debugging. Optional -
+ * may be NULL.
  */
 void spdk_io_device_register(void *io_device, spdk_io_channel_create_cb create_cb,
-			     spdk_io_channel_destroy_cb destroy_cb, uint32_t ctx_size);
+			     spdk_io_channel_destroy_cb destroy_cb, uint32_t ctx_size,
+			     const char *name);
 
 /**
  * Unregister the opaque io_device context as an I/O device.

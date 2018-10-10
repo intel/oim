@@ -61,6 +61,7 @@ struct spdk_nvmf_host;
 struct spdk_nvmf_listener;
 struct spdk_nvmf_poll_group;
 struct spdk_json_write_ctx;
+struct spdk_nvmf_transport;
 
 struct spdk_nvmf_tgt_opts {
 	uint16_t max_queue_depth;
@@ -70,6 +71,16 @@ struct spdk_nvmf_tgt_opts {
 	uint32_t max_subsystems;
 	uint32_t io_unit_size;
 };
+
+struct spdk_nvmf_transport_opts {
+	uint16_t max_queue_depth;
+	uint16_t max_qpairs_per_ctrlr;
+	uint32_t in_capsule_data_size;
+	uint32_t max_io_size;
+	uint32_t io_unit_size;
+	uint32_t max_aq_depth;
+};
+
 /**
  * Initialize the default value of opts.
  *
@@ -180,17 +191,6 @@ void spdk_nvmf_poll_group_destroy(struct spdk_nvmf_poll_group *group);
 int spdk_nvmf_poll_group_add(struct spdk_nvmf_poll_group *group,
 			     struct spdk_nvmf_qpair *qpair);
 
-/**
- * Remove the given qpair from the poll group.
- *
- * \param group The group to delete qpair from.
- * \param qpair The qpair to remove.
- *
- * \return 0 on success, -1 on failure.
- */
-int spdk_nvmf_poll_group_remove(struct spdk_nvmf_poll_group *group,
-				struct spdk_nvmf_qpair *qpair);
-
 typedef void (*nvmf_qpair_disconnect_cb)(void *ctx);
 
 /**
@@ -205,6 +205,42 @@ typedef void (*nvmf_qpair_disconnect_cb)(void *ctx);
  */
 int spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_cb cb_fn,
 			       void *ctx);
+
+/**
+ * Get the peer's transport ID for this queue pair.
+ *
+ * \param qpair The NVMe-oF qpair
+ * \param trid Output parameter that will contain the transport id.
+ *
+ * \return 0 for success.
+ * \return -EINVAL if the qpair is not connected.
+ */
+int spdk_nvmf_qpair_get_peer_trid(struct spdk_nvmf_qpair *qpair,
+				  struct spdk_nvme_transport_id *trid);
+
+/**
+ * Get the local transport ID for this queue pair.
+ *
+ * \param qpair The NVMe-oF qpair
+ * \param trid Output parameter that will contain the transport id.
+ *
+ * \return 0 for success.
+ * \return -EINVAL if the qpair is not connected.
+ */
+int spdk_nvmf_qpair_get_local_trid(struct spdk_nvmf_qpair *qpair,
+				   struct spdk_nvme_transport_id *trid);
+
+/**
+ * Get the associated listener transport ID for this queue pair.
+ *
+ * \param qpair The NVMe-oF qpair
+ * \param trid Output parameter that will contain the transport id.
+ *
+ * \return 0 for success.
+ * \return -EINVAL if the qpair is not connected.
+ */
+int spdk_nvmf_qpair_get_listen_trid(struct spdk_nvmf_qpair *qpair,
+				    struct spdk_nvme_transport_id *trid);
 
 /**
  * Create an NVMe-oF subsystem.
@@ -666,6 +702,95 @@ const char *spdk_nvmf_subsystem_get_nqn(struct spdk_nvmf_subsystem *subsystem);
  * \return the type of the specified subsystem.
  */
 enum spdk_nvmf_subtype spdk_nvmf_subsystem_get_type(struct spdk_nvmf_subsystem *subsystem);
+
+/**
+ * Initialize transport options
+ *
+ * \param type The transport type to create
+ * \param opts The transport options (e.g. max_io_size)
+ *
+ * \return bool. true if successful, false if transport type
+ *	   not found.
+ */
+bool
+spdk_nvmf_transport_opts_init(enum spdk_nvme_transport_type type,
+			      struct spdk_nvmf_transport_opts *opts);
+
+/**
+ * Create a protocol transport
+ *
+ * \param type The transport type to create
+ * \param opts The transport options (e.g. max_io_size)
+ *
+ * \return new transport or NULL if create fails
+ */
+struct spdk_nvmf_transport *spdk_nvmf_transport_create(enum spdk_nvme_transport_type type,
+		struct spdk_nvmf_transport_opts *opts);
+
+/**
+ * Destroy a protocol transport
+ *
+ * \param transport The transport to destory
+ *
+ * \return 0 on success, -1 on failure.
+ */
+int spdk_nvmf_transport_destroy(struct spdk_nvmf_transport *transport);
+
+/**
+ * Get an existing transport from the target
+ *
+ * \param tgt The NVMe-oF target
+ * \param type The transport type to get
+ *
+ * \return the transport or NULL if not found
+ */
+struct spdk_nvmf_transport *spdk_nvmf_tgt_get_transport(struct spdk_nvmf_tgt *tgt,
+		enum spdk_nvme_transport_type type);
+
+/**
+ * Function to be called once transport add is complete
+ *
+ * \param cb_arg Callback argument passed to this function.
+ * \param status 0 if it completed successfully, or negative errno if it failed.
+ */
+typedef void (*spdk_nvmf_tgt_add_transport_done_fn)(void *cb_arg, int status);
+
+/**
+ * Add a transport to a target
+ *
+ * \param tgt The NVMe-oF target
+ * \param transport The transport to add
+ * \param cb_fn A callback that will be called once the transport is created
+ * \param cb_arg A context argument passed to cb_fn.
+ *
+ * \return void. The callback status argument will be 0 on success
+ *	   or a negated errno on failure.
+ */
+void spdk_nvmf_tgt_add_transport(struct spdk_nvmf_tgt *tgt,
+				 struct spdk_nvmf_transport *transport,
+				 spdk_nvmf_tgt_add_transport_done_fn cb_fn,
+				 void *cb_arg);
+
+/**
+ *
+ * Add listener to transport and begin accepting new connections.
+ *
+ * \param transport The transport to add listener to
+ * \param trid Address to listen at
+ *
+ * \return int. 0 if it completed successfully, or negative errno if it failed.
+ */
+
+int spdk_nvmf_transport_listen(struct spdk_nvmf_transport *transport,
+			       const struct spdk_nvme_transport_id *trid);
+
+/**
+ * Write NVMe-oF target's transport configurations into provided JSON context.
+ * \param w JSON write context
+ * \param tgt The NVMe-oF target
+ */
+void
+spdk_nvmf_tgt_transport_write_config_json(struct spdk_json_write_ctx *w, struct spdk_nvmf_tgt *tgt);
 
 #ifdef __cplusplus
 }

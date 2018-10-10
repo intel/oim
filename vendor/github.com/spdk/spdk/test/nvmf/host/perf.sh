@@ -8,7 +8,7 @@ source $rootdir/test/nvmf/common.sh
 MALLOC_BDEV_SIZE=64
 MALLOC_BLOCK_SIZE=512
 
-rpc_py="python $rootdir/scripts/rpc.py"
+rpc_py="$rootdir/scripts/rpc.py"
 
 set -e
 
@@ -22,14 +22,13 @@ fi
 timing_enter perf
 timing_enter start_nvmf_tgt
 
-$NVMF_APP -m 0xF -w -i 0 &
+$NVMF_APP -m 0xF -i 0 &
 nvmfpid=$!
 
-trap "killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
+trap "process_shm --id $NVMF_APP_SHM_ID; killprocess $nvmfpid; exit 1" SIGINT SIGTERM EXIT
 
 waitforlisten $nvmfpid
-$rpc_py set_nvmf_target_options -u 8192 -p 4
-$rpc_py start_subsystem_init
+$rpc_py nvmf_create_transport -t RDMA -u 8192 -p 4
 $rootdir/scripts/gen_nvme.sh --json | $rpc_py load_subsystem_config
 timing_exit start_nvmf_tgt
 
@@ -40,14 +39,18 @@ if [ -n "$local_nvme_trid" ]; then
 	bdevs="$bdevs Nvme0n1"
 fi
 
-$rpc_py construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode1 "trtype:RDMA traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420" '' -a -s SPDK00000000000001 -n "$bdevs"
+$rpc_py nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
+for bdev in $bdevs; do
+	$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 $bdev
+done
+$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t rdma -a $NVMF_FIRST_TARGET_IP -s 4420
 
 # Test multi-process access to local NVMe device
 if [ -n "$local_nvme_trid" ]; then
-	$rootdir/examples/nvme/perf/perf -i 0 -q 32 -s 4096 -w randrw -M 50 -t 1 -r "$local_nvme_trid"
+	$rootdir/examples/nvme/perf/perf -i 0 -q 32 -o 4096 -w randrw -M 50 -t 1 -r "$local_nvme_trid"
 fi
 
-$rootdir/examples/nvme/perf/perf -q 32 -s 4096 -w randrw -M 50 -t 1 -r "trtype:RDMA adrfam:IPv4 traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420"
+$rootdir/examples/nvme/perf/perf -q 32 -o 4096 -w randrw -M 50 -t 1 -r "trtype:RDMA adrfam:IPv4 traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420"
 sync
 $rpc_py delete_nvmf_subsystem nqn.2016-06.io.spdk:cnode1
 
@@ -57,25 +60,27 @@ if [ $RUN_NIGHTLY -eq 1 ]; then
 		ls_guid=$($rpc_py construct_lvol_store Nvme0n1 lvs_0)
 		get_lvs_free_mb $ls_guid
 		lb_guid=$($rpc_py construct_lvol_bdev -u $ls_guid lbd_0 $free_mb)
-		$rpc_py construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode1 "trtype:RDMA traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420" "" -a -s SPDK00000000000001 -n "$lb_guid"
+
 		# Create lvol bdev for nested lvol stores
 		ls_nested_guid=$($rpc_py construct_lvol_store $lb_guid lvs_n_0)
 		get_lvs_free_mb $ls_nested_guid
 		lb_nested_guid=$($rpc_py construct_lvol_bdev -u $ls_nested_guid lbd_nest_0 $free_mb)
-		$rpc_py construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode2 "trtype:RDMA traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420" "" -a -s SPDK00000000000002 -n "$lb_nested_guid"
-
+		$rpc_py nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
+		for bdev in $lb_nested_guid; do
+			$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 $bdev
+		done
+		$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t rdma -a $NVMF_FIRST_TARGET_IP -s 4420
 		# Test perf as host with different io_size and qd_depth in nightly
 		qd_depth=("1" "128")
 		io_size=("512" "131072")
 		for qd in ${qd_depth[@]}; do
-			for s in ${io_size[@]}; do
-				$rootdir/examples/nvme/perf/perf -q $qd -s $s -w randrw -M 50 -t 10 -r "trtype:RDMA adrfam:IPv4 traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420"
+			for o in ${io_size[@]}; do
+				$rootdir/examples/nvme/perf/perf -q $qd -o $o -w randrw -M 50 -t 10 -r "trtype:RDMA adrfam:IPv4 traddr:$NVMF_FIRST_TARGET_IP trsvcid:4420"
 			done
 		done
 
 		# Delete subsystems, lvol_bdev and destroy lvol_store.
 		$rpc_py delete_nvmf_subsystem nqn.2016-06.io.spdk:cnode1
-		$rpc_py delete_nvmf_subsystem nqn.2016-06.io.spdk:cnode2
 		$rpc_py destroy_lvol_bdev "$lb_nested_guid"
 		$rpc_py destroy_lvol_store -l lvs_n_0
 		$rpc_py destroy_lvol_bdev "$lb_guid"

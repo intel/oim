@@ -7,10 +7,15 @@ source $rootdir/test/iscsi_tgt/common.sh
 
 function check_qos_works_well() {
 	local enable_limit=$1
-	local iops_limit=$2/1000
+	local iops_limit=$2
 	local retval=0
-	local read_iops=$($fio_py 8192 64 randread 5 | grep "\(read: IOPS=\|write: IOPS=\)" \
-		| awk -F, '{print $1}' | awk -F= '{print $2}' | tr -d [k])
+
+	start_io_count=$($rpc_py get_bdevs_iostat -b $3 | jq -r '.[1].num_read_ops')
+	$fio_py 512 64 randread 5
+	end_io_count=$($rpc_py get_bdevs_iostat -b $3 | jq -r '.[1].num_read_ops')
+
+	read_iops=$(((end_io_count-start_io_count)/5))
+
 	if [ $enable_limit = true ]; then
 		retval=$(echo "$iops_limit*0.9 < $read_iops && $read_iops < $iops_limit*1.01" | bc)
 		if [ $retval -eq 0 ]; then
@@ -39,10 +44,10 @@ fi
 timing_enter qos
 
 MALLOC_BDEV_SIZE=64
-MALLOC_BLOCK_SIZE=4096
+MALLOC_BLOCK_SIZE=512
 IOPS_LIMIT=20000
-rpc_py="python $rootdir/scripts/rpc.py"
-fio_py="python $rootdir/scripts/fio.py"
+rpc_py="$rootdir/scripts/rpc.py"
+fio_py="$rootdir/scripts/fio.py"
 
 timing_enter start_iscsi_tgt
 
@@ -71,16 +76,16 @@ iscsiadm -m node --login -p $TARGET_IP:$ISCSI_PORT
 trap "iscsicleanup; killprocess $pid; exit 1" SIGINT SIGTERM EXIT
 
 # Limit the I/O rate by RPC, then confirm the observed rate matches.
-$rpc_py set_bdev_qos_limit_iops Malloc0 $IOPS_LIMIT
-check_qos_works_well true $IOPS_LIMIT
+$rpc_py set_bdev_qos_limit Malloc0 --rw_ios_per_sec $IOPS_LIMIT
+check_qos_works_well true $IOPS_LIMIT Malloc0
 
 # Now disable the rate limiting, and confirm the observed rate is not limited anymore.
-$rpc_py set_bdev_qos_limit_iops Malloc0 0
-check_qos_works_well false $IOPS_LIMIT
+$rpc_py set_bdev_qos_limit Malloc0 --rw_ios_per_sec 0
+check_qos_works_well false $IOPS_LIMIT Malloc0
 
 # Limit the I/O rate again.
-$rpc_py set_bdev_qos_limit_iops Malloc0 $IOPS_LIMIT
-check_qos_works_well true $IOPS_LIMIT
+$rpc_py set_bdev_qos_limit Malloc0 --rw_ios_per_sec $IOPS_LIMIT
+check_qos_works_well true $IOPS_LIMIT Malloc0
 echo "I/O rate limiting tests successful"
 
 iscsicleanup

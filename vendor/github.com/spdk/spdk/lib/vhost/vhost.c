@@ -267,7 +267,8 @@ check_dev_io_stats(struct spdk_vhost_dev *vdev, uint64_t now)
 	struct spdk_vhost_virtqueue *virtqueue;
 	uint32_t irq_delay_base = vdev->coalescing_delay_time_base;
 	uint32_t io_threshold = vdev->coalescing_io_rate_threshold;
-	uint32_t irq_delay, req_cnt;
+	int32_t irq_delay;
+	uint32_t req_cnt;
 	uint16_t q_idx;
 
 	if (now < vdev->next_stats_check_time) {
@@ -284,7 +285,7 @@ check_dev_io_stats(struct spdk_vhost_dev *vdev, uint64_t now)
 		}
 
 		irq_delay = (irq_delay_base * (req_cnt - io_threshold)) / io_threshold;
-		virtqueue->irq_delay_time = (uint32_t) spdk_min(0, irq_delay);
+		virtqueue->irq_delay_time = (uint32_t) spdk_max(0, irq_delay);
 
 		virtqueue->req_cnt = 0;
 		virtqueue->next_event_time = now;
@@ -769,7 +770,7 @@ spdk_vhost_dev_unregister(struct spdk_vhost_dev *vdev)
 {
 	if (vdev->vid != -1) {
 		SPDK_ERRLOG("Controller %s has still valid connection.\n", vdev->name);
-		return -ENODEV;
+		return -EBUSY;
 	}
 
 	if (vdev->registered && rte_vhost_driver_unregister(vdev->path) != 0) {
@@ -876,6 +877,19 @@ spdk_vhost_event_async_fn(void *arg1, void *arg2)
 		vdev = NULL;
 	}
 
+	if (vdev != NULL && vdev->lcore >= 0 &&
+	    (uint32_t)vdev->lcore != spdk_env_get_current_core()) {
+		/* if vdev has been relocated to other core, it is no longer thread-safe
+		 * to access its contents here. Even though we're running under global vhost
+		 * mutex, the controller itself (and its pollers) are not. We need to chase
+		 * the vdev thread as many times as necessary.
+		 */
+		ev = spdk_event_allocate(vdev->lcore, spdk_vhost_event_async_fn, arg1, arg2);
+		spdk_event_call(ev);
+		pthread_mutex_unlock(&g_spdk_vhost_mutex);
+		return;
+	}
+
 	ctx->cb_fn(vdev, arg2);
 	pthread_mutex_unlock(&g_spdk_vhost_mutex);
 
@@ -900,14 +914,32 @@ spdk_vhost_event_async_foreach_fn(void *arg1, void *arg2)
 	}
 
 	vdev = spdk_vhost_dev_find_by_id(ctx->vdev_id);
-	if (vdev == ctx->vdev) {
-		ctx->cb_fn(vdev, arg2);
-	} else {
+	if (vdev != ctx->vdev) {
 		/* ctx->vdev is probably a dangling pointer at this point.
 		 * It must have been removed in the meantime, so we just skip
 		 * it in our foreach chain. */
+		goto out_unlock_continue;
 	}
 
+	/* the assert is just for static analyzers, vdev cannot be NULL here */
+	assert(vdev != NULL);
+	if (vdev->lcore >= 0 &&
+	    (uint32_t)vdev->lcore != spdk_env_get_current_core()) {
+		/* if vdev has been relocated to other core, it is no longer thread-safe
+		 * to access its contents here. Even though we're running under global vhost
+		 * mutex, the controller itself (and its pollers) are not. We need to chase
+		 * the vdev thread as many times as necessary.
+		 */
+		ev = spdk_event_allocate(vdev->lcore,
+					 spdk_vhost_event_async_foreach_fn, arg1, arg2);
+		spdk_event_call(ev);
+		pthread_mutex_unlock(&g_spdk_vhost_mutex);
+		return;
+	}
+
+	ctx->cb_fn(vdev, arg2);
+
+out_unlock_continue:
 	vdev = spdk_vhost_dev_next(ctx->vdev_id);
 	spdk_vhost_external_event_foreach_continue(vdev, ctx->cb_fn, arg2);
 	pthread_mutex_unlock(&g_spdk_vhost_mutex);
@@ -916,8 +948,8 @@ spdk_vhost_event_async_foreach_fn(void *arg1, void *arg2)
 }
 
 static int
-spdk_vhost_event_send(struct spdk_vhost_dev *vdev, spdk_vhost_event_fn cb_fn,
-		      unsigned timeout_sec, const char *errmsg)
+_spdk_vhost_event_send(struct spdk_vhost_dev *vdev, spdk_vhost_event_fn cb_fn,
+		       unsigned timeout_sec, const char *errmsg)
 {
 	struct spdk_vhost_dev_event_ctx ev_ctx = {0};
 	struct spdk_event *ev;
@@ -935,6 +967,7 @@ spdk_vhost_event_send(struct spdk_vhost_dev *vdev, spdk_vhost_event_fn cb_fn,
 	ev = spdk_event_allocate(vdev->lcore, spdk_vhost_event_cb, &ev_ctx, NULL);
 	assert(ev);
 	spdk_event_call(ev);
+	pthread_mutex_unlock(&g_spdk_vhost_mutex);
 
 	clock_gettime(CLOCK_REALTIME, &timeout);
 	timeout.tv_sec += timeout_sec;
@@ -946,6 +979,7 @@ spdk_vhost_event_send(struct spdk_vhost_dev *vdev, spdk_vhost_event_fn cb_fn,
 	}
 
 	sem_destroy(&ev_ctx.sem);
+	pthread_mutex_lock(&g_spdk_vhost_mutex);
 	return ev_ctx.response;
 }
 
@@ -960,6 +994,7 @@ spdk_vhost_event_async_send(struct spdk_vhost_dev *vdev, spdk_vhost_event_fn cb_
 	ev_ctx = calloc(1, sizeof(*ev_ctx));
 	if (ev_ctx == NULL) {
 		SPDK_ERRLOG("Failed to alloc vhost event.\n");
+		assert(false);
 		return -ENOMEM;
 	}
 
@@ -997,7 +1032,7 @@ stop_device(int vid)
 		return;
 	}
 
-	rc = spdk_vhost_event_send(vdev, vdev->backend->stop_device, 3, "stop device");
+	rc = _spdk_vhost_event_send(vdev, vdev->backend->stop_device, 3, "stop device");
 	if (rc != 0) {
 		SPDK_ERRLOG("Couldn't stop device with vid %d.\n", vid);
 		pthread_mutex_unlock(&g_spdk_vhost_mutex);
@@ -1087,7 +1122,7 @@ start_device(int vid)
 
 	vdev->lcore = spdk_vhost_allocate_reactor(vdev->cpumask);
 	spdk_vhost_dev_mem_register(vdev);
-	rc = spdk_vhost_event_send(vdev, vdev->backend->start_device, 3, "start device");
+	rc = _spdk_vhost_event_send(vdev, vdev->backend->start_device, 3, "start device");
 	if (rc != 0) {
 		spdk_vhost_dev_mem_unregister(vdev);
 		free(vdev->mem);

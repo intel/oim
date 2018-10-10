@@ -1,0 +1,82 @@
+# Based on https://github.com/ceph/ceph-csi/blob/master/deploy/rbd/kubernetes/csi-rbdplugin.yaml,
+# changed so that it uses "oim-rbd" as driver name.
+
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: oim-driver-ceph-rbd
+spec:
+  selector:
+    matchLabels:
+      app: oim-driver-ceph-rbd
+  template:
+    metadata:
+      labels:
+        app: oim-driver-ceph-rbd
+    spec:
+      serviceAccountName: oim-rbd-node-sa
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: intel.com/oim
+                  operator: In
+                  values:
+                    - "1"
+      containers:
+        - name: oim-csi-driver
+          securityContext:
+            privileged: true
+          image: 192.168.7.1:5000/oim-csi-driver:canary
+          args :
+            - --nodeid=$(NODE_ID)
+            - --endpoint=$(CSI_ENDPOINT)
+            - --oim-registry-address=@OIM_REGISTRY_ADDRESS@ # needs to be replaced
+            - --controller-id=$(KUBE_NODE_NAME)
+            - --v=5
+            - --drivername=oim-rbd
+            - --emulate=ceph-csi
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix://csi/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+            - mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+              name: mountpoint-dir
+        - name: driver-registrar
+          image: quay.io/k8scsi/driver-registrar:v0.4.0
+          imagePullPolicy: Always
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+      volumes:
+        - hostPath:
+            path: /var/lib/kubelet/plugins/oim-rbd
+            type: DirectoryOrCreate
+          name: socket-dir
+        - hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+          name: mountpoint-dir

@@ -34,11 +34,21 @@
 #include "spdk/stdinc.h"
 
 #include "spdk_cunit.h"
+#include "spdk_internal/mock.h"
 
+#include "common/lib/test_env.c"
 #include "nvmf/ctrlr_discovery.c"
 #include "nvmf/subsystem.c"
 
 SPDK_LOG_REGISTER_COMPONENT("nvmf", SPDK_LOG_NVMF)
+
+DEFINE_STUB(spdk_bdev_module_claim_bdev,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+	     struct spdk_bdev_module *module), 0);
+
+DEFINE_STUB_V(spdk_bdev_module_release_bdev,
+	      (struct spdk_bdev *bdev));
 
 uint32_t
 spdk_env_get_current_core(void)
@@ -100,11 +110,10 @@ spdk_nvmf_transport_listener_discover(struct spdk_nvmf_transport *transport,
 static struct spdk_nvmf_transport g_transport = {};
 
 struct spdk_nvmf_transport *
-spdk_nvmf_transport_create(struct spdk_nvmf_tgt *tgt,
-			   enum spdk_nvme_transport_type type)
+spdk_nvmf_transport_create(enum spdk_nvme_transport_type type,
+			   struct spdk_nvmf_transport_opts *tprt_opts)
 {
 	if (type == SPDK_NVME_TRANSPORT_RDMA) {
-		g_transport.tgt = tgt;
 		return &g_transport;
 	}
 
@@ -170,11 +179,12 @@ spdk_nvmf_poll_group_update_subsystem(struct spdk_nvmf_poll_group *group,
 	return 0;
 }
 
-void
+int
 spdk_nvmf_poll_group_add_subsystem(struct spdk_nvmf_poll_group *group,
 				   struct spdk_nvmf_subsystem *subsystem,
 				   spdk_nvmf_poll_group_mod_done cb_fn, void *cb_arg)
 {
+	return 0;
 }
 
 void

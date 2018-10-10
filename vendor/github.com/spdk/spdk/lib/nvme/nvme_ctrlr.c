@@ -40,6 +40,8 @@
 
 static int nvme_ctrlr_construct_and_submit_aer(struct spdk_nvme_ctrlr *ctrlr,
 		struct nvme_async_event_request *aer);
+static int nvme_ctrlr_identify_ns_async(struct spdk_nvme_ns *ns);
+static int nvme_ctrlr_identify_id_desc_async(struct spdk_nvme_ns *ns);
 
 static int
 nvme_ctrlr_get_cc(struct spdk_nvme_ctrlr *ctrlr, union spdk_nvme_cc_register *cc)
@@ -366,35 +368,43 @@ nvme_ctrlr_construct_intel_support_log_page_list(struct spdk_nvme_ctrlr *ctrlr,
 
 static int nvme_ctrlr_set_intel_support_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 {
+	int rc = 0;
 	uint64_t phys_addr = 0;
 	struct nvme_completion_poll_status	status;
 	struct spdk_nvme_intel_log_page_directory *log_page_directory;
 
-	log_page_directory = spdk_dma_zmalloc(sizeof(struct spdk_nvme_intel_log_page_directory),
-					      64, &phys_addr);
+	log_page_directory = spdk_zmalloc(sizeof(struct spdk_nvme_intel_log_page_directory),
+					  64, &phys_addr, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
 	if (log_page_directory == NULL) {
 		SPDK_ERRLOG("could not allocate log_page_directory\n");
 		return -ENXIO;
 	}
 
-	spdk_nvme_ctrlr_cmd_get_log_page(ctrlr, SPDK_NVME_INTEL_LOG_PAGE_DIRECTORY, SPDK_NVME_GLOBAL_NS_TAG,
-					 log_page_directory, sizeof(struct spdk_nvme_intel_log_page_directory), 0,
-					 nvme_completion_poll_cb,
-					 &status);
+	rc = spdk_nvme_ctrlr_cmd_get_log_page(ctrlr, SPDK_NVME_INTEL_LOG_PAGE_DIRECTORY,
+					      SPDK_NVME_GLOBAL_NS_TAG, log_page_directory,
+					      sizeof(struct spdk_nvme_intel_log_page_directory),
+					      0, nvme_completion_poll_cb, &status);
+	if (rc != 0) {
+		spdk_free(log_page_directory);
+		return rc;
+	}
+
 	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
-		spdk_dma_free(log_page_directory);
+		spdk_free(log_page_directory);
 		SPDK_ERRLOG("nvme_ctrlr_cmd_get_log_page failed!\n");
 		return -ENXIO;
 	}
 
 	nvme_ctrlr_construct_intel_support_log_page_list(ctrlr, log_page_directory);
-	spdk_dma_free(log_page_directory);
+	spdk_free(log_page_directory);
 	return 0;
 }
 
-static void
+static int
 nvme_ctrlr_set_supported_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 {
+	int	rc = 0;
+
 	memset(ctrlr->log_page_supported, 0, sizeof(ctrlr->log_page_supported));
 	/* Mandatory pages */
 	ctrlr->log_page_supported[SPDK_NVME_LOG_ERROR] = true;
@@ -403,9 +413,11 @@ nvme_ctrlr_set_supported_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 	if (ctrlr->cdata.lpa.celp) {
 		ctrlr->log_page_supported[SPDK_NVME_LOG_COMMAND_EFFECTS_LOG] = true;
 	}
-	if (ctrlr->cdata.vid == SPDK_PCI_VID_INTEL) {
-		nvme_ctrlr_set_intel_support_log_pages(ctrlr);
+	if (ctrlr->cdata.vid == SPDK_PCI_VID_INTEL && !(ctrlr->quirks & NVME_INTEL_QUIRK_NO_LOG_PAGES)) {
+		rc = nvme_ctrlr_set_intel_support_log_pages(ctrlr);
 	}
+
+	return rc;
 }
 
 static void
@@ -596,6 +608,8 @@ static const char *
 nvme_ctrlr_state_string(enum nvme_ctrlr_state state)
 {
 	switch (state) {
+	case NVME_CTRLR_STATE_INIT_DELAY:
+		return "delay init";
 	case NVME_CTRLR_STATE_INIT:
 		return "init";
 	case NVME_CTRLR_STATE_DISABLE_WAIT_FOR_READY_1:
@@ -606,8 +620,56 @@ nvme_ctrlr_state_string(enum nvme_ctrlr_state state)
 		return "enable controller by writing CC.EN = 1";
 	case NVME_CTRLR_STATE_ENABLE_WAIT_FOR_READY_1:
 		return "wait for CSTS.RDY = 1";
+	case NVME_CTRLR_STATE_ENABLE_ADMIN_QUEUE:
+		return "enable admin queue";
+	case NVME_CTRLR_STATE_IDENTIFY:
+		return "identify controller";
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY:
+		return "wait for identify controller";
+	case NVME_CTRLR_STATE_SET_NUM_QUEUES:
+		return "set number of queues";
+	case NVME_CTRLR_STATE_WAIT_FOR_SET_NUM_QUEUES:
+		return "wait for set number of queues";
+	case NVME_CTRLR_STATE_GET_NUM_QUEUES:
+		return "get number of queues";
+	case NVME_CTRLR_STATE_WAIT_FOR_GET_NUM_QUEUES:
+		return "wait for get number of queues";
+	case NVME_CTRLR_STATE_CONSTRUCT_NS:
+		return "construct namespaces";
+	case NVME_CTRLR_STATE_IDENTIFY_ACTIVE_NS:
+		return "identify active ns";
+	case NVME_CTRLR_STATE_IDENTIFY_NS:
+		return "identify ns";
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_NS:
+		return "wait for identify ns";
+	case NVME_CTRLR_STATE_IDENTIFY_ID_DESCS:
+		return "identify namespace id descriptors";
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_ID_DESCS:
+		return "wait for identify namespace id descriptors";
+	case NVME_CTRLR_STATE_CONFIGURE_AER:
+		return "configure AER";
+	case NVME_CTRLR_STATE_WAIT_FOR_CONFIGURE_AER:
+		return "wait for configure aer";
+	case NVME_CTRLR_STATE_SET_SUPPORTED_LOG_PAGES:
+		return "set supported log pages";
+	case NVME_CTRLR_STATE_SET_SUPPORTED_FEATURES:
+		return "set supported features";
+	case NVME_CTRLR_STATE_SET_DB_BUF_CFG:
+		return "set doorbell buffer config";
+	case NVME_CTRLR_STATE_WAIT_FOR_DB_BUF_CFG:
+		return "wait for doorbell buffer config";
+	case NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT:
+		return "set keep alive timeout";
+	case NVME_CTRLR_STATE_WAIT_FOR_KEEP_ALIVE_TIMEOUT:
+		return "wait for set keep alive timeout";
+	case NVME_CTRLR_STATE_SET_HOST_ID:
+		return "set host ID";
+	case NVME_CTRLR_STATE_WAIT_FOR_HOST_ID:
+		return "wait for set host ID";
 	case NVME_CTRLR_STATE_READY:
 		return "ready";
+	case NVME_CTRLR_STATE_ERROR:
+		return "error";
 	}
 	return "unknown";
 };
@@ -643,14 +705,33 @@ nvme_ctrlr_free_doorbell_buffer(struct spdk_nvme_ctrlr *ctrlr)
 	}
 }
 
+static void
+nvme_ctrlr_set_doorbell_buffer_config_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		SPDK_WARNLOG("Doorbell buffer config failed\n");
+	} else {
+		SPDK_INFOLOG(SPDK_LOG_NVME, "NVMe controller: %s doorbell buffer config enabled\n",
+			     ctrlr->trid.traddr);
+	}
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT, NVME_TIMEOUT_INFINITE);
+}
+
 static int
 nvme_ctrlr_set_doorbell_buffer_config(struct spdk_nvme_ctrlr *ctrlr)
 {
-	int rc;
-	struct nvme_completion_poll_status status;
+	int rc = 0;
 	uint64_t prp1, prp2;
 
+	if (!ctrlr->cdata.oacs.doorbell_buffer_config) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
 	if (ctrlr->trid.trtype != SPDK_NVME_TRANSPORT_PCIE) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT, NVME_TIMEOUT_INFINITE);
 		return 0;
 	}
 
@@ -658,32 +739,30 @@ nvme_ctrlr_set_doorbell_buffer_config(struct spdk_nvme_ctrlr *ctrlr)
 	ctrlr->shadow_doorbell = spdk_dma_zmalloc(ctrlr->page_size, ctrlr->page_size,
 				 &prp1);
 	if (ctrlr->shadow_doorbell == NULL) {
-		return -1;
+		rc = -ENOMEM;
+		goto error;
 	}
 
 	ctrlr->eventidx = spdk_dma_zmalloc(ctrlr->page_size, ctrlr->page_size, &prp2);
 	if (ctrlr->eventidx == NULL) {
+		rc = -ENOMEM;
 		goto error;
 	}
 
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_DB_BUF_CFG, NVME_TIMEOUT_INFINITE);
+
 	rc = nvme_ctrlr_cmd_doorbell_buffer_config(ctrlr, prp1, prp2,
-			nvme_completion_poll_cb, &status);
+			nvme_ctrlr_set_doorbell_buffer_config_done, ctrlr);
 	if (rc != 0) {
 		goto error;
 	}
 
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
-		goto error;
-	}
-
-	SPDK_INFOLOG(SPDK_LOG_NVME, "NVMe controller: %s doorbell buffer config enabled\n",
-		     ctrlr->trid.traddr);
-
 	return 0;
 
 error:
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
 	nvme_ctrlr_free_doorbell_buffer(ctrlr);
-	return -1;
+	return rc;
 }
 
 int
@@ -754,22 +833,15 @@ spdk_nvme_ctrlr_reset(struct spdk_nvme_ctrlr *ctrlr)
 	return rc;
 }
 
-static int
-nvme_ctrlr_identify(struct spdk_nvme_ctrlr *ctrlr)
+static void
+nvme_ctrlr_identify_done(void *arg, const struct spdk_nvme_cpl *cpl)
 {
-	struct nvme_completion_poll_status	status;
-	int					rc;
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
 
-	rc = nvme_ctrlr_cmd_identify(ctrlr, SPDK_NVME_IDENTIFY_CTRLR, 0, 0,
-				     &ctrlr->cdata, sizeof(ctrlr->cdata),
-				     nvme_completion_poll_cb, &status);
-	if (rc != 0) {
-		return rc;
-	}
-
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
+	if (spdk_nvme_cpl_is_error(cpl)) {
 		SPDK_ERRLOG("nvme_identify_controller failed!\n");
-		return -ENXIO;
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return;
 	}
 
 	/*
@@ -801,9 +873,31 @@ nvme_ctrlr_identify(struct spdk_nvme_ctrlr *ctrlr)
 		}
 	}
 
-	return 0;
+	if (ctrlr->cdata.sgls.supported) {
+		ctrlr->flags |= SPDK_NVME_CTRLR_SGL_SUPPORTED;
+		ctrlr->max_sges = nvme_transport_ctrlr_get_max_sges(ctrlr);
+	}
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_NUM_QUEUES, NVME_TIMEOUT_INFINITE);
 }
 
+static int
+nvme_ctrlr_identify(struct spdk_nvme_ctrlr *ctrlr)
+{
+	int	rc;
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY, NVME_TIMEOUT_INFINITE);
+
+	rc = nvme_ctrlr_cmd_identify(ctrlr, SPDK_NVME_IDENTIFY_CTRLR, 0, 0,
+				     &ctrlr->cdata, sizeof(ctrlr->cdata),
+				     nvme_ctrlr_identify_done, ctrlr);
+	if (rc != 0) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return rc;
+	}
+
+	return 0;
+}
 
 int
 nvme_ctrlr_identify_active_ns(struct spdk_nvme_ctrlr *ctrlr)
@@ -876,11 +970,161 @@ fail:
 	return rc;
 }
 
-static int
-nvme_ctrlr_set_num_qpairs(struct spdk_nvme_ctrlr *ctrlr)
+static void
+nvme_ctrlr_identify_ns_async_done(void *arg, const struct spdk_nvme_cpl *cpl)
 {
-	struct nvme_completion_poll_status	status;
-	uint32_t cq_allocated, sq_allocated, min_allocated, i;
+	struct spdk_nvme_ns *ns = (struct spdk_nvme_ns *)arg;
+	struct spdk_nvme_ctrlr *ctrlr = ns->ctrlr;
+	uint32_t nsid;
+	int rc;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return;
+	} else {
+		nvme_ns_set_identify_data(ns);
+	}
+
+	/* move on to the next active NS */
+	nsid = spdk_nvme_ctrlr_get_next_active_ns(ctrlr, ns->id);
+	ns = spdk_nvme_ctrlr_get_ns(ctrlr, nsid);
+	if (ns == NULL) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_IDENTIFY_ID_DESCS, NVME_TIMEOUT_INFINITE);
+		return;
+	}
+	ns->ctrlr = ctrlr;
+	ns->id = nsid;
+
+	rc = nvme_ctrlr_identify_ns_async(ns);
+	if (rc) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+	}
+}
+
+static int
+nvme_ctrlr_identify_ns_async(struct spdk_nvme_ns *ns)
+{
+	struct spdk_nvme_ctrlr *ctrlr = ns->ctrlr;
+	struct spdk_nvme_ns_data *nsdata;
+
+	nsdata = &ctrlr->nsdata[ns->id - 1];
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_NS, NVME_TIMEOUT_INFINITE);
+	return nvme_ctrlr_cmd_identify(ns->ctrlr, SPDK_NVME_IDENTIFY_NS, 0, ns->id,
+				       nsdata, sizeof(*nsdata),
+				       nvme_ctrlr_identify_ns_async_done, ns);
+}
+
+static int
+nvme_ctrlr_identify_namespaces(struct spdk_nvme_ctrlr *ctrlr)
+{
+	uint32_t nsid;
+	struct spdk_nvme_ns *ns;
+	int rc;
+
+	nsid = spdk_nvme_ctrlr_get_first_active_ns(ctrlr);
+	ns = spdk_nvme_ctrlr_get_ns(ctrlr, nsid);
+	if (ns == NULL) {
+		/* No active NS, move on to the next state */
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
+	ns->ctrlr = ctrlr;
+	ns->id = nsid;
+
+	rc = nvme_ctrlr_identify_ns_async(ns);
+	if (rc) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+	}
+
+	return rc;
+}
+
+static void
+nvme_ctrlr_identify_id_desc_async_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_ns *ns = (struct spdk_nvme_ns *)arg;
+	struct spdk_nvme_ctrlr *ctrlr = ns->ctrlr;
+	uint32_t nsid;
+	int rc;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		return;
+	}
+
+	/* move on to the next active NS */
+	nsid = spdk_nvme_ctrlr_get_next_active_ns(ctrlr, ns->id);
+	ns = spdk_nvme_ctrlr_get_ns(ctrlr, nsid);
+	if (ns == NULL) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		return;
+	}
+
+	rc = nvme_ctrlr_identify_id_desc_async(ns);
+	if (rc) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+	}
+}
+
+static int
+nvme_ctrlr_identify_id_desc_async(struct spdk_nvme_ns *ns)
+{
+	struct spdk_nvme_ctrlr *ctrlr = ns->ctrlr;
+
+	memset(ns->id_desc_list, 0, sizeof(ns->id_desc_list));
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_ID_DESCS, NVME_TIMEOUT_INFINITE);
+	return nvme_ctrlr_cmd_identify(ns->ctrlr, SPDK_NVME_IDENTIFY_NS_ID_DESCRIPTOR_LIST,
+				       0, ns->id, ns->id_desc_list, sizeof(ns->id_desc_list),
+				       nvme_ctrlr_identify_id_desc_async_done, ns);
+}
+
+static int
+nvme_ctrlr_identify_id_desc_namespaces(struct spdk_nvme_ctrlr *ctrlr)
+{
+	uint32_t nsid;
+	struct spdk_nvme_ns *ns;
+	int rc;
+
+	if (ctrlr->vs.raw < SPDK_NVME_VERSION(1, 3, 0) ||
+	    (ctrlr->quirks & NVME_QUIRK_IDENTIFY_CNS)) {
+		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Version < 1.3; not attempting to retrieve NS ID Descriptor List\n");
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
+	nsid = spdk_nvme_ctrlr_get_first_active_ns(ctrlr);
+	ns = spdk_nvme_ctrlr_get_ns(ctrlr, nsid);
+	if (ns == NULL) {
+		/* No active NS, move on to the next state */
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
+	rc = nvme_ctrlr_identify_id_desc_async(ns);
+	if (rc) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+	}
+
+	return rc;
+}
+
+static void
+nvme_ctrlr_set_num_queues_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		SPDK_ERRLOG("Set Features - Number of Queues failed!\n");
+	}
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_GET_NUM_QUEUES, NVME_TIMEOUT_INFINITE);
+}
+
+static int
+nvme_ctrlr_set_num_queues(struct spdk_nvme_ctrlr *ctrlr)
+{
 	int rc;
 
 	if (ctrlr->opts.num_io_queues > SPDK_NVME_MAX_IO_QUEUES) {
@@ -892,23 +1136,25 @@ nvme_ctrlr_set_num_qpairs(struct spdk_nvme_ctrlr *ctrlr)
 		ctrlr->opts.num_io_queues = 1;
 	}
 
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_SET_NUM_QUEUES, NVME_TIMEOUT_INFINITE);
+
 	rc = nvme_ctrlr_cmd_set_num_queues(ctrlr, ctrlr->opts.num_io_queues,
-					   nvme_completion_poll_cb, &status);
+					   nvme_ctrlr_set_num_queues_done, ctrlr);
 	if (rc != 0) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
 		return rc;
 	}
 
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
-		SPDK_ERRLOG("Set Features - Number of Queues failed!\n");
-	}
+	return 0;
+}
 
-	/* Obtain the number of queues allocated using Get Features. */
-	rc = nvme_ctrlr_cmd_get_num_queues(ctrlr, nvme_completion_poll_cb, &status);
-	if (rc != 0) {
-		return rc;
-	}
+static void
+nvme_ctrlr_get_num_queues_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	uint32_t cq_allocated, sq_allocated, min_allocated, i;
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
 
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
+	if (spdk_nvme_cpl_is_error(cpl)) {
 		SPDK_ERRLOG("Get Features - Number of Queues failed!\n");
 		ctrlr->opts.num_io_queues = 0;
 	} else {
@@ -917,8 +1163,8 @@ nvme_ctrlr_set_num_qpairs(struct spdk_nvme_ctrlr *ctrlr)
 		 * Lower 16-bits indicate number of submission queues allocated.
 		 * Upper 16-bits indicate number of completion queues allocated.
 		 */
-		sq_allocated = (status.cpl.cdw0 & 0xFFFF) + 1;
-		cq_allocated = (status.cpl.cdw0 >> 16) + 1;
+		sq_allocated = (cpl->cdw0 & 0xFFFF) + 1;
+		cq_allocated = (cpl->cdw0 >> 16) + 1;
 
 		/*
 		 * For 1:1 queue mapping, set number of allocated queues to be minimum of
@@ -932,7 +1178,8 @@ nvme_ctrlr_set_num_qpairs(struct spdk_nvme_ctrlr *ctrlr)
 
 	ctrlr->free_io_qids = spdk_bit_array_create(ctrlr->opts.num_io_queues + 1);
 	if (ctrlr->free_io_qids == NULL) {
-		return -ENOMEM;
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return;
 	}
 
 	/* Initialize list of free I/O queue IDs. QID 0 is the admin queue. */
@@ -940,49 +1187,46 @@ nvme_ctrlr_set_num_qpairs(struct spdk_nvme_ctrlr *ctrlr)
 	for (i = 1; i <= ctrlr->opts.num_io_queues; i++) {
 		spdk_bit_array_set(ctrlr->free_io_qids, i);
 	}
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONSTRUCT_NS, NVME_TIMEOUT_INFINITE);
+}
+
+static int
+nvme_ctrlr_get_num_queues(struct spdk_nvme_ctrlr *ctrlr)
+{
+	int rc;
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_GET_NUM_QUEUES, NVME_TIMEOUT_INFINITE);
+
+	/* Obtain the number of queues allocated using Get Features. */
+	rc = nvme_ctrlr_cmd_get_num_queues(ctrlr, nvme_ctrlr_get_num_queues_done, ctrlr);
+	if (rc != 0) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return rc;
+	}
 
 	return 0;
 }
 
-static int
-nvme_ctrlr_set_keep_alive_timeout(struct spdk_nvme_ctrlr *ctrlr)
+static void
+nvme_ctrlr_set_keep_alive_timeout_done(void *arg, const struct spdk_nvme_cpl *cpl)
 {
-	struct nvme_completion_poll_status status;
 	uint32_t keep_alive_interval_ms;
-	int rc;
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
 
-	if (ctrlr->opts.keep_alive_timeout_ms == 0) {
-		return 0;
-	}
-
-	if (ctrlr->cdata.kas == 0) {
-		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Controller KAS is 0 - not enabling Keep Alive\n");
-		ctrlr->opts.keep_alive_timeout_ms = 0;
-		return 0;
-	}
-
-	/* Retrieve actual keep alive timeout, since the controller may have adjusted it. */
-	rc = spdk_nvme_ctrlr_cmd_get_feature(ctrlr, SPDK_NVME_FEAT_KEEP_ALIVE_TIMER, 0, NULL, 0,
-					     nvme_completion_poll_cb, &status);
-	if (rc != 0) {
-		SPDK_ERRLOG("Keep alive timeout Get Feature failed: %d\n", rc);
-		ctrlr->opts.keep_alive_timeout_ms = 0;
-		return rc;
-	}
-
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
+	if (spdk_nvme_cpl_is_error(cpl)) {
 		SPDK_ERRLOG("Keep alive timeout Get Feature failed: SC %x SCT %x\n",
-			    status.cpl.status.sc, status.cpl.status.sct);
+			    cpl->status.sc, cpl->status.sct);
 		ctrlr->opts.keep_alive_timeout_ms = 0;
-		return -ENXIO;
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return;
 	}
 
-	if (ctrlr->opts.keep_alive_timeout_ms != status.cpl.cdw0) {
+	if (ctrlr->opts.keep_alive_timeout_ms != cpl->cdw0) {
 		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Controller adjusted keep alive timeout to %u ms\n",
-			      status.cpl.cdw0);
+			      cpl->cdw0);
 	}
 
-	ctrlr->opts.keep_alive_timeout_ms = status.cpl.cdw0;
+	ctrlr->opts.keep_alive_timeout_ms = cpl->cdw0;
 
 	keep_alive_interval_ms = ctrlr->opts.keep_alive_timeout_ms / 2;
 	if (keep_alive_interval_ms == 0) {
@@ -994,14 +1238,63 @@ nvme_ctrlr_set_keep_alive_timeout(struct spdk_nvme_ctrlr *ctrlr)
 
 	/* Schedule the first Keep Alive to be sent as soon as possible. */
 	ctrlr->next_keep_alive_tick = spdk_get_ticks();
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_HOST_ID, NVME_TIMEOUT_INFINITE);
+}
+
+static int
+nvme_ctrlr_set_keep_alive_timeout(struct spdk_nvme_ctrlr *ctrlr)
+{
+	int rc;
+
+	if (ctrlr->opts.keep_alive_timeout_ms == 0) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_HOST_ID, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
+	if (ctrlr->cdata.kas == 0) {
+		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Controller KAS is 0 - not enabling Keep Alive\n");
+		ctrlr->opts.keep_alive_timeout_ms = 0;
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_HOST_ID, NVME_TIMEOUT_INFINITE);
+		return 0;
+	}
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_KEEP_ALIVE_TIMEOUT, NVME_TIMEOUT_INFINITE);
+
+	/* Retrieve actual keep alive timeout, since the controller may have adjusted it. */
+	rc = spdk_nvme_ctrlr_cmd_get_feature(ctrlr, SPDK_NVME_FEAT_KEEP_ALIVE_TIMER, 0, NULL, 0,
+					     nvme_ctrlr_set_keep_alive_timeout_done, ctrlr);
+	if (rc != 0) {
+		SPDK_ERRLOG("Keep alive timeout Get Feature failed: %d\n", rc);
+		ctrlr->opts.keep_alive_timeout_ms = 0;
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+		return rc;
+	}
 
 	return 0;
+}
+
+static void
+nvme_ctrlr_set_host_id_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_ctrlr *ctrlr = (struct spdk_nvme_ctrlr *)arg;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		/*
+		 * Treat Set Features - Host ID failure as non-fatal, since the Host ID feature
+		 * is optional.
+		 */
+		SPDK_WARNLOG("Set Features - Host ID failed: SC 0x%x SCT 0x%x\n",
+			     cpl->status.sc, cpl->status.sct);
+	} else {
+		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Set Features - Host ID was successful\n");
+	}
+
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_READY, NVME_TIMEOUT_INFINITE);
 }
 
 static int
 nvme_ctrlr_set_host_id(struct spdk_nvme_ctrlr *ctrlr)
 {
-	struct nvme_completion_poll_status status;
 	uint8_t *host_id;
 	uint32_t host_id_size;
 	int rc;
@@ -1012,6 +1305,7 @@ nvme_ctrlr_set_host_id(struct spdk_nvme_ctrlr *ctrlr)
 		 * Set Features - Host Identifier after Connect, so we don't need to do anything here.
 		 */
 		SPDK_DEBUGLOG(SPDK_LOG_NVME, "NVMe-oF transport - not sending Set Features - Host ID\n");
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_READY, NVME_TIMEOUT_INFINITE);
 		return 0;
 	}
 
@@ -1029,28 +1323,21 @@ nvme_ctrlr_set_host_id(struct spdk_nvme_ctrlr *ctrlr)
 	if (spdk_mem_all_zero(host_id, host_id_size)) {
 		SPDK_DEBUGLOG(SPDK_LOG_NVME,
 			      "User did not specify host ID - not sending Set Features - Host ID\n");
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_READY, NVME_TIMEOUT_INFINITE);
 		return 0;
 	}
 
 	SPDK_TRACEDUMP(SPDK_LOG_NVME, "host_id", host_id, host_id_size);
 
-	rc = nvme_ctrlr_cmd_set_host_id(ctrlr, host_id, host_id_size, nvme_completion_poll_cb, &status);
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_HOST_ID, NVME_TIMEOUT_INFINITE);
+
+	rc = nvme_ctrlr_cmd_set_host_id(ctrlr, host_id, host_id_size, nvme_ctrlr_set_host_id_done, ctrlr);
 	if (rc != 0) {
 		SPDK_ERRLOG("Set Features - Host ID failed: %d\n", rc);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
 		return rc;
 	}
 
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
-		SPDK_WARNLOG("Set Features - Host ID failed: SC 0x%x SCT 0x%x\n",
-			     status.cpl.status.sc, status.cpl.status.sct);
-		/*
-		 * Treat Set Features - Host ID failure as non-fatal, since the Host ID feature
-		 * is optional.
-		 */
-		return 0;
-	}
-
-	SPDK_DEBUGLOG(SPDK_LOG_NVME, "Set Features - Host ID was successful\n");
 	return 0;
 }
 
@@ -1064,13 +1351,13 @@ nvme_ctrlr_destruct_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 			nvme_ns_destruct(&ctrlr->ns[i]);
 		}
 
-		spdk_dma_free(ctrlr->ns);
+		spdk_free(ctrlr->ns);
 		ctrlr->ns = NULL;
 		ctrlr->num_ns = 0;
 	}
 
 	if (ctrlr->nsdata) {
-		spdk_dma_free(ctrlr->nsdata);
+		spdk_free(ctrlr->nsdata);
 		ctrlr->nsdata = NULL;
 	}
 
@@ -1078,15 +1365,11 @@ nvme_ctrlr_destruct_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 	ctrlr->active_ns_list = NULL;
 }
 
-static int
+static void
 nvme_ctrlr_update_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 {
 	uint32_t i, nn = ctrlr->cdata.nn;
 	struct spdk_nvme_ns_data *nsdata;
-
-	if (nvme_ctrlr_identify_active_ns(ctrlr)) {
-		return -1;
-	}
 
 	for (i = 0; i < nn; i++) {
 		struct spdk_nvme_ns	*ns = &ctrlr->ns[i];
@@ -1103,13 +1386,12 @@ nvme_ctrlr_update_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 			nvme_ns_destruct(ns);
 		}
 	}
-
-	return 0;
 }
 
 static int
 nvme_ctrlr_construct_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 {
+	int rc = 0;
 	uint32_t nn = ctrlr->cdata.nn;
 	uint64_t phys_addr = 0;
 
@@ -1124,29 +1406,28 @@ nvme_ctrlr_construct_namespaces(struct spdk_nvme_ctrlr *ctrlr)
 			return 0;
 		}
 
-		ctrlr->ns = spdk_dma_zmalloc(nn * sizeof(struct spdk_nvme_ns), 64,
-					     &phys_addr);
+		ctrlr->ns = spdk_zmalloc(nn * sizeof(struct spdk_nvme_ns), 64,
+					 &phys_addr, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_SHARE);
 		if (ctrlr->ns == NULL) {
+			rc = -ENOMEM;
 			goto fail;
 		}
 
-		ctrlr->nsdata = spdk_dma_zmalloc(nn * sizeof(struct spdk_nvme_ns_data), 64,
-						 &phys_addr);
+		ctrlr->nsdata = spdk_zmalloc(nn * sizeof(struct spdk_nvme_ns_data), 64,
+					     &phys_addr, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_SHARE | SPDK_MALLOC_DMA);
 		if (ctrlr->nsdata == NULL) {
+			rc = -ENOMEM;
 			goto fail;
 		}
 
 		ctrlr->num_ns = nn;
 	}
 
-	if (nvme_ctrlr_update_namespaces(ctrlr)) {
-		goto fail;
-	}
 	return 0;
 
 fail:
 	nvme_ctrlr_destruct_namespaces(ctrlr);
-	return -1;
+	return rc;
 }
 
 static void
@@ -1156,8 +1437,10 @@ nvme_ctrlr_async_event_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 	struct spdk_nvme_ctrlr		*ctrlr = aer->ctrlr;
 	struct spdk_nvme_ctrlr_process	*active_proc;
 	union spdk_nvme_async_event_completion	event;
+	int					rc;
 
-	if (cpl->status.sc == SPDK_NVME_SC_ABORTED_SQ_DELETION) {
+	if (cpl->status.sct == SPDK_NVME_SCT_GENERIC &&
+	    cpl->status.sc == SPDK_NVME_SC_ABORTED_SQ_DELETION) {
 		/*
 		 *  This is simulated when controller is being shut down, to
 		 *  effectively abort outstanding asynchronous event requests
@@ -1167,9 +1450,25 @@ nvme_ctrlr_async_event_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 		return;
 	}
 
+	if (cpl->status.sct == SPDK_NVME_SCT_COMMAND_SPECIFIC &&
+	    cpl->status.sc == SPDK_NVME_SC_ASYNC_EVENT_REQUEST_LIMIT_EXCEEDED) {
+		/*
+		 *  SPDK will only send as many AERs as the device says it supports,
+		 *  so this status code indicates an out-of-spec device.  Do not repost
+		 *  the request in this case.
+		 */
+		SPDK_ERRLOG("Controller appears out-of-spec for asynchronous event request\n"
+			    "handling.  Do not repost this AER.\n");
+		return;
+	}
+
 	event.raw = cpl->cdw0;
 	if ((event.bits.async_event_type == SPDK_NVME_ASYNC_EVENT_TYPE_NOTICE) &&
 	    (event.bits.async_event_info == SPDK_NVME_ASYNC_EVENT_NS_ATTR_CHANGED)) {
+		rc = nvme_ctrlr_identify_active_ns(ctrlr);
+		if (rc) {
+			return;
+		}
 		nvme_ctrlr_update_namespaces(ctrlr);
 	}
 
@@ -1208,11 +1507,39 @@ nvme_ctrlr_construct_and_submit_aer(struct spdk_nvme_ctrlr *ctrlr,
 	return nvme_ctrlr_submit_admin_request(ctrlr, req);
 }
 
+static void
+nvme_ctrlr_configure_aer_done(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct nvme_async_event_request		*aer;
+	int					rc;
+	uint32_t				i;
+	struct spdk_nvme_ctrlr *ctrlr =	(struct spdk_nvme_ctrlr *)arg;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		SPDK_NOTICELOG("nvme_ctrlr_configure_aer failed!\n");
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_SUPPORTED_LOG_PAGES, NVME_TIMEOUT_INFINITE);
+		return;
+	}
+
+	/* aerl is a zero-based value, so we need to add 1 here. */
+	ctrlr->num_aers = spdk_min(NVME_MAX_ASYNC_EVENTS, (ctrlr->cdata.aerl + 1));
+
+	for (i = 0; i < ctrlr->num_aers; i++) {
+		aer = &ctrlr->aer[i];
+		rc = nvme_ctrlr_construct_and_submit_aer(ctrlr, aer);
+		if (rc) {
+			SPDK_ERRLOG("nvme_ctrlr_construct_and_submit_aer failed!\n");
+			nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
+			return;
+		}
+	}
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_SUPPORTED_LOG_PAGES, NVME_TIMEOUT_INFINITE);
+}
+
 static int
-_nvme_ctrlr_configure_aer(struct spdk_nvme_ctrlr *ctrlr)
+nvme_ctrlr_configure_aer(struct spdk_nvme_ctrlr *ctrlr)
 {
 	union spdk_nvme_feat_async_event_configuration	config;
-	struct nvme_completion_poll_status		status;
 	int						rc;
 
 	config.raw = 0;
@@ -1234,40 +1561,14 @@ _nvme_ctrlr_configure_aer(struct spdk_nvme_ctrlr *ctrlr)
 		config.bits.telemetry_log_notice = 1;
 	}
 
-	rc = nvme_ctrlr_cmd_set_async_event_config(ctrlr, config, nvme_completion_poll_cb, &status);
+	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_WAIT_FOR_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+
+	rc = nvme_ctrlr_cmd_set_async_event_config(ctrlr, config,
+			nvme_ctrlr_configure_aer_done,
+			ctrlr);
 	if (rc != 0) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ERROR, NVME_TIMEOUT_INFINITE);
 		return rc;
-	}
-
-	if (spdk_nvme_wait_for_completion(ctrlr->adminq, &status)) {
-		return -ENXIO;
-	}
-
-	return 0;
-}
-
-static int
-nvme_ctrlr_configure_aer(struct spdk_nvme_ctrlr *ctrlr)
-{
-	struct nvme_async_event_request		*aer;
-	uint32_t				i;
-	int					rc;
-
-	rc = _nvme_ctrlr_configure_aer(ctrlr);
-	if (rc != 0) {
-		SPDK_NOTICELOG("nvme_ctrlr_configure_aer failed!\n");
-		return 0;
-	}
-
-	/* aerl is a zero-based value, so we need to add 1 here. */
-	ctrlr->num_aers = spdk_min(NVME_MAX_ASYNC_EVENTS, (ctrlr->cdata.aerl + 1));
-
-	for (i = 0; i < ctrlr->num_aers; i++) {
-		aer = &ctrlr->aer[i];
-		if (nvme_ctrlr_construct_and_submit_aer(ctrlr, aer)) {
-			SPDK_ERRLOG("nvme_ctrlr_construct_and_submit_aer failed!\n");
-			return -1;
-		}
 	}
 
 	return 0;
@@ -1311,7 +1612,8 @@ nvme_ctrlr_add_process(struct spdk_nvme_ctrlr *ctrlr, void *devhandle)
 	}
 
 	/* Initialize the per process properties for this ctrlr */
-	ctrlr_proc = spdk_dma_zmalloc(sizeof(struct spdk_nvme_ctrlr_process), 64, NULL);
+	ctrlr_proc = spdk_zmalloc(sizeof(struct spdk_nvme_ctrlr_process),
+				  64, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_SHARE);
 	if (ctrlr_proc == NULL) {
 		SPDK_ERRLOG("failed to allocate memory to track the process props\n");
 
@@ -1405,7 +1707,7 @@ nvme_ctrlr_free_processes(struct spdk_nvme_ctrlr *ctrlr)
 
 		assert(STAILQ_EMPTY(&active_proc->active_reqs));
 
-		spdk_dma_free(active_proc);
+		spdk_free(active_proc);
 	}
 }
 
@@ -1520,6 +1822,13 @@ nvme_ctrlr_proc_get_devhandle(struct spdk_nvme_ctrlr *ctrlr)
 	return devhandle;
 }
 
+static void
+nvme_ctrlr_enable_admin_queue(struct spdk_nvme_ctrlr *ctrlr)
+{
+	nvme_transport_qpair_reset(ctrlr->adminq);
+	nvme_qpair_enable(ctrlr->adminq);
+}
+
 /**
  * This function will be called repeatedly during initialization until the controller is ready.
  */
@@ -1529,7 +1838,7 @@ nvme_ctrlr_process_init(struct spdk_nvme_ctrlr *ctrlr)
 	union spdk_nvme_cc_register cc;
 	union spdk_nvme_csts_register csts;
 	uint32_t ready_timeout_in_ms;
-	int rc;
+	int rc = 0;
 
 	/*
 	 * May need to avoid accessing any register on the target controller
@@ -1562,6 +1871,22 @@ nvme_ctrlr_process_init(struct spdk_nvme_ctrlr *ctrlr)
 	 * Check if the current initialization step is done or has timed out.
 	 */
 	switch (ctrlr->state) {
+	case NVME_CTRLR_STATE_INIT_DELAY:
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_INIT, ready_timeout_in_ms);
+		/*
+		 * Controller may need some delay before it's enabled.
+		 *
+		 * This is a workaround for an issue where the PCIe-attached NVMe controller
+		 * is not ready after VFIO reset. We delay the initialization rather than the
+		 * enabling itself, because this is required only for the very first enabling
+		 * - directly after a VFIO reset.
+		 *
+		 * TODO: Figure out what is actually going wrong.
+		 */
+		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Adding 2 second delay before initializing the controller\n");
+		ctrlr->sleep_timeout_tsc = spdk_get_ticks() + (2000 * spdk_get_ticks_hz() / 1000);
+		break;
+
 	case NVME_CTRLR_STATE_INIT:
 		/* Begin the hardware initialization by making sure the controller is disabled. */
 		if (cc.bits.en) {
@@ -1647,17 +1972,121 @@ nvme_ctrlr_process_init(struct spdk_nvme_ctrlr *ctrlr)
 			SPDK_DEBUGLOG(SPDK_LOG_NVME, "CC.EN = 1 && CSTS.RDY = 1 - controller is ready\n");
 			/*
 			 * The controller has been enabled.
-			 *  Perform the rest of initialization in nvme_ctrlr_start() serially.
+			 *  Perform the rest of initialization serially.
 			 */
-			rc = nvme_ctrlr_start(ctrlr);
-			nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_READY, NVME_TIMEOUT_INFINITE);
-			return rc;
+			nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_ENABLE_ADMIN_QUEUE, NVME_TIMEOUT_INFINITE);
+			return 0;
 		}
+		break;
+
+	case NVME_CTRLR_STATE_ENABLE_ADMIN_QUEUE:
+		nvme_ctrlr_enable_admin_queue(ctrlr);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_IDENTIFY, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_IDENTIFY:
+		rc = nvme_ctrlr_identify(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_SET_NUM_QUEUES:
+		rc = nvme_ctrlr_set_num_queues(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_SET_NUM_QUEUES:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_GET_NUM_QUEUES:
+		rc = nvme_ctrlr_get_num_queues(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_GET_NUM_QUEUES:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_CONSTRUCT_NS:
+		rc = nvme_ctrlr_construct_namespaces(ctrlr);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_IDENTIFY_ACTIVE_NS, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_IDENTIFY_ACTIVE_NS:
+		rc = nvme_ctrlr_identify_active_ns(ctrlr);
+		if (rc < 0) {
+			nvme_ctrlr_destruct_namespaces(ctrlr);
+		}
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_IDENTIFY_NS, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_IDENTIFY_NS:
+		rc = nvme_ctrlr_identify_namespaces(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_NS:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_IDENTIFY_ID_DESCS:
+		rc = nvme_ctrlr_identify_id_desc_namespaces(ctrlr);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_CONFIGURE_AER, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_IDENTIFY_ID_DESCS:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_CONFIGURE_AER:
+		rc = nvme_ctrlr_configure_aer(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_CONFIGURE_AER:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_SET_SUPPORTED_LOG_PAGES:
+		rc = nvme_ctrlr_set_supported_log_pages(ctrlr);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_SUPPORTED_FEATURES, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_SET_SUPPORTED_FEATURES:
+		nvme_ctrlr_set_supported_features(ctrlr);
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_SET_DB_BUF_CFG, NVME_TIMEOUT_INFINITE);
+		break;
+
+	case NVME_CTRLR_STATE_SET_DB_BUF_CFG:
+		rc = nvme_ctrlr_set_doorbell_buffer_config(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_DB_BUF_CFG:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_SET_KEEP_ALIVE_TIMEOUT:
+		rc = nvme_ctrlr_set_keep_alive_timeout(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_KEEP_ALIVE_TIMEOUT:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+		break;
+
+	case NVME_CTRLR_STATE_SET_HOST_ID:
+		rc = nvme_ctrlr_set_host_id(ctrlr);
+		break;
+
+	case NVME_CTRLR_STATE_WAIT_FOR_HOST_ID:
+		spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
 		break;
 
 	case NVME_CTRLR_STATE_READY:
 		SPDK_DEBUGLOG(SPDK_LOG_NVME, "Ctrlr already in ready state\n");
 		return 0;
+
+	case NVME_CTRLR_STATE_ERROR:
+		SPDK_ERRLOG("Ctrlr %s is in error state\n", ctrlr->trid.traddr);
+		return -1;
 
 	default:
 		assert(0);
@@ -1673,57 +2102,7 @@ init_timeout:
 		return -1;
 	}
 
-	return 0;
-}
-
-int
-nvme_ctrlr_start(struct spdk_nvme_ctrlr *ctrlr)
-{
-	nvme_transport_qpair_reset(ctrlr->adminq);
-
-	nvme_qpair_enable(ctrlr->adminq);
-
-	if (nvme_ctrlr_identify(ctrlr) != 0) {
-		return -1;
-	}
-
-	if (nvme_ctrlr_set_num_qpairs(ctrlr) != 0) {
-		return -1;
-	}
-
-	if (nvme_ctrlr_construct_namespaces(ctrlr) != 0) {
-		return -1;
-	}
-
-	if (nvme_ctrlr_configure_aer(ctrlr) != 0) {
-		return -1;
-	}
-
-	nvme_ctrlr_set_supported_log_pages(ctrlr);
-	nvme_ctrlr_set_supported_features(ctrlr);
-
-	if (ctrlr->cdata.sgls.supported) {
-		ctrlr->flags |= SPDK_NVME_CTRLR_SGL_SUPPORTED;
-		ctrlr->max_sges = nvme_transport_ctrlr_get_max_sges(ctrlr);
-	}
-
-	if (ctrlr->cdata.oacs.doorbell_buffer_config) {
-		if (nvme_ctrlr_set_doorbell_buffer_config(ctrlr)) {
-			SPDK_WARNLOG("Doorbell buffer config failed\n");
-		}
-	}
-
-
-	if (nvme_ctrlr_set_keep_alive_timeout(ctrlr) != 0) {
-		SPDK_ERRLOG("Setting keep alive timeout failed\n");
-		return -1;
-	}
-
-	if (nvme_ctrlr_set_host_id(ctrlr) != 0) {
-		return -1;
-	}
-
-	return 0;
+	return rc;
 }
 
 int
@@ -1752,7 +2131,12 @@ nvme_ctrlr_construct(struct spdk_nvme_ctrlr *ctrlr)
 {
 	int rc;
 
-	nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_INIT, NVME_TIMEOUT_INFINITE);
+	if (ctrlr->trid.trtype == SPDK_NVME_TRANSPORT_PCIE) {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_INIT_DELAY, NVME_TIMEOUT_INFINITE);
+	} else {
+		nvme_ctrlr_set_state(ctrlr, NVME_CTRLR_STATE_INIT, NVME_TIMEOUT_INFINITE);
+	}
+
 	ctrlr->flags = 0;
 	ctrlr->free_io_qids = NULL;
 	ctrlr->is_resetting = false;

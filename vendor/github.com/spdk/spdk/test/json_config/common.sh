@@ -3,21 +3,20 @@ SPDK_BUILD_DIR=$JSON_DIR/../../
 source $JSON_DIR/../common/autotest_common.sh
 source $JSON_DIR/../nvmf/common.sh
 
-spdk_rpc_py="python $SPDK_BUILD_DIR/scripts/rpc.py -s /var/tmp/spdk.sock"
+spdk_rpc_py="$SPDK_BUILD_DIR/scripts/rpc.py -s /var/tmp/spdk.sock"
 spdk_clear_config_py="$JSON_DIR/clear_config.py -s /var/tmp/spdk.sock"
-initiator_rpc_py="python $SPDK_BUILD_DIR/scripts/rpc.py -s /var/tmp/virtio.sock"
+initiator_rpc_py="$SPDK_BUILD_DIR/scripts/rpc.py -s /var/tmp/virtio.sock"
 initiator_clear_config_py="$JSON_DIR/clear_config.py -s /var/tmp/virtio.sock"
 base_json_config=$JSON_DIR/base_config.json
 last_json_config=$JSON_DIR/last_config.json
 full_config=$JSON_DIR/full_config.json
 base_bdevs=$JSON_DIR/bdevs_base.txt
 last_bdevs=$JSON_DIR/bdevs_last.txt
-tmp_config=$JSON_DIR/tmp_config.json
 null_json_config=$JSON_DIR/null_json_config.json
 
 function run_spdk_tgt() {
 	echo "Running spdk target"
-	$SPDK_BUILD_DIR/app/spdk_tgt/spdk_tgt -m 0x1 -p 0 -s 1024 -w &
+	$SPDK_BUILD_DIR/app/spdk_tgt/spdk_tgt -m 0x1 -p 0 -s 4096 --wait-for-rpc &
 	spdk_tgt_pid=$!
 
 	echo "Waiting for app to run..."
@@ -31,12 +30,12 @@ function load_nvme() {
 	echo '{"subsystems": [' > nvme_config.json
 	$SPDK_BUILD_DIR/scripts/gen_nvme.sh --json >> nvme_config.json
 	echo ']}' >> nvme_config.json
-	$rpc_py load_config -f nvme_config.json
+	$rpc_py load_config < nvme_config.json
 	rm nvme_config.json
 }
 
 function run_initiator() {
-	$SPDK_BUILD_DIR/app/spdk_tgt/spdk_tgt -m 0x2 -p 0 -g -u -s 1024 -r /var/tmp/virtio.sock -w &
+	$SPDK_BUILD_DIR/app/spdk_tgt/spdk_tgt -m 0x2 -p 0 -g -u -s 1024 -r /var/tmp/virtio.sock --wait-for-rpc &
 	virtio_pid=$!
 	waitforlisten $virtio_pid /var/tmp/virtio.sock
 }
@@ -61,6 +60,28 @@ function kill_targets() {
 	fi
 }
 
+# Compare two JSON files.
+#
+# NOTE: Order of objects in JSON can change by just doing loads -> dumps so all JSON objects (not arrays) are sorted by
+# config_filter.py script. Sorted output is used to compare JSON output.
+#
+function json_diff()
+{
+	local tmp_file_1=$(mktemp ${1}.XXX)
+	local tmp_file_2=$(mktemp ${2}.XXX)
+	local ret=0
+
+	cat $1 | $JSON_DIR/config_filter.py -method "sort" > $tmp_file_1
+	cat $2 | $JSON_DIR/config_filter.py -method "sort" > $tmp_file_2
+
+	if ! diff -u $tmp_file_1 $tmp_file_2; then
+		ret=1
+	fi
+
+	rm $tmp_file_1 $tmp_file_2
+	return $ret
+}
+
 # This function test if json config was properly saved and loaded.
 # 1. Get a list of bdevs and save it to the file "base_bdevs".
 # 2. Save only configuration of the running spdk_tgt to the file "base_json_config"
@@ -78,28 +99,27 @@ function kill_targets() {
 # 11. Remove all files.
 function test_json_config() {
 	$rpc_py get_bdevs | jq '.|sort_by(.name)' > $base_bdevs
-	$rpc_py save_config -f $full_config
-	$JSON_DIR/config_filter.py -method "delete_global_parameters" -filename $full_config > $base_json_config
+	$rpc_py save_config > $full_config
+	$JSON_DIR/config_filter.py -method "delete_global_parameters" < $full_config > $base_json_config
 	$clear_config_py clear_config
-	$rpc_py save_config -f $tmp_config
-	$JSON_DIR/config_filter.py -method "delete_global_parameters" -filename $tmp_config > $null_json_config
+	$rpc_py save_config | $JSON_DIR/config_filter.py -method "delete_global_parameters" > $null_json_config
 	if [ "[]" != "$(jq '.subsystems | map(select(.config != null)) | map(select(.config != []))' $null_json_config)" ]; then
 		echo "Config has not been cleared"
 		return 1
 	fi
-	$rpc_py load_config -f $base_json_config
+	$rpc_py load_config < $base_json_config
 	$rpc_py get_bdevs | jq '.|sort_by(.name)' > $last_bdevs
-	$rpc_py save_config -f $tmp_config
-	$JSON_DIR/config_filter.py -method "delete_global_parameters" -filename $tmp_config > $last_json_config
-	diff $base_json_config $last_json_config
-	diff $base_bdevs $last_bdevs
+	$rpc_py save_config | $JSON_DIR/config_filter.py -method "delete_global_parameters" > $last_json_config
+
+	json_diff $base_json_config $last_json_config
+	json_diff $base_bdevs $last_bdevs
 	remove_config_files_after_test_json_config
 }
 
 function remove_config_files_after_test_json_config() {
 	rm -f $last_bdevs $base_bdevs
 	rm -f $last_json_config $base_json_config
-	rm -f $tmp_config $full_config $null_json_config
+	rm -f $full_config $null_json_config
 }
 
 function create_pmem_bdev_subsytem_config() {
@@ -128,6 +148,14 @@ function create_bdev_subsystem_config() {
 	$rpc_py construct_malloc_bdev 128 512 --name Malloc0
 	$rpc_py construct_malloc_bdev 64 4096 --name Malloc1
 	$rpc_py construct_malloc_bdev 8 1024 --name Malloc2
+	if [ $SPDK_TEST_CRYPTO -eq 1 ]; then
+		$rpc_py construct_malloc_bdev 8 1024 --name Malloc3
+		if [ $(lspci -d:37c8 | wc -l) -eq 0 ]; then
+			$rpc_py construct_crypto_bdev -b Malloc3 -c CryMalloc3 -d crypto_aesni_mb -k 0123456789123456
+		else
+			$rpc_py construct_crypto_bdev -b Malloc3 -c CryMalloc3 -d crypto_qat -k 0123456789123456
+		fi
+	fi
 	$rpc_py construct_error_bdev Malloc2
 	if [ $(uname -s) = Linux ]; then
 		dd if=/dev/zero of=/tmp/sample_aio bs=2048 count=5000
@@ -151,10 +179,11 @@ function create_nvmf_subsystem_config() {
 
 	bdevs="$($rpc_py construct_malloc_bdev 64 512) "
 	bdevs+="$($rpc_py construct_malloc_bdev 64 512)"
-	$rpc_py construct_nvmf_subsystem nqn.2016-06.io.spdk:cnode1 '' '' -a -s SPDK00000000000001 -n "$bdevs"
+	$rpc_py nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
+	for bdev in $bdevs; do
+		$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 $bdev
+	done
 	$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t RDMA -a $NVMF_FIRST_TARGET_IP -s "$NVMF_PORT"
-	$rpc_py nvmf_subsystem_add_host nqn.2016-06.io.spdk:cnode1 nqn.2016-06.io.spdk:host1
-	$rpc_py nvmf_subsystem_allow_any_host nqn.2016-06.io.spdk:cnode1
 }
 
 function clear_nvmf_subsystem_config() {
@@ -184,8 +213,8 @@ function clear_bdev_subsystem_config() {
 # 8. Delete all files.
 function test_global_params() {
 	target=$1
-	$rpc_py save_config -f $full_config
-	python $JSON_DIR/config_filter.py -method "delete_configs" -filename $full_config > $base_json_config
+	$rpc_py save_config > $full_config
+	$JSON_DIR/config_filter.py -method "delete_configs" < $full_config > $base_json_config
 	if [ $target == "spdk_tgt" ]; then
 		killprocess $spdk_tgt_pid
 		run_spdk_tgt
@@ -196,10 +225,11 @@ function test_global_params() {
 		echo "Target is not specified for test_global_params"
 		return 1
 	fi
-	$rpc_py load_config -f $full_config
-	$rpc_py save_config -f $full_config
-	python $JSON_DIR/config_filter.py -method "delete_configs" -filename $full_config > $last_json_config
-	diff $base_json_config $last_json_config
+	$rpc_py load_config < $full_config
+	$rpc_py save_config > $full_config
+	$JSON_DIR/config_filter.py -method "delete_configs" < $full_config > $last_json_config
+
+	json_diff $base_json_config $last_json_config
 	rm $base_json_config $last_json_config
 	rm $full_config
 }

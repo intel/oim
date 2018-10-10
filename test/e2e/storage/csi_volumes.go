@@ -144,4 +144,56 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 			testDynamicProvisioning(t, cs, claim, nil)
 		})
 	})
+
+	Describe("Sanity CSI plugin test using OIM CSI with Ceph", func() {
+		BeforeEach(func() {
+			destructor, err := f.CreateFromManifests(
+				patchOIM,
+				"deploy/kubernetes/ceph-csi/rbd-rbac.yaml",
+				"deploy/kubernetes/ceph-csi/rbd-node.yaml",
+				"deploy/kubernetes/ceph-csi/oim-node.yaml",
+				"deploy/kubernetes/ceph-csi/rbd-statefulset.yaml",
+			)
+			destructors = append(destructors, destructor)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should provision storage", func() {
+			t := storageClassTest{
+				provisioner: "oim-rbd",
+				parameters: map[string]string{
+					// The cluster must be provisioned
+					// with a "csi-rbd-secret" that has
+					// the following keys:
+					// - monitors = mon1:port,mon2:port,...
+					// - admin = base64-encoded key value from keyring for user "admin" (used for provisioning)
+					// - kubernetes = base64-encoded key value for user "kubernetes" (used for mounting volumes)
+					"monValueFromSecret":            "monitors",
+					"adminid":                       "admin",
+					"userid":                        "kubernetes",
+					"csiProvisionerSecretName":      "csi-rbd-secret",
+					"csiProvisionerSecretNamespace": "default",
+					"csiNodePublishSecretName":      "csi-rbd-secret",
+					"csiNodePublishSecretNamespace": "default",
+					"pool": "rbd",
+				},
+				// See https://github.com/ceph/ceph-csi/issues/85
+				claimSize:    "1Gi",
+				expectedSize: "1Gi",
+
+				// We need to schedule the two pods to different
+				// hosts to cover both of our scenarios: mounting
+				// through OIM and mounting through ceph-csi.
+				nodeName:  "host-0", // with OIM
+				nodeName2: "host-1", // without
+			}
+
+			claim := newClaim(t, ns.GetName(), "")
+			class := newStorageClass(t, ns.GetName(), "")
+			claim.Spec.StorageClassName = &class.ObjectMeta.Name
+			// TODO: check machine state while volume is mounted:
+			// a missing UnmapVolume call in nodeserver.go must be detected
+			testDynamicProvisioning(t, cs, claim, class)
+		})
+	})
 })

@@ -1,9 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from rpc.client import print_dict, JSONRPCException
 
 import argparse
 import rpc
+import sys
 
 try:
     from shlex import quote
@@ -59,49 +60,42 @@ if __name__ == "__main__":
     @call_cmd
     def save_config(args):
         rpc.save_config(args.client,
-                        filename=args.filename,
+                        sys.stdout,
                         indent=args.indent)
 
-    p = subparsers.add_parser('save_config', help="""Write current (live) configuration of SPDK subsystems and targets.
-    If no filename is given write configuration to stdout.""")
-    p.add_argument('-f', '--filename', help="""File where to save JSON configuration to.""")
-    p.add_argument('-i', '--indent', help="""Indent level. Value less than 0 mean compact mode. If filename is not given default
-    indent level is 2. If writing to file of filename is '-' then default is compact mode.""", type=int, default=2)
+    p = subparsers.add_parser('save_config', help="""Write current (live) configuration of SPDK subsystems and targets to stdout.
+    """)
+    p.add_argument('-i', '--indent', help="""Indent level. Value less than 0 mean compact mode. Default indent level is 2.
+    """, type=int, default=2)
     p.set_defaults(func=save_config)
 
     @call_cmd
     def load_config(args):
-        rpc.load_config(args.client,
-                        filename=args.filename)
+        rpc.load_config(args.client, sys.stdin)
 
-    p = subparsers.add_parser('load_config', help="""Configure SPDK subsystems and tagets using JSON RPC. If no file is
-    provided or file is '-' read configuration from stdin.""")
-    p.add_argument('-f', '--filename', help="""JSON Configuration file.""")
+    p = subparsers.add_parser('load_config', help="""Configure SPDK subsystems and targets using JSON RPC read from stdin.""")
     p.set_defaults(func=load_config)
 
     @call_cmd
     def save_subsystem_config(args):
         rpc.save_subsystem_config(args.client,
-                                  filename=args.filename,
+                                  sys.stdout,
                                   indent=args.indent,
                                   name=args.name)
 
-    p = subparsers.add_parser('save_subsystem_config', help="""Write current (live) configuration of SPDK subsystem.
-    If no filename is given write configuration to stdout.""")
-    p.add_argument('-f', '--filename', help='File where to save JSON configuration to.')
-    p.add_argument('-i', '--indent', help="""Indent level. Value less than 0 mean compact mode. If filename is not given default
-    indent level is 2. If writing to file of filename is '-' then default is compact mode.""", type=int, default=2)
+    p = subparsers.add_parser('save_subsystem_config', help="""Write current (live) configuration of SPDK subsystem to stdout.
+    """)
+    p.add_argument('-i', '--indent', help="""Indent level. Value less than 0 mean compact mode. Default indent level is 2.
+    """, type=int, default=2)
     p.add_argument('-n', '--name', help='Name of subsystem', required=True)
     p.set_defaults(func=save_subsystem_config)
 
     @call_cmd
     def load_subsystem_config(args):
         rpc.load_subsystem_config(args.client,
-                                  filename=args.filename)
+                                  sys.stdin)
 
-    p = subparsers.add_parser('load_subsystem_config', help="""Configure SPDK subsystem using JSON RPC. If no file is
-    provided or file is '-' read configuration from stdin.""")
-    p.add_argument('-f', '--filename', help="""JSON Configuration file.""")
+    p = subparsers.add_parser('load_subsystem_config', help="""Configure SPDK subsystem using JSON RPC read from stdin.""")
     p.set_defaults(func=load_subsystem_config)
 
     # app
@@ -142,6 +136,30 @@ if __name__ == "__main__":
     p.set_defaults(func=set_bdev_options)
 
     @call_cmd
+    def construct_crypto_bdev(args):
+        print(rpc.bdev.construct_crypto_bdev(args.client,
+                                             base_bdev_name=args.base_bdev_name,
+                                             name=args.name,
+                                             crypto_pmd=args.crypto_pmd,
+                                             key=args.key))
+    p = subparsers.add_parser('construct_crypto_bdev',
+                              help='Add a crypto vbdev')
+    p.add_argument('-b', '--base_bdev_name', help="Name of the base bdev")
+    p.add_argument('-c', '--name', help="Name of the crypto vbdev")
+    p.add_argument('-d', '--crypto_pmd', help="Name of the crypto device driver")
+    p.add_argument('-k', '--key', help="Key")
+    p.set_defaults(func=construct_crypto_bdev)
+
+    @call_cmd
+    def delete_crypto_bdev(args):
+        rpc.bdev.delete_crypto_bdev(args.client,
+                                    name=args.name)
+
+    p = subparsers.add_parser('delete_crypto_bdev', help='Delete a crypto disk')
+    p.add_argument('name', help='crypto bdev name')
+    p.set_defaults(func=delete_crypto_bdev)
+
+    @call_cmd
     def construct_malloc_bdev(args):
         num_blocks = (args.total_size * 1024 * 1024) // args.block_size
         print(rpc.bdev.construct_malloc_bdev(args.client,
@@ -149,7 +167,6 @@ if __name__ == "__main__":
                                              block_size=args.block_size,
                                              name=args.name,
                                              uuid=args.uuid))
-
     p = subparsers.add_parser('construct_malloc_bdev',
                               help='Add a bdev with malloc backend')
     p.add_argument('-b', '--name', help="Name of the bdev")
@@ -222,7 +239,7 @@ if __name__ == "__main__":
     def set_bdev_nvme_options(args):
         rpc.bdev.set_bdev_nvme_options(args.client,
                                        action_on_timeout=args.action_on_timeout,
-                                       timeout_s=args.timeout_s,
+                                       timeout_us=args.timeout_us,
                                        retry_count=args.retry_count,
                                        nvme_adminq_poll_period_us=args.nvme_adminq_poll_period_us)
 
@@ -275,6 +292,16 @@ if __name__ == "__main__":
     p.set_defaults(func=construct_nvme_bdev)
 
     @call_cmd
+    def get_nvme_controllers(args):
+        print_dict(rpc.nvme.get_nvme_controllers(args.client,
+                                                 name=args.name))
+
+    p = subparsers.add_parser(
+        'get_nvme_controllers', help='Display current NVMe controllers list or required NVMe controller')
+    p.add_argument('-n', '--name', help="Name of the NVMe controller. Example: Nvme0", required=False)
+    p.set_defaults(func=get_nvme_controllers)
+
+    @call_cmd
     def delete_nvme_controller(args):
         rpc.bdev.delete_nvme_controller(args.client,
                                         name=args.name)
@@ -286,8 +313,18 @@ if __name__ == "__main__":
 
     @call_cmd
     def construct_rbd_bdev(args):
+        config = None
+        if args.config:
+            config = {}
+            for entry in args.config:
+                parts = entry.split('=', 1)
+                if len(parts) != 2:
+                    raise Exception('--config %s not in key=value form' % entry)
+                config[parts[0]] = parts[1]
         print(rpc.bdev.construct_rbd_bdev(args.client,
                                           name=args.name,
+                                          user=args.user,
+                                          config=config,
                                           pool_name=args.pool_name,
                                           rbd_name=args.rbd_name,
                                           block_size=args.block_size))
@@ -295,6 +332,9 @@ if __name__ == "__main__":
     p = subparsers.add_parser('construct_rbd_bdev',
                               help='Add a bdev with ceph rbd backend')
     p.add_argument('-b', '--name', help="Name of the bdev", required=False)
+    p.add_argument('--user', help="Ceph user name (i.e. admin, not client.admin)", required=False)
+    p.add_argument('--config', action='append', metavar='key=value',
+                   help="adds a key=value configuration option for rados_conf_set (default: rely on config file)")
     p.add_argument('pool_name', help='rbd pool name')
     p.add_argument('rbd_name', help='rbd image name')
     p.add_argument('block_size', help='rbd block size', type=int)
@@ -403,16 +443,6 @@ if __name__ == "__main__":
     p.set_defaults(func=get_bdevs)
 
     @call_cmd
-    def get_bdevs_config(args):
-        print_dict(rpc.bdev.get_bdevs_config(args.client,
-                                             name=args.name))
-
-    p = subparsers.add_parser(
-        'get_bdevs_config', help='Display current (live) blockdev configuration list or required blockdev')
-    p.add_argument('-b', '--name', help="Name of the Blockdev. Example: Nvme0n1", required=False)
-    p.set_defaults(func=get_bdevs_config)
-
-    @call_cmd
     def get_bdevs_iostat(args):
         print_dict(rpc.bdev.get_bdevs_iostat(args.client,
                                              name=args.name))
@@ -446,16 +476,21 @@ if __name__ == "__main__":
     p.set_defaults(func=set_bdev_qd_sampling_period)
 
     @call_cmd
-    def set_bdev_qos_limit_iops(args):
-        rpc.bdev.set_bdev_qos_limit_iops(args.client,
-                                         name=args.name,
-                                         ios_per_sec=args.ios_per_sec)
+    def set_bdev_qos_limit(args):
+        rpc.bdev.set_bdev_qos_limit(args.client,
+                                    name=args.name,
+                                    rw_ios_per_sec=args.rw_ios_per_sec,
+                                    rw_mbytes_per_sec=args.rw_mbytes_per_sec)
 
-    p = subparsers.add_parser('set_bdev_qos_limit_iops', help='Set QoS IOPS limit on a blockdev')
+    p = subparsers.add_parser('set_bdev_qos_limit', help='Set QoS rate limit on a blockdev')
     p.add_argument('name', help='Blockdev name to set QoS. Example: Malloc0')
-    p.add_argument('ios_per_sec',
-                   help='IOs per second limit (>=10000, example: 20000). 0 means unlimited.', type=int)
-    p.set_defaults(func=set_bdev_qos_limit_iops)
+    p.add_argument('--rw_ios_per_sec',
+                   help='R/W IOs per second limit (>=10000, example: 20000). 0 means unlimited.',
+                   type=int, required=False)
+    p.add_argument('--rw_mbytes_per_sec',
+                   help="R/W megabytes per second limit (>=10, example: 100). 0 means unlimited.",
+                   type=int, required=False)
+    p.set_defaults(func=set_bdev_qos_limit)
 
     @call_cmd
     def bdev_inject_error(args):
@@ -493,42 +528,120 @@ if __name__ == "__main__":
             node_base=args.node_base,
             nop_timeout=args.nop_timeout,
             nop_in_interval=args.nop_in_interval,
-            no_discovery_auth=args.no_discovery_auth,
-            req_discovery_auth=args.req_discovery_auth,
-            req_discovery_auth_mutual=args.req_discovery_auth_mutual,
-            discovery_auth_group=args.discovery_auth_group,
+            disable_chap=args.disable_chap,
+            require_chap=args.require_chap,
+            mutual_chap=args.mutual_chap,
+            chap_group=args.chap_group,
             max_sessions=args.max_sessions,
             max_queue_depth=args.max_queue_depth,
             max_connections_per_session=args.max_connections_per_session,
             default_time2wait=args.default_time2wait,
             default_time2retain=args.default_time2retain,
+            first_burst_length=args.first_burst_length,
             immediate_data=args.immediate_data,
             error_recovery_level=args.error_recovery_level,
             allow_duplicated_isid=args.allow_duplicated_isid,
             min_connections_per_core=args.min_connections_per_core)
 
     p = subparsers.add_parser('set_iscsi_options', help="""Set options of iSCSI subsystem""")
-    p.add_argument('-f', '--auth-file', help='Path to CHAP shared secret file for discovery session')
+    p.add_argument('-f', '--auth-file', help='Path to CHAP shared secret file')
     p.add_argument('-b', '--node-base', help='Prefix of the name of iSCSI target node')
     p.add_argument('-o', '--nop-timeout', help='Timeout in seconds to nop-in request to the initiator', type=int)
     p.add_argument('-n', '--nop-in-interval', help='Time interval in secs between nop-in requests by the target', type=int)
-    p.add_argument('-d', '--no-discovery-auth', help="""CHAP for discovery session should be disabled.
-    *** Mutually exclusive with --req-discovery-auth""", action='store_true')
-    p.add_argument('-r', '--req-discovery-auth', help="""CHAP for discovery session should be required.
-    *** Mutually exclusive with --no-discovery-auth""", action='store_true')
-    p.add_argument('-m', '--req-discovery-auth-mutual', help='CHAP for discovery session should be mutual', action='store_true')
-    p.add_argument('-g', '--discovery-auth-group', help="""Authentication group ID for discovery session.
+    p.add_argument('-d', '--disable-chap', help="""CHAP for discovery session should be disabled.
+    *** Mutually exclusive with --require-chap""", action='store_true')
+    p.add_argument('-r', '--require-chap', help="""CHAP for discovery session should be required.
+    *** Mutually exclusive with --disable-chap""", action='store_true')
+    p.add_argument('-m', '--mutual-chap', help='CHAP for discovery session should be mutual', action='store_true')
+    p.add_argument('-g', '--chap-group', help="""Authentication group ID for discovery session.
     *** Authentication group must be precreated ***""", type=int)
     p.add_argument('-a', '--max-sessions', help='Maximum number of sessions in the host.', type=int)
     p.add_argument('-q', '--max-queue-depth', help='Max number of outstanding I/Os per queue.', type=int)
     p.add_argument('-c', '--max-connections-per-session', help='Negotiated parameter, MaxConnections.', type=int)
     p.add_argument('-w', '--default-time2wait', help='Negotiated parameter, DefaultTime2Wait.', type=int)
     p.add_argument('-v', '--default-time2retain', help='Negotiated parameter, DefaultTime2Retain.', type=int)
+    p.add_argument('-s', '--first-burst-length', help='Negotiated parameter, FirstBurstLength.', type=int)
     p.add_argument('-i', '--immediate-data', help='Negotiated parameter, ImmediateData.', action='store_true')
     p.add_argument('-l', '--error-recovery-level', help='Negotiated parameter, ErrorRecoveryLevel', type=int)
     p.add_argument('-p', '--allow-duplicated-isid', help='Allow duplicated initiator session ID.', action='store_true')
     p.add_argument('-u', '--min-connections-per-core', help='Allocation unit of connections per core', type=int)
     p.set_defaults(func=set_iscsi_options)
+
+    @call_cmd
+    def set_iscsi_discovery_auth(args):
+        rpc.iscsi.set_iscsi_discovery_auth(
+            args.client,
+            disable_chap=args.disable_chap,
+            require_chap=args.require_chap,
+            mutual_chap=args.mutual_chap,
+            chap_group=args.chap_group)
+
+    p = subparsers.add_parser('set_iscsi_discovery_auth', help="""Set CHAP authentication for discovery session.""")
+    p.add_argument('-d', '--disable-chap', help="""CHAP for discovery session should be disabled.
+    *** Mutually exclusive with --require-chap""", action='store_true')
+    p.add_argument('-r', '--require-chap', help="""CHAP for discovery session should be required.
+    *** Mutually exclusive with --disable-chap""", action='store_true')
+    p.add_argument('-m', '--mutual-chap', help='CHAP for discovery session should be mutual', action='store_true')
+    p.add_argument('-g', '--chap-group', help="""Authentication group ID for discovery session.
+    *** Authentication group must be precreated ***""", type=int)
+    p.set_defaults(func=set_iscsi_discovery_auth)
+
+    def add_iscsi_auth_group(args):
+        secrets = None
+        if args.secrets:
+            secrets = [dict(u.split(":") for u in a.split(" ")) for a in args.secrets.split(",")]
+
+        rpc.iscsi.add_iscsi_auth_group(args.client, tag=args.tag, secrets=secrets)
+
+    p = subparsers.add_parser('add_iscsi_auth_group', help='Add authentication group for CHAP authentication.')
+    p.add_argument('tag', help='Authentication group tag (unique, integer > 0).', type=int)
+    p.add_argument('-c', '--secrets', help="""Comma-separated list of CHAP secrets
+<user:user_name secret:chap_secret muser:mutual_user_name msecret:mutual_chap_secret> enclosed in quotes.
+Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 msecret:ms2'""", required=False)
+    p.set_defaults(func=add_iscsi_auth_group)
+
+    @call_cmd
+    def delete_iscsi_auth_group(args):
+        rpc.iscsi.delete_iscsi_auth_group(args.client, tag=args.tag)
+
+    p = subparsers.add_parser('delete_iscsi_auth_group', help='Delete an authentication group.')
+    p.add_argument('tag', help='Authentication group tag', type=int)
+    p.set_defaults(func=delete_iscsi_auth_group)
+
+    @call_cmd
+    def add_secret_to_iscsi_auth_group(args):
+        rpc.iscsi.add_secret_to_iscsi_auth_group(
+            args.client,
+            tag=args.tag,
+            user=args.user,
+            secret=args.secret,
+            muser=args.muser,
+            msecret=args.msecret)
+
+    p = subparsers.add_parser('add_secret_to_iscsi_auth_group', help='Add a secret to an authentication group.')
+    p.add_argument('tag', help='Authentication group tag', type=int)
+    p.add_argument('-u', '--user', help='User name for one-way CHAP authentication', required=True)
+    p.add_argument('-s', '--secret', help='Secret for one-way CHAP authentication', required=True)
+    p.add_argument('-m', '--muser', help='User name for mutual CHAP authentication')
+    p.add_argument('-r', '--msecret', help='Secret for mutual CHAP authentication')
+    p.set_defaults(func=add_secret_to_iscsi_auth_group)
+
+    @call_cmd
+    def delete_secret_from_iscsi_auth_group(args):
+        rpc.iscsi.delete_secret_from_iscsi_auth_group(args.client, tag=args.tag, user=args.user)
+
+    p = subparsers.add_parser('delete_secret_from_iscsi_auth_group', help='Delete a secret from an authentication group.')
+    p.add_argument('tag', help='Authentication group tag', type=int)
+    p.add_argument('-u', '--user', help='User name for one-way CHAP authentication', required=True)
+    p.set_defaults(func=delete_secret_from_iscsi_auth_group)
+
+    @call_cmd
+    def get_iscsi_auth_groups(args):
+        print_dict(rpc.iscsi.get_iscsi_auth_groups(args.client))
+
+    p = subparsers.add_parser('get_iscsi_auth_groups',
+                              help='Display current authentication group configuration')
+    p.set_defaults(func=get_iscsi_auth_groups)
 
     @call_cmd
     def get_portal_groups(args):
@@ -624,6 +737,28 @@ if __name__ == "__main__":
     p.add_argument('-i', dest='lun_id', help="""LUN ID (integer >= 0)
     *** If LUN ID is omitted or -1, the lowest free one is assigned ***""", type=int, required=False)
     p.set_defaults(func=target_node_add_lun)
+
+    @call_cmd
+    def set_iscsi_target_node_auth(args):
+        rpc.iscsi.set_iscsi_target_node_auth(
+            args.client,
+            name=args.name,
+            chap_group=args.chap_group,
+            disable_chap=args.disable_chap,
+            require_chap=args.require_chap,
+            mutual_chap=args.mutual_chap)
+
+    p = subparsers.add_parser('set_iscsi_target_node_auth', help='Set CHAP authentication for the target node')
+    p.add_argument('name', help='Target node name (ASCII)')
+    p.add_argument('-g', '--chap-group', help="""Authentication group ID for this target node.
+    *** Authentication group must be precreated ***""", type=int, default=0)
+    p.add_argument('-d', '--disable-chap', help="""CHAP authentication should be disabled for this target node.
+    *** Mutually exclusive with --require-chap ***""", action='store_true')
+    p.add_argument('-r', '--require-chap', help="""CHAP authentication should be required for this target node.
+    *** Mutually exclusive with --disable-chap ***""", action='store_true')
+    p.add_argument('-m', '--mutual-chap', help='CHAP authentication should be mutual/bidirectional.',
+                   action='store_true')
+    p.set_defaults(func=set_iscsi_target_node_auth)
 
     @call_cmd
     def add_pg_ig_maps(args):
@@ -825,7 +960,7 @@ if __name__ == "__main__":
     # log
     @call_cmd
     def set_trace_flag(args):
-        rpc.log.set_trace_flag(args.client, args)
+        rpc.log.set_trace_flag(args.client, flag=args.flag)
 
     p = subparsers.add_parser('set_trace_flag', help='set trace flag')
     p.add_argument(
@@ -834,7 +969,7 @@ if __name__ == "__main__":
 
     @call_cmd
     def clear_trace_flag(args):
-        rpc.log.clear_trace_flag(args.client, args)
+        rpc.log.clear_trace_flag(args.client, flag=args.flag)
 
     p = subparsers.add_parser('clear_trace_flag', help='clear trace flag')
     p.add_argument(
@@ -843,14 +978,14 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_trace_flags(args):
-        print_dict(rpc.log.get_trace_flags(args.client, args))
+        print_dict(rpc.log.get_trace_flags(args.client))
 
     p = subparsers.add_parser('get_trace_flags', help='get trace flags')
     p.set_defaults(func=get_trace_flags)
 
     @call_cmd
     def set_log_level(args):
-        rpc.log.set_log_level(args.client, args)
+        rpc.log.set_log_level(args.client, level=args.level)
 
     p = subparsers.add_parser('set_log_level', help='set log level')
     p.add_argument('level', help='log level we want to set. (for example "DEBUG").')
@@ -858,14 +993,14 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_log_level(args):
-        print_dict(rpc.log.get_log_level(args.client, args))
+        print_dict(rpc.log.get_log_level(args.client))
 
     p = subparsers.add_parser('get_log_level', help='get log level')
     p.set_defaults(func=get_log_level)
 
     @call_cmd
     def set_log_print_level(args):
-        rpc.log.set_log_print_level(args.client, args)
+        rpc.log.set_log_print_level(args.client, level=args.level)
 
     p = subparsers.add_parser('set_log_print_level', help='set log print level')
     p.add_argument('level', help='log print level we want to set. (for example "DEBUG").')
@@ -873,7 +1008,7 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_log_print_level(args):
-        print_dict(rpc.log.get_log_print_level(args.client, args))
+        print_dict(rpc.log.get_log_print_level(args.client))
 
     p = subparsers.add_parser('get_log_print_level', help='get log print level')
     p.set_defaults(func=get_log_print_level)
@@ -1111,7 +1246,7 @@ if __name__ == "__main__":
     # net
     @call_cmd
     def add_ip_address(args):
-        rpc.net.add_ip_address(args.client, args)
+        rpc.net.add_ip_address(args.client, ifc_index=args.ifc_index, ip_addr=args.ip_addr)
 
     p = subparsers.add_parser('add_ip_address', help='Add IP address')
     p.add_argument('ifc_index', help='ifc index of the nic device.', type=int)
@@ -1120,7 +1255,7 @@ if __name__ == "__main__":
 
     @call_cmd
     def delete_ip_address(args):
-        rpc.net.delete_ip_address(args.client, args)
+        rpc.net.delete_ip_address(args.client, ifc_index=args.ifc_index, ip_addr=args.ip_addr)
 
     p = subparsers.add_parser('delete_ip_address', help='Delete IP address')
     p.add_argument('ifc_index', help='ifc index of the nic device.', type=int)
@@ -1129,7 +1264,7 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_interfaces(args):
-        print_dict(rpc.net.get_interfaces(args.client, args))
+        print_dict(rpc.net.get_interfaces(args.client))
 
     p = subparsers.add_parser(
         'get_interfaces', help='Display current interface list')
@@ -1158,11 +1293,37 @@ if __name__ == "__main__":
     @call_cmd
     def set_nvmf_target_config(args):
         rpc.nvmf.set_nvmf_target_config(args.client,
-                                        acceptor_poll_rate=args.acceptor_poll_rate)
+                                        acceptor_poll_rate=args.acceptor_poll_rate,
+                                        conn_sched=args.conn_sched)
 
     p = subparsers.add_parser('set_nvmf_target_config', help='Set NVMf target config')
     p.add_argument('-r', '--acceptor-poll-rate', help='Polling interval of the acceptor for incoming connections (usec)', type=int)
+    p.add_argument('-s', '--conn-sched', help="""'roundrobin' - Schedule the incoming connections from any host
+    on the cores in a round robin manner (Default). 'hostip' - Schedule all the incoming connections from a
+    specific host IP on to the same core. Connections from different IP will be assigned to cores in a round
+    robin manner""")
     p.set_defaults(func=set_nvmf_target_config)
+
+    @call_cmd
+    def nvmf_create_transport(args):
+        rpc.nvmf.nvmf_create_transport(args.client,
+                                       trtype=args.trtype,
+                                       max_queue_depth=args.max_queue_depth,
+                                       max_qpairs_per_ctrlr=args.max_qpairs_per_ctrlr,
+                                       in_capsule_data_size=args.in_capsule_data_size,
+                                       max_io_size=args.max_io_size,
+                                       io_unit_size=args.io_unit_size,
+                                       max_aq_depth=args.max_aq_depth)
+
+    p = subparsers.add_parser('nvmf_create_transport', help='Create NVMf transport')
+    p.add_argument('-t', '--trtype', help='Transport type (ex. RDMA)', type=str, required=True)
+    p.add_argument('-q', '--max-queue-depth', help='Max number of outstanding I/O per queue', type=int)
+    p.add_argument('-p', '--max-qpairs-per-ctrlr', help='Max number of SQ and CQ per controller', type=int)
+    p.add_argument('-c', '--in-capsule-data-size', help='Max number of in-capsule data size', type=int)
+    p.add_argument('-i', '--max-io-size', help='Max I/O size (bytes)', type=int)
+    p.add_argument('-u', '--io-unit-size', help='I/O unit size (bytes)', type=int)
+    p.add_argument('-a', '--max-aq-depth', help='Max number of admin cmds per AQ', type=int)
+    p.set_defaults(func=nvmf_create_transport)
 
     @call_cmd
     def get_nvmf_subsystems(args):
@@ -1225,7 +1386,7 @@ if __name__ == "__main__":
     p.add_argument("-a", "--allow-any-host", action='store_true', help="Allow any host to connect (don't enforce host NQN whitelist)")
     p.add_argument("-s", "--serial-number", help="""
     Format:  'sn' etc
-    Example: 'SPDK00000000000001'""", default='0000:00:01.0')
+    Example: 'SPDK00000000000001'""", default='00000000000000000000')
     p.add_argument("-n", "--namespaces", help="""Whitespace-separated list of namespaces
     Format:  'bdev_name1[:nsid1] bdev_name2[:nsid2] bdev_name3[:nsid3]' etc
     Example: '1:Malloc0 2:Malloc1 3:Malloc2'
@@ -1233,6 +1394,24 @@ if __name__ == "__main__":
     p.add_argument("-m", "--max-namespaces", help="Maximum number of namespaces allowed to added during active connection",
                    type=int, default=0)
     p.set_defaults(func=construct_nvmf_subsystem)
+
+    @call_cmd
+    def nvmf_subsystem_create(args):
+        rpc.nvmf.nvmf_subsystem_create(args.client,
+                                       nqn=args.nqn,
+                                       serial_number=args.serial_number,
+                                       allow_any_host=args.allow_any_host,
+                                       max_namespaces=args.max_namespaces)
+
+    p = subparsers.add_parser('nvmf_subsystem_create', help='Create an NVMe-oF subsystem')
+    p.add_argument('nqn', help='Subsystem NQN (ASCII)')
+    p.add_argument("-s", "--serial-number", help="""
+    Format:  'sn' etc
+    Example: 'SPDK00000000000001'""", default='00000000000000000000')
+    p.add_argument("-a", "--allow-any-host", action='store_true', help="Allow any host to connect (don't enforce host NQN whitelist)")
+    p.add_argument("-m", "--max-namespaces", help="Maximum number of namespaces allowed",
+                   type=int, default=0)
+    p.set_defaults(func=nvmf_subsystem_create)
 
     @call_cmd
     def delete_nvmf_subsystem(args):
@@ -1485,9 +1664,10 @@ if __name__ == "__main__":
 
     @call_cmd
     def get_vhost_controllers(args):
-        print_dict(rpc.vhost.get_vhost_controllers(args.client))
+        print_dict(rpc.vhost.get_vhost_controllers(args.client, args.name))
 
-    p = subparsers.add_parser('get_vhost_controllers', help='List vhost controllers')
+    p = subparsers.add_parser('get_vhost_controllers', help='List all or specific vhost controller(s)')
+    p.add_argument('-n', '--name', help="Name of vhost controller", required=False)
     p.set_defaults(func=get_vhost_controllers)
 
     @call_cmd
@@ -1622,6 +1802,33 @@ if __name__ == "__main__":
     p.add_argument('-w', '--pci-whitelist', help="""Whitespace-separated list of PCI addresses in
     domain:bus:device.function format or domain.bus.device.function format""")
     p.set_defaults(func=scan_ioat_copy_engine)
+
+    # send_nvme_cmd
+    @call_cmd
+    def send_nvme_cmd(args):
+        print_dict(rpc.nvme.send_nvme_cmd(args.client,
+                                          name=args.nvme_name,
+                                          cmd_type=args.cmd_type,
+                                          data_direction=args.data_direction,
+                                          cmdbuf=args.cmdbuf,
+                                          data=args.data,
+                                          metadata=args.metadata,
+                                          data_len=args.data_length,
+                                          metadata_len=args.metadata_length,
+                                          timeout_ms=args.timeout_ms))
+
+    p = subparsers.add_parser('send_nvme_cmd', help='NVMe passthrough cmd.')
+    p.add_argument('-n', '--nvme-name', help="""Name of the operating NVMe controller""")
+    p.add_argument('-t', '--cmd-type', help="""Type of nvme cmd. Valid values are: admin, io""")
+    p.add_argument('-r', '--data-direction', help="""Direction of data transfer. Valid values are: c2h, h2c""")
+    p.add_argument('-c', '--cmdbuf', help="""NVMe command encoded by base64 urlsafe""")
+    p.add_argument('-d', '--data', help="""Data transferring to controller from host, encoded by base64 urlsafe""")
+    p.add_argument('-m', '--metadata', help="""Metadata transferring to controller from host, encoded by base64 urlsafe""")
+    p.add_argument('-D', '--data-length', help="""Data length required to transfer from controller to host""", type=int)
+    p.add_argument('-M', '--metadata-length', help="""Metadata length required to transfer from controller to host""", type=int)
+    p.add_argument('-T', '--timeout-ms',
+                   help="""Command execution timeout value, in milliseconds,  if 0, don't track timeout""", type=int, default=0)
+    p.set_defaults(func=send_nvme_cmd)
 
     args = parser.parse_args()
 

@@ -230,8 +230,8 @@ Example response:
     "set_iscsi_options",
     "set_bdev_options",
     "set_bdev_qos_limit_iops",
+    "set_bdev_qos_limit",
     "delete_bdev",
-    "get_bdevs_config",
     "get_bdevs",
     "get_bdevs_iostat",
     "get_subsystem_config",
@@ -372,7 +372,7 @@ name                    | Required | string      | SPDK subsystem name
 
 ### Response
 
-The response is current configuration of the specfied SPDK subsystem.
+The response is current configuration of the specified SPDK subsystem.
 Null is returned if it is not retrievable by the get_subsystem_config method and empty array is returned if it is empty.
 
 ### Example
@@ -576,11 +576,20 @@ Example response:
   "id": 1,
   "result": [
     {
+      "tick_rate": 2200000000
+    },
+    {
       "name": "Nvme0n1",
-      "bytes_read": 34051522560,
-      "num_read_ops": 8312910,
+      "bytes_read": 36864,
+      "num_read_ops": 2,
       "bytes_written": 0,
-      "num_write_ops": 0
+      "num_write_ops": 0,
+      "read_latency_ticks": 178904,
+      "write_latency_ticks": 0,
+      "queue_depth_polling_period": 2,
+      "queue_depth": 0,
+      "io_time": 0,
+      "weighted_io_time": 0
     }
   ]
 }
@@ -619,16 +628,17 @@ Example response:
 }
 ~~~
 
-## set_bdev_qos_limit_iops {#rpc_set_bdev_qos_limit_iops}
+## set_bdev_qos_limit {#rpc_set_bdev_qos_limit}
 
-Set an IOPS-based quality of service rate limit on a bdev.
+Set the quality of service rate limit on a bdev.
 
 ### Parameters
 
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 name                    | Required | string      | Block device name
-ios_per_sec             | Required | number      | Number of I/Os per second to allow. 0 means unlimited.
+rw_ios_per_sec          | Optional | number      | Number of R/W I/Os per second to allow. 0 means unlimited.
+rw_mbytes_per_sec       | Optional | number      | Number of R/W megabytes per second to allow. 0 means unlimited.
 
 ### Example
 
@@ -637,10 +647,11 @@ Example request:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "set_bdev_qos_limit_iops",
+  "method": "set_bdev_qos_limit",
   "params": {
     "name": "Malloc0"
-    "ios_per_sec": 20000
+    "rw_ios_per_sec": 20000
+    "rw_mbytes_per_sec": 100
   }
 }
 ~~~
@@ -1022,6 +1033,54 @@ Example response:
 }
 ~~~
 
+## get_nvme_controllers {#rpc_get_nvme_controllers}
+
+Get information about NVMe controllers.
+
+### Parameters
+
+The user may specify no parameters in order to list all NVMe controllers, or one NVMe controller may be
+specified by name.
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+name                    | Optional | string      | NVMe controller name
+
+### Response
+
+The response is an array of objects containing information about the requested NVMe controllers.
+
+### Example
+
+Example request:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "get_nvme_controllers",
+  "params": {
+    "name": "Nvme0"
+  }
+}
+~~~
+
+Example response:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "name": "Nvme0",
+      "trid": {
+        "trtype": "PCIe",
+        "traddr": "0000:05:00.0"
+      }
+    }
+  ]
+}
+~~~
+
 ## delete_nvme_controller {#rpc_delete_nvme_controller}
 
 Delete NVMe controller.
@@ -1068,9 +1127,21 @@ This method is available only if SPDK was build with Ceph RBD support.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 name                    | Optional | string      | Bdev name
+user_id                 | Optional | string      | Ceph ID (i.e. admin, not client.admin)
 pool_name               | Required | string      | Pool name
 rbd_name                | Required | string      | Image name
 block_size              | Required | number      | Block size
+config                  | Optional | string map  | Explicit librados configuration
+
+If no config is specified, Ceph configuration files must exist with
+all relevant settings for accessing the pool. If a config map is
+passed, the configuration files are ignored and instead all key/value
+pairs are passed to rados_conf_set to configure cluster access. In
+practice, "mon_host" (= list of monitor address+port) and "key" (= the
+secret key stored in Ceph keyrings) are enough.
+
+When accessing the image as some user other than "admin" (the
+default), the "user_id" has to be set.
 
 ### Result
 
@@ -1078,13 +1149,17 @@ Name of newly created bdev.
 
 ### Example
 
-Example request:
+Example request with `key` from `/etc/ceph/ceph.client.admin.keyring`:
 
 ~~~
 {
   "params": {
     "pool_name": "rbd",
     "rbd_name": "foo",
+    "config": {
+      "mon_host": "192.168.7.1:6789,192.168.7.2:6789",
+      "key": "AQDwf8db7zR1GRAA5k7NKXjS5S5V4mntwUDnGQ==",
+    }
     "block_size": 4096
   },
   "jsonrpc": "2.0",
@@ -1349,7 +1424,7 @@ Example response:
 
 ## pmem_pool_info {#rpc_pmem_pool_info}
 
-Retrive basic information about PMDK memory pool.
+Retrieve basic information about PMDK memory pool.
 
 This method is available only if SPDK was built with PMDK support.
 
@@ -1769,27 +1844,30 @@ This RPC may only be called before SPDK subsystems have been initialized. This R
 
 ### Parameters
 
-Name                        | Type    | Description
---------------------------- | --------| -----------
-auth_file                   | string  | Path to CHAP shared secret file for discovery session (default: "/usr/local/etc/spdk/auth.conf")
-node_base                   | string  | Prefix of the name of iSCSI target node (default: "iqn.2016-06.io.spdk")
-nop_timeout                 | number  | Timeout in seconds to nop-in request to the initiator (default: 60)
-nop_in_interval             | number  | Time interval in secs between nop-in requests by the target (default: 30)
-no_discovery_auth           | boolean | CHAP for discovery session should be disabled (default: `false`)
-req_discovery_auth          | boolean | CHAP for discovery session should be required (default: `false`)
-req_discovery_auth_mutual   | boolean | CHAP for discovery session should be unidirectional (`false`) or bidirectional (`true`) (default: `false`)
-discovery_auth_group        | number  | CHAP group ID for discovery session (default: 0)
-max_sessions                | number  | Maximum number of sessions in the host (default: 128)
-max_queue_depth             | number  | Maximum number of outstanding I/Os per queue (default: 64)
-max_connections_per_session | number  | Session specific parameter, MaxConnections (default: 2)
-default_time2wait           | number  | Session specific parameter, DefaultTime2Wait (default: 2)
-default_time2retain         | number  | Session specific parameter, DefaultTime2Retain (default: 20)
-immediate_data              | boolean | Session specific parameter, ImmediateData (default: `true`)
-error_recovery_level        | number  | Session specific parameter, ErrorRecoveryLevel (default: 0)
-allow_duplicated_isid       | boolean | Allow duplicated initiator session ID (default: `false`)
-min_connections_per_core    | number  | Allocation unit of connections per core (default: 4)
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | ------- | -----------
+auth_file                   | Optional | string  | Path to CHAP shared secret file (default: "")
+node_base                   | Optional | string  | Prefix of the name of iSCSI target node (default: "iqn.2016-06.io.spdk")
+nop_timeout                 | Optional | number  | Timeout in seconds to nop-in request to the initiator (default: 60)
+nop_in_interval             | Optional | number  | Time interval in secs between nop-in requests by the target (default: 30)
+disable_chap                | Optional | boolean | CHAP for discovery session should be disabled (default: `false`)
+require_chap                | Optional | boolean | CHAP for discovery session should be required (default: `false`)
+mutual_chap                 | Optional | boolean | CHAP for discovery session should be unidirectional (`false`) or bidirectional (`true`) (default: `false`)
+chap_group                  | Optional | number  | CHAP group ID for discovery session (default: 0)
+max_sessions                | Optional | number  | Maximum number of sessions in the host (default: 128)
+max_queue_depth             | Optional | number  | Maximum number of outstanding I/Os per queue (default: 64)
+max_connections_per_session | Optional | number  | Session specific parameter, MaxConnections (default: 2)
+default_time2wait           | Optional | number  | Session specific parameter, DefaultTime2Wait (default: 2)
+default_time2retain         | Optional | number  | Session specific parameter, DefaultTime2Retain (default: 20)
+first_burst_length          | Optional | number  | Session specific parameter, FirstBurstLength (default: 8192)
+immediate_data              | Optional | boolean | Session specific parameter, ImmediateData (default: `true`)
+error_recovery_level        | Optional | number  | Session specific parameter, ErrorRecoveryLevel (default: 0)
+allow_duplicated_isid       | Optional | boolean | Allow duplicated initiator session ID (default: `false`)
+min_connections_per_core    | Optional | number  | Allocation unit of connections per core (default: 4)
 
-Parameters `no_discovery_auth` and `req_discovery_auth` are mutually exclusive.
+To load CHAP shared secret file, its path is required to specify explicitly in the parameter `auth_file`.
+
+Parameters `disable_chap` and `require_chap` are mutually exclusive. Parameters `no_discovery_auth`, `req_discovery_auth`, `req_discovery_auth_mutual`, and `discovery_auth_group` are still available instead of `disable_chap`, `require_chap`, `mutual_chap`, and `chap_group`, respectivey but will be removed in future releases.
 
 ### Example
 
@@ -1800,13 +1878,14 @@ Example request:
   "params": {
     "allow_duplicated_isid": true,
     "default_time2retain": 60,
+    "first_burst_length": 8192,
     "immediate_data": true,
     "node_base": "iqn.2016-06.io.spdk",
     "max_sessions": 128,
     "nop_timeout": 30,
     "nop_in_interval": 30,
     "auth_file": "/usr/local/etc/spdk/auth.conf",
-    "no_discovery_auth": true,
+    "disable_chap": true,
     "default_time2wait": 2
   },
   "jsonrpc": "2.0",
@@ -1855,11 +1934,12 @@ Example response:
   "result": {
     "allow_duplicated_isid": true,
     "default_time2retain": 60,
+    "first_burst_length": 8192,
     "immediate_data": true,
     "node_base": "iqn.2016-06.io.spdk",
-    "req_discovery_auth_mutual": false,
+    "mutual_chap": false,
     "nop_in_interval": 30,
-    "discovery_auth_group": 0,
+    "chap_group": 0,
     "max_connections_per_session": 2,
     "max_queue_depth": 64,
     "nop_timeout": 30,
@@ -1867,10 +1947,278 @@ Example response:
     "error_recovery_level": 0,
     "auth_file": "/usr/local/etc/spdk/auth.conf",
     "min_connections_per_core": 4,
-    "no_discovery_auth": true,
+    "disable_chap": true,
     "default_time2wait": 2,
-    "req_discovery_auth": false
+    "require_chap": false
   }
+}
+~~~
+## set_iscsi_discovery_auth method {#rpc_set_iscsi_discovery_auth}
+
+Set CHAP authentication for sessions dynamically.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+disable_chap                | Optional | boolean | CHAP for discovery session should be disabled (default: `false`)
+require_chap                | Optional | boolean | CHAP for discovery session should be required (default: `false`)
+mutual_chap                 | Optional | boolean | CHAP for discovery session should be unidirectional (`false`) or bidirectional (`true`) (default: `false`)
+chap_group                  | Optional | number  | CHAP group ID for discovery session (default: 0)
+
+Parameters `disable_chap` and `require_chap` are mutually exclusive.
+
+### Example
+
+Example request:
+
+~~~
+request:
+{
+  "params": {
+    "chap_group": 1,
+    "require_chap": true,
+    "mutual_chap": true
+  },
+  "jsonrpc": "2.0",
+  "method": "set_iscsi_discovery_auth",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+## add_iscsi_auth_group method {#rpc_add_iscsi_auth_group}
+
+Add an authentication group for CHAP authentication.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+tag                         | Required | number  | Authentication group tag (unique, integer > 0)
+secrets                     | Optional | array   | Array of @ref rpc_add_iscsi_auth_group_secret objects
+
+### secret {#rpc_add_iscsi_auth_group_secret}
+
+Name                        | Optional | Type    | Description
+--------------------------- | ---------| --------| -----------
+user                        | Required | string  | Unidirectional CHAP name
+secret                      | Required | string  | Unidirectional CHAP secret
+muser                       | Optional | string  | Bidirectional CHAP name
+msecret                     | Optional | string  | Bidirectional CHAP secret
+
+### Example
+
+Example request:
+
+~~~
+{
+  "params": {
+    "secrets": [
+      {
+        "muser": "mu1",
+        "secret": "s1",
+        "user": "u1",
+        "msecret": "ms1"
+      }
+    ],
+    "tag": 2
+  },
+  "jsonrpc": "2.0",
+  "method": "add_iscsi_auth_group",
+  "id": 1
+}
+~~~
+
+Example response:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+## delete_iscsi_auth_group method {#rpc_delete_iscsi_auth_group}
+
+Delete an existing authentication group for CHAP authentication.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+tag                         | Required | number  | Authentication group tag (unique, integer > 0)
+
+### Example
+
+Example request:
+
+~~~
+{
+  "params": {
+    "tag": 2
+  },
+  "jsonrpc": "2.0",
+  "method": "delete_iscsi_auth_group",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+## get_iscsi_auth_groups {#rpc_get_iscsi_auth_groups}
+
+Show information about all existing authentication group for CHAP authentication.
+
+### Parameters
+
+This method has no parameters.
+
+### Result
+
+Array of objects describing authentication group.
+
+Name                        | Type    | Description
+--------------------------- | --------| -----------
+tag                         | number  | Authentication group tag
+secrets                     | array   | Array of @ref rpc_add_iscsi_auth_group_secret objects
+
+### Example
+
+Example request:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "method": "get_iscsi_auth_groups",
+  "id": 1
+}
+~~~
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "secrets": [
+        {
+          "muser": "mu1",
+          "secret": "s1",
+          "user": "u1",
+          "msecret": "ms1"
+        }
+      ],
+      "tag": 1
+    },
+    {
+      "secrets": [
+        {
+          "secret": "s2",
+          "user": "u2"
+        }
+      ],
+      "tag": 2
+    }
+  ]
+}
+~~~
+
+## add_secret_to_iscsi_auth_group {#rpc_add_secret_to_iscsi_auth_group}
+
+Add a secret to an existing authentication group for CHAP authentication.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+tag                         | Required | number  | Authentication group tag (unique, integer > 0)
+user                        | Required | string  | Unidirectional CHAP name
+secret                      | Required | string  | Unidirectional CHAP secret
+muser                       | Optional | string  | Bidirectional CHAP name
+msecret                     | Optional | string  | Bidirectional CHAP secret
+
+### Example
+
+Example request:
+
+~~~
+{
+  "params": {
+    "muser": "mu3",
+    "secret": "s3",
+    "tag": 2,
+    "user": "u3",
+    "msecret": "ms3"
+  },
+  "jsonrpc": "2.0",
+  "method": "add_secret_to_iscsi_auth_group",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+## delete_secret_from_iscsi_auth_group {#rpc_delete_secret_from_iscsi_auth_group}
+
+Delete a secret from an existing authentication group for CHAP authentication.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+tag                         | Required | number  | Authentication group tag (unique, integer > 0)
+user                        | Required | string  | Unidirectional CHAP name
+
+### Example
+
+Example request:
+
+~~~
+{
+  "params": {
+    "tag": 2,
+    "user": "u3"
+  },
+  "jsonrpc": "2.0",
+  "method": "delete_secret_from_iscsi_auth_group",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
 }
 ~~~
 
@@ -2142,6 +2490,8 @@ chap_group                  | Optional | number  | Authentication group ID for t
 header_digest               | Optional | boolean | Header Digest should be required for this target node
 data_digest                 | Optional | boolean | Data Digest should be required for this target node
 
+Parameters `disable_chap` and `require_chap` are mutually exclusive.
+
 ### Example
 
 Example request:
@@ -2175,6 +2525,50 @@ Example request:
   },
   "jsonrpc": "2.0",
   "method": "construct_target_node",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+## set_iscsi_target_node_auth method {#rpc_set_iscsi_target_node_auth}
+
+Set CHAP authentication to an existing iSCSI target node.
+
+### Parameters
+
+Name                        | Optional | Type    | Description
+--------------------------- | -------- | --------| -----------
+name                        | Required | string  | Target node name (ASCII)
+disable_chap                | Optional | boolean | CHAP authentication should be disabled for this target
+require_chap                | Optional | boolean | CHAP authentication should be required for this target
+mutual_chap                 | Optional | boolean | CHAP authentication should be bidirectional (`true`) or unidirectional (`false`)
+chap_group                  | Optional | number  | Authentication group ID for this target node
+
+Parameters `disable_chap` and `require_chap` are mutually exclusive.
+
+### Example
+
+Example request:
+
+~~~
+{
+  "params": {
+    "chap_group": 1,
+    "require_chap": true,
+    "name": "iqn.2016-06.io.spdk:target1",
+    "mutual_chap": true
+  },
+  "jsonrpc": "2.0",
+  "method": "set_iscsi_target_node_auth",
   "id": 1
 }
 ~~~
@@ -2614,7 +3008,7 @@ Example response:
 }
 ~~~
 
-## construct_nvmf_subsystem method {#rpc_construct_nvmf_subsystem}
+## nvmf_subsystem_create method {#rpc_nvmf_subsystem_create}
 
 Construct an NVMe over Fabrics target subsystem.
 
@@ -2623,31 +3017,9 @@ Construct an NVMe over Fabrics target subsystem.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 nqn                     | Required | string      | Subsystem NQN
-listen_addresses        | Optional | array       | Array of @ref rpc_construct_nvmf_subsystem_listen_address objects
-hosts                   | Optional | array       | Array of strings containing allowed host NQNs. Default: No hosts allowed.
-allow_any_host          | Optional | boolean     | Allow any host (`true`) or enforce allowed host whitelist (`false`). Default: `false`.
-serial_number           | Required | string      | Serial number of virtual controller
-namespaces              | Optional | array       | Array of @ref rpc_construct_nvmf_subsystem_namespace objects. Default: No namespaces.
+serial_number           | Optional | string      | Serial number of virtual controller
 max_namespaces          | Optional | number      | Maximum number of namespaces that can be attached to the subsystem. Default: 0 (Unlimited)
-
-### listen_address {#rpc_construct_nvmf_subsystem_listen_address}
-
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-trtype                  | Required | string      | Transport type ("RDMA")
-adrfam                  | Required | string      | Address family ("IPv4", "IPv6", "IB", or "FC")
-traddr                  | Required | string      | Transport address
-trsvcid                 | Required | string      | Transport service ID
-
-### namespace {#rpc_construct_nvmf_subsystem_namespace}
-
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-nsid                    | Optional | number      | Namespace ID between 1 and 4294967294, inclusive. Default: Automatically assign NSID.
-bdev_name               | Required | string      | Name of bdev to expose as a namespace.
-nguid                   | Optional | string      | 16-byte namespace globally unique identifier in hexadecimal (e.g. "ABCDEF0123456789ABCDEF0123456789")
-eui64                   | Optional | string      | 8-byte namespace EUI-64 in hexadecimal (e.g. "ABCDEF0123456789")
-uuid                    | Optional | string      | RFC 4122 UUID (e.g. "ceccf520-691e-4b46-9546-34af789907c5")
+allow_any_host          | Optional | boolean     | Allow any host (`true`) or enforce allowed host whitelist (`false`). Default: `false`.
 
 ### Example
 
@@ -2657,27 +3029,11 @@ Example request:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "construct_nvmf_subsystem",
+  "method": "nvmf_subsystem_create",
   "params": {
     "nqn": "nqn.2016-06.io.spdk:cnode1",
-    "listen_addresses": [
-      {
-        "trtype": "RDMA",
-        "adrfam": "IPv4",
-        "traddr": "192.168.0.123",
-        "trsvcid: "4420"
-      }
-    ],
-    "hosts": [
-      "nqn.2016-06.io.spdk:host1",
-      "nqn.2016-06.io.spdk:host2"
-    ],
     "allow_any_host": false,
     "serial_number": "abcdef",
-    "namespaces": [
-      {"nsid": 1, "bdev_name": "Malloc2"},
-      {"nsid": 2, "bdev_name": "Nvme0n1"}
-    ]
   }
 }
 ~~~
@@ -2736,7 +3092,16 @@ Add a new listen address to an NVMe-oF subsystem.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 nqn                     | Required | string      | Subsystem NQN
-listen_address          | Required | object      | @ref rpc_construct_nvmf_subsystem_listen_address object
+listen_address          | Required | object      | @ref rpc_nvmf_listen_address object
+
+### listen_address {#rpc_nvmf_listen_address}
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+trtype                  | Required | string      | Transport type ("RDMA")
+adrfam                  | Required | string      | Address family ("IPv4", "IPv6", "IB", or "FC")
+traddr                  | Required | string      | Transport address
+trsvcid                 | Required | string      | Transport service ID
 
 ### Example
 
@@ -2778,7 +3143,17 @@ Add a namespace to a subsystem. The namespace ID is returned as the result.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 nqn                     | Required | string      | Subsystem NQN
-namespace               | Required | object      | @ref rpc_construct_nvmf_subsystem_namespace object
+namespace               | Required | object      | @ref rpc_nvmf_namespace object
+
+### namespace {#rpc_nvmf_namespace}
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+nsid                    | Optional | number      | Namespace ID between 1 and 4294967294, inclusive. Default: Automatically assign NSID.
+bdev_name               | Required | string      | Name of bdev to expose as a namespace.
+nguid                   | Optional | string      | 16-byte namespace globally unique identifier in hexadecimal (e.g. "ABCDEF0123456789ABCDEF0123456789")
+eui64                   | Optional | string      | 8-byte namespace EUI-64 in hexadecimal (e.g. "ABCDEF0123456789")
+uuid                    | Optional | string      | RFC 4122 UUID (e.g. "ceccf520-691e-4b46-9546-34af789907c5")
 
 ### Example
 
@@ -3327,15 +3702,21 @@ Example response:
 
 ## get_vhost_controllers {#rpc_get_vhost_controllers}
 
-Display information about all vhost controllers.
+Display information about all or specific vhost controller(s).
 
 ### Parameters
 
-This method has no parameters.
+The user may specify no parameters in order to list all controllers, or a controller may be
+specified by name.
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+name                    | Optional | string      | Vhost controller name
+
 
 ### Response {#rpc_get_vhost_controllers_response}
 
-Response is an array of objects describing each controllers. Common fields are:
+Response is an array of objects describing requested controller(s). Common fields are:
 
 Name                    | Type        | Description
 ----------------------- | ----------- | -----------
@@ -3970,5 +4351,64 @@ Example response:
   "jsonrpc": "2.0",
   "id": 1,
   "result": true
+}
+~~~
+
+## send_nvme_cmd {#rpc_send_nvme_cmd}
+
+Send NVMe command directly to NVMe controller or namespace. Parameters and responses encoded by base64 urlsafe need further processing.
+
+Notice: send_nvme_cmd requires user to guarentee the correctness of NVMe command itself, and also optional parameters. Illegal command contents or mismatching buffer size may result in unpredictable behavior.
+
+### Parameters
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+name                    | Required | string      | Name of the operating NVMe controller
+cmd_type                | Required | string      | Type of nvme cmd. Valid values are: admin, io
+data_direction          | Required | string      | Direction of data transfer. Valid values are: c2h, h2c
+cmdbuf                  | Required | string      | NVMe command encoded by base64 urlsafe
+data                    | Optional | string      | Data transferring to controller from host, encoded by base64 urlsafe
+metadata                | Optional | string      | Metadata transferring to controller from host, encoded by base64 urlsafe
+data_len                | Optional | number      | Data length required to transfer from controller to host
+metadata_len            | Optional | number      | Metadata length required to transfer from controller to host
+timeout_ms              | Optional | number      | Command execution timeout value, in milliseconds
+
+### Response
+
+Name                    | Type        | Description
+----------------------- | ----------- | -----------
+cpl                     | string      | NVMe completion queue entry, encoded by base64 urlsafe
+data                    | string      | Data transferred from controller to host, encoded by base64 urlsafe
+metadata                | string      | Metadata transferred from controller to host, encoded by base64 urlsafe
+
+### Example
+
+Example request:
+~~~
+{
+  "jsonrpc": "2.0",
+  "method": "send_nvme_cmd",
+  "id": 1,
+  "params": {
+    "name": "Nvme0",
+    "cmd_type": "admin"
+    "data_direction": "c2h",
+    "cmdbuf": "BgAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAsGUs9P5_AAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "data_len": 60,
+  }
+}
+~~~
+
+Example response:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result":  {
+    "cpl": "AAAAAAAAAAARAAAAWrmwABAA==",
+    "data": "sIjg6AAAAACwiODoAAAAALCI4OgAAAAAAAYAAREAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+
 }
 ~~~

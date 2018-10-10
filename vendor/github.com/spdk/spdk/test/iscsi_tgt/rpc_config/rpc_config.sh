@@ -9,20 +9,20 @@ timing_enter rpc_config
 
 # $1 = test type (posix/vpp)
 if [ "$1" == "posix" ] || [ "$1" == "vpp" ]; then
-       TEST_TYPE=$1
+	TEST_TYPE=$1
 else
-       echo "No iSCSI test type specified"
-       exit 1
+	echo "No iSCSI test type specified"
+	exit 1
 fi
 
 MALLOC_BDEV_SIZE=64
 
 rpc_py=$rootdir/scripts/rpc.py
-rpc_config_py="python $testdir/rpc_config.py"
+rpc_config_py="$testdir/rpc_config.py"
 
 timing_enter start_iscsi_tgt
 
-$ISCSI_APP -w &
+$ISCSI_APP --wait-for-rpc &
 pid=$!
 echo "Process pid: $pid"
 

@@ -36,6 +36,7 @@
 #include "common/lib/test_env.c"
 #include "unit/lib/json_mock.c"
 
+#include "spdk/config.h"
 /* HACK: disable VTune integration so the unit test doesn't need VTune headers and libs to build */
 #undef SPDK_CONFIG_VTUNE
 
@@ -48,10 +49,28 @@ DEFINE_STUB(spdk_conf_section_get_nmval, char *,
 	    (struct spdk_conf_section *sp, const char *key, int idx1, int idx2), NULL);
 DEFINE_STUB(spdk_conf_section_get_intval, int, (struct spdk_conf_section *sp, const char *key), -1);
 
+struct spdk_trace_histories *g_trace_histories;
+DEFINE_STUB_V(spdk_trace_add_register_fn, (struct spdk_trace_register_fn *reg_fn));
+DEFINE_STUB_V(spdk_trace_register_owner, (uint8_t type, char id_prefix));
+DEFINE_STUB_V(spdk_trace_register_object, (uint8_t type, char id_prefix));
+DEFINE_STUB_V(spdk_trace_register_description, (const char *name, const char *short_name,
+		uint16_t tpoint_id, uint8_t owner_type,
+		uint8_t object_type, uint8_t new_object,
+		uint8_t arg1_is_ptr, const char *arg1_name));
+DEFINE_STUB_V(_spdk_trace_record, (uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id,
+				   uint32_t size, uint64_t object_id, uint64_t arg1));
+
 static void
 _part_send_msg(spdk_thread_fn fn, void *ctx, void *thread_ctx)
 {
 	fn(ctx);
+}
+
+static void
+_part_cleanup(struct spdk_bdev_part *part)
+{
+	free(part->internal.bdev.name);
+	free(part->internal.bdev.product_name);
 }
 
 void
@@ -114,18 +133,16 @@ part_test(void)
 
 	SPDK_CU_ASSERT_FATAL(base != NULL);
 
-	spdk_bdev_part_construct(&part1, base, "test1", 0, 100, "test");
-	spdk_bdev_part_construct(&part2, base, "test2", 100, 100, "test");
+	rc = spdk_bdev_part_construct(&part1, base, "test1", 0, 100, "test");
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+	rc = spdk_bdev_part_construct(&part2, base, "test2", 100, 100, "test");
+	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	spdk_bdev_part_base_hotremove(&bdev_base, &tailq);
 
-	/*
-	 * The base device was removed - ensure that the partition vbdevs were
-	 *  removed from the base's vbdev list.
-	 */
-	CU_ASSERT(bdev_base.vbdevs_cnt == 0);
-
 	spdk_bdev_part_base_free(base);
+	_part_cleanup(&part1);
+	_part_cleanup(&part2);
 	spdk_bdev_unregister(&bdev_base, NULL, NULL);
 }
 

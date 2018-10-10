@@ -26,6 +26,7 @@ The development kit currently includes:
 * [Unit Tests](#tests)
 * [Vagrant](#vagrant)
 * [Advanced Build Options](#advanced)
+* [Shared libraries](#shared)
 * [Hugepages and Device Binding](#huge)
 * [Example Code](#examples)
 * [Contributing](#contributing)
@@ -103,12 +104,12 @@ Details on the Vagrant setup can be found in the
 ## Advanced Build Options
 
 Optional components and other build-time configuration are controlled by
-settings in two Makefile fragments in the root of the repository. `CONFIG`
-contains the base settings. Running the `configure` script generates a new
-file, `CONFIG.local`, that contains overrides to the base `CONFIG` file. For
-advanced configuration, there are a number of additional options to `configure`
-that may be used, or `CONFIG.local` can simply be created and edited by hand. A
-description of all possible options is located in `CONFIG`.
+settings in the Makefile configuration file in the root of the repository. `CONFIG`
+contains the base settings for the `configure` script. This script generates a new
+file, `mk/config.mk`, that contains final build settings. For advanced configuration,
+there are a number of additional options to `configure` that may be used, or
+`mk/config.mk` can simply be created and edited by hand. A description of all
+possible options is located in `CONFIG`.
 
 Boolean (on/off) options are configured with a 'y' (yes) or 'n' (no). For
 example, this line of `CONFIG` controls whether the optional RDMA (libibverbs)
@@ -116,7 +117,7 @@ support is enabled:
 
 	CONFIG_RDMA?=n
 
-To enable RDMA, this line may be added to `CONFIG.local` with a 'y' instead of
+To enable RDMA, this line may be added to `mk/config.mk` with a 'y' instead of
 'n'. For the majority of options this can be done using the `configure` script.
 For example:
 
@@ -124,7 +125,7 @@ For example:
 ./configure --with-rdma
 ~~~
 
-Additionally, `CONFIG` options may also be overrriden on the `make` command
+Additionally, `CONFIG` options may also be overridden on the `make` command
 line:
 
 ~~~{.sh}
@@ -132,8 +133,10 @@ make CONFIG_RDMA=y
 ~~~
 
 Users may wish to use a version of DPDK different from the submodule included
-in the SPDK repository.  To specify an alternate DPDK installation, run
-configure with the --with-dpdk option.  For example:
+in the SPDK repository.  Note, this includes the ability to build not only
+from DPDK sources, but also just with the includes and libraries
+installed via the dpdk and dpdk-devel packages.  To specify an alternate DPDK
+installation, run configure with the --with-dpdk option.  For example:
 
 Linux:
 
@@ -150,10 +153,36 @@ gmake
 ~~~
 
 The options specified on the `make` command line take precedence over the
-default values in `CONFIG` and `CONFIG.local`. This can be useful if you, for
-example, generate a `CONFIG.local` using the `configure` script and then have
-one or two options (i.e. debug builds) that you wish to turn on and off
-frequently.
+values in `mk/config.mk`. This can be useful if you, for example, generate
+a `mk/config.mk` using the `configure` script and then have one or two
+options (i.e. debug builds) that you wish to turn on and off frequently.
+
+<a id="shared"></a>
+## Shared libraries
+
+By default, the build of the SPDK yields static libraries against which
+the SPDK applications and examples are linked.
+Configure option `--with-shared` provides the ability to produce SPDK shared
+libraries, in addition to the default static ones.  Use of this flag also
+results in the SPDK executables linked to the shared versions of libraries.
+SPDK shared libraries by default, are located in `./build/lib`.  This includes
+the single SPDK shared lib encompassing all of the SPDK static libs
+(`libspdk.so`) as well as individual SPDK shared libs corresponding to each
+of the SPDK static ones.
+
+In order to start a SPDK app linked with SPDK shared libraries, make sure
+to do the following steps:
+- run ldconfig specifying the directory containing SPDK shared libraries
+- provide proper `LD_LIBRARY_PATH`
+
+Linux:
+
+~~~{.sh}
+./configure --with-shared
+make
+ldconfig -v -n ./build/lib
+LD_LIBRARY_PATH=./build/lib/ ./app/spdk_tgt/spdk_tgt
+~~~
 
 <a id="huge"></a>
 ## Hugepages and Device Binding
@@ -188,5 +217,5 @@ vfio.
 ## Contributing
 
 For additional details on how to get more involved in the community, including
-[contributing code](http://www.spdk.io/development) and participating in discussions and other activiites, please
+[contributing code](http://www.spdk.io/development) and participating in discussions and other activities, please
 refer to [spdk.io](http://www.spdk.io/community)

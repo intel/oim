@@ -37,7 +37,7 @@
 # ENV_LIBS
 # ENV_LINKER_ARGS
 
-DPDK_DIR ?= $(CONFIG_DPDK_DIR)
+DPDK_DIR = $(CONFIG_DPDK_DIR)
 
 export DPDK_ABS_DIR = $(abspath $(DPDK_DIR))
 
@@ -78,14 +78,25 @@ ifneq (, $(wildcard $(DPDK_ABS_DIR)/lib/librte_bus_pci.*))
 DPDK_LIB_LIST += rte_bus_pci
 endif
 
+ifeq ($(CONFIG_CRYPTO),y)
+DPDK_LIB_LIST += rte_cryptodev rte_reorder rte_bus_vdev rte_pmd_aesni_mb rte_pmd_qat rte_mbuf
+endif
+
+ifneq (, $(wildcard $(DPDK_ABS_DIR)/lib/librte_kvargs.*))
+DPDK_LIB_LIST += rte_kvargs
+endif
+
 DPDK_LIB = $(DPDK_LIB_LIST:%=$(DPDK_ABS_DIR)/lib/lib%$(DPDK_LIB_EXT))
+ifeq ($(CONFIG_CRYPTO),y)
+DPDK_LIB += $(SPDK_ROOT_DIR)/intel-ipsec-mb/libIPSec_MB.a
+endif
 
 # SPDK memory registration requires experimental (deprecated) rte_memory API for DPDK 18.05
 ENV_CFLAGS = $(DPDK_INC) -Wno-deprecated-declarations
 ENV_CXXFLAGS = $(ENV_CFLAGS)
-ENV_DPDK_FILE = $(call spdk_lib_list_to_files,env_dpdk)
+ENV_DPDK_FILE = $(call spdk_lib_list_to_static_libs,env_dpdk)
 ENV_LIBS = $(ENV_DPDK_FILE) $(DPDK_LIB)
-ENV_LINKER_ARGS = $(ENV_DPDK_FILE) -Wl,--start-group -Wl,--whole-archive $(DPDK_LIB) -Wl,--end-group -Wl,--no-whole-archive
+ENV_LINKER_ARGS = $(ENV_DPDK_FILE) -Wl,--whole-archive $(DPDK_LIB) -Wl,--no-whole-archive
 
 ifneq (,$(wildcard $(DPDK_INC_DIR)/rte_config.h))
 ifneq (,$(shell grep -e "define RTE_LIBRTE_VHOST_NUMA 1" -e "define RTE_EAL_NUMA_AWARE_HUGEPAGES 1" $(DPDK_INC_DIR)/rte_config.h))

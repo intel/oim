@@ -1,0 +1,128 @@
+# Based on:
+# - https://github.com/ceph/ceph-csi/blob/master/deploy/rbd/kubernetes/csi-provisioner-rbac.yaml
+# - https://github.com/ceph/ceph-csi/blob/master/deploy/rbd/kubernetes/csi-attacher-rbac.yaml
+# - https://github.com/ceph/ceph-csi/blob/master/deploy/rbd/kubernetes/csi-nodeplugin-rbac.yaml
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oim-rbd-cluster-sa
+
+---
+# Copied from https://github.com/kubernetes-csi/docs/blob/master/book/src/example/rbac/csi-attacher-rbac.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-attacher-role
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-attacher-rb
+subjects:
+  - kind: ServiceAccount
+    name: oim-rbd-cluster-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: oim-rbd-attacher-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-provisioner-role
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["list", "watch", "create", "update", "get"]
+    # TODO: only define this in a Role, as in test/e2e/testing-manifests/storage-csi/controller-role.yaml
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotcontents"]
+    verbs: ["get", "list"]
+
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-provisioner-rb
+subjects:
+  - kind: ServiceAccount
+    name: oim-rbd-cluster-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: oim-rbd-provisioner-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oim-rbd-node-sa
+
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-node-role
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: oim-rbd-node-rb
+subjects:
+  - kind: ServiceAccount
+    name: oim-rbd-node-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: oim-rbd-node-role
+  apiGroup: rbac.authorization.k8s.io
