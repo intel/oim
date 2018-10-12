@@ -239,7 +239,6 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 
 		It("should provision storage with a hostPath CSI driver", func() {
 			t := storageClassTest{
-				name:         "csi-hostpath",
 				provisioner:  "csi-hostpath",
 				parameters:   map[string]string{},
 				claimSize:    "1Gi",
@@ -302,7 +301,6 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 
 		It("should provision storage", func() {
 			t := storageClassTest{
-				name:         "oim-malloc",
 				provisioner:  "oim-malloc",
 				parameters:   map[string]string{},
 				claimSize:    "1Mi",

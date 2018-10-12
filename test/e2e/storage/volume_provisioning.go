@@ -38,7 +38,6 @@ import (
 )
 
 type storageClassTest struct {
-	name           string
 	cloudProviders []string
 	provisioner    string
 	parameters     map[string]string
