@@ -10,7 +10,7 @@
 # with the race condition described in
 # https://github.com/kubernetes/kubernetes/issues/67882.
 kind: DaemonSet
-apiVersion: apps/v1beta2
+apiVersion: apps/v1
 metadata:
   name: oim-malloc
   # For demo-purposes we deploy in the default namespace.
@@ -24,7 +24,7 @@ spec:
       labels:
         app: oim-malloc
     spec:
-      serviceAccount: oim-malloc-sa
+      serviceAccountName: oim-malloc-sa
       nodeSelector:
         intel.com/oim: "1"
       containers:
