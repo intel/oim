@@ -18,14 +18,11 @@ package storage
 
 import (
 	"context"
-	"math/rand"
-	"time"
+	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
+	storagev1 "k8s.io/api/storage/v1"
 
 	"github.com/intel/oim/test/e2e/framework"
 	"github.com/intel/oim/test/e2e/storage/utils"
@@ -35,273 +32,100 @@ import (
 	"github.com/intel/oim/test/pkg/spdk"
 
 	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 )
 
-func csiServiceAccount(
-	client clientset.Interface,
-	config framework.VolumeTestConfig,
-	teardown bool,
-) *v1.ServiceAccount {
-	serviceAccountName := config.Prefix + "-service-account"
-	serviceAccountClient := client.CoreV1().ServiceAccounts(config.Namespace)
-	sa := &v1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: serviceAccountName,
-		},
-	}
-
-	serviceAccountClient.Delete(sa.GetName(), &metav1.DeleteOptions{})
-	err := wait.Poll(2*time.Second, 10*time.Minute, func() (bool, error) {
-		_, err := serviceAccountClient.Get(sa.GetName(), metav1.GetOptions{})
-		return apierrs.IsNotFound(err), nil
-	})
-	framework.ExpectNoError(err, "Timed out waiting for deletion: %v", err)
-
-	if teardown {
-		return nil
-	}
-
-	ret, err := serviceAccountClient.Create(sa)
-	if err != nil {
-		framework.ExpectNoError(err, "Failed to create %s service account: %v", sa.GetName(), err)
-	}
-
-	return ret
-}
-
-func csiClusterRole(
-	client clientset.Interface,
-	config framework.VolumeTestConfig,
-	teardown bool,
-) *rbacv1.ClusterRole {
-	clusterRoleClient := client.RbacV1().ClusterRoles()
-	role := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: config.Prefix + "-cluster-role",
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{""},
-				Resources: []string{"persistentvolumes"},
-				Verbs:     []string{"create", "delete", "get", "list", "watch", "update"},
-			},
-			{
-				APIGroups: []string{""},
-				Resources: []string{"persistentvolumeclaims"},
-				Verbs:     []string{"get", "list", "watch", "update"},
-			},
-			{
-				APIGroups: []string{""},
-				Resources: []string{"events"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
-			},
-			{
-				// TODO: only define this in a Role, as in test/e2e/testing-manifests/storage-csi/controller-role.yaml
-				APIGroups: []string{""},
-				Resources: []string{"endpoints"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
-			},
-			{
-				APIGroups: []string{""},
-				Resources: []string{"secrets"},
-				Verbs:     []string{"get", "list"},
-			},
-			{
-				APIGroups: []string{""},
-				Resources: []string{"nodes"},
-				Verbs:     []string{"get", "list", "watch", "update"},
-			},
-			{
-				APIGroups: []string{"storage.k8s.io"},
-				Resources: []string{"volumeattachments"},
-				Verbs:     []string{"get", "list", "watch", "update"},
-			},
-			{
-				APIGroups: []string{"storage.k8s.io"},
-				Resources: []string{"storageclasses"},
-				Verbs:     []string{"get", "list", "watch"},
-			},
-		},
-	}
-
-	clusterRoleClient.Delete(role.GetName(), &metav1.DeleteOptions{})
-	err := wait.Poll(2*time.Second, 10*time.Minute, func() (bool, error) {
-		_, err := clusterRoleClient.Get(role.GetName(), metav1.GetOptions{})
-		return apierrs.IsNotFound(err), nil
-	})
-	framework.ExpectNoError(err, "Timed out waiting for deletion: %v", err)
-
-	if teardown {
-		return nil
-	}
-
-	ret, err := clusterRoleClient.Create(role)
-	if err != nil {
-		framework.ExpectNoError(err, "Failed to create %s cluster role: %v", role.GetName(), err)
-	}
-
-	return ret
-}
-
-func csiClusterRoleBinding(
-	client clientset.Interface,
-	config framework.VolumeTestConfig,
-	teardown bool,
-	sa *v1.ServiceAccount,
-	clusterRole *rbacv1.ClusterRole,
-) *rbacv1.ClusterRoleBinding {
-	clusterRoleBindingClient := client.RbacV1().ClusterRoleBindings()
-	binding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: config.Prefix + "-role-binding",
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      sa.GetName(),
-				Namespace: sa.GetNamespace(),
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     clusterRole.GetName(),
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-
-	clusterRoleBindingClient.Delete(binding.GetName(), &metav1.DeleteOptions{})
-	err := wait.Poll(2*time.Second, 10*time.Minute, func() (bool, error) {
-		_, err := clusterRoleBindingClient.Get(binding.GetName(), metav1.GetOptions{})
-		return apierrs.IsNotFound(err), nil
-	})
-	framework.ExpectNoError(err, "Timed out waiting for deletion: %v", err)
-
-	if teardown {
-		return nil
-	}
-
-	ret, err := clusterRoleBindingClient.Create(binding)
-	if err != nil {
-		framework.ExpectNoError(err, "Failed to create %s role binding: %v", binding.GetName(), err)
-	}
-
-	return ret
-}
-
-var _ = utils.SIGDescribe("CSI Volumes", func() {
-	f := framework.NewDefaultFramework("csi-mock-plugin")
+var _ = utils.SIGDescribe("OIM Volumes", func() {
+	f := framework.NewDefaultFramework("oim")
 
 	var (
-		cs     clientset.Interface
-		ns     *v1.Namespace
-		node   v1.Node
-		config framework.VolumeTestConfig
-		ctx    = context.Background()
+		cs           clientset.Interface
+		ns           *v1.Namespace
+		config       framework.VolumeTestConfig
+		ctx          = context.Background()
+		controlPlane OIMControlPlane
+		destructors  []func()
 	)
 
 	BeforeEach(func() {
+		if spdk.SPDK == nil {
+			Skip("No SPDK vhost.")
+		}
+
 		cs = f.ClientSet
 		ns = f.Namespace
-		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
-		node = nodes.Items[rand.Intn(len(nodes.Items))]
 		config = framework.VolumeTestConfig{
-			Namespace:         ns.Name,
-			Prefix:            "csi",
+			Namespace:         ns.GetName(),
+			Prefix:            "oim",
 			NodeSelector:      map[string]string{"intel.com/oim": "1"},
 			WaitForCompletion: true,
 		}
+
+		controlPlane.StartOIMControlPlane(ctx)
+		var cleanup framework.CleanupActionHandle
+		destructor := func() {
+			if cleanup == nil {
+				return
+			}
+			framework.RemoveCleanupAction(cleanup)
+			controlPlane.StopOIMControlPlane(ctx)
+		}
+		cleanup = framework.AddCleanupAction(destructor)
+		destructors = append(destructors, destructor)
+
+		// TOOD (?): move this into the E2E framework?
+		e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, GinkgoWriter)
+		e2eutils.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
 	})
 
-	// Create one of these for each of the drivers to be tested
-	// CSI hostPath driver test
-	XDescribe("Sanity CSI plugin test using hostPath CSI driver", func() {
-
-		var (
-			clusterRole    *rbacv1.ClusterRole
-			serviceAccount *v1.ServiceAccount
-		)
-
-		BeforeEach(func() {
-			By("deploying csi hostpath driver")
-			clusterRole = csiClusterRole(cs, config, false)
-			serviceAccount = csiServiceAccount(cs, config, false)
-			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
-			csiHostPathPod(cs, config, false, f, serviceAccount)
-		})
-
-		AfterEach(func() {
-			By("uninstalling csi hostpath driver")
-			csiHostPathPod(cs, config, true, f, serviceAccount)
-			csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
-			serviceAccount = csiServiceAccount(cs, config, true)
-			clusterRole = csiClusterRole(cs, config, true)
-		})
-
-		It("should provision storage with a hostPath CSI driver", func() {
-			t := storageClassTest{
-				provisioner:  "csi-hostpath",
-				parameters:   map[string]string{},
-				claimSize:    "1Gi",
-				expectedSize: "1Gi",
-				nodeName:     node.Name,
-			}
-
-			claim := newClaim(t, ns.GetName(), "")
-			class := newStorageClass(t, ns.GetName(), "")
-			claim.Spec.StorageClassName = &class.ObjectMeta.Name
-			testDynamicProvisioning(t, cs, claim, class)
-		})
+	AfterEach(func() {
+		for _, destructor := range destructors {
+			destructor()
+		}
 	})
 
 	Describe("Sanity CSI plugin test using OIM CSI with Malloc BDev", func() {
-
-		var (
-			clusterRole    *rbacv1.ClusterRole
-			serviceAccount *v1.ServiceAccount
-			controlPlane   OIMControlPlane
-			cleanup        framework.CleanupActionHandle
-
-			afterEach = func() {
-				if cleanup == nil {
-					return
-				}
-				framework.RemoveCleanupAction(cleanup)
-				cleanup = nil
-
-				By("uninstalling CSI OIM pods")
-				csiOIMMalloc(cs, config, true, f, serviceAccount, "", "")
-				csiClusterRoleBinding(cs, config, true, serviceAccount, clusterRole)
-				serviceAccount = csiServiceAccount(cs, config, true)
-				clusterRole = csiClusterRole(cs, config, true)
-
-				controlPlane.StopOIMControlPlane(ctx)
-			}
-		)
-
 		BeforeEach(func() {
-			if spdk.SPDK == nil {
-				Skip("No SPDK vhost.")
-			}
-
-			controlPlane.StartOIMControlPlane(ctx)
-
-			By("deploying CSI OIM pods")
-			clusterRole = csiClusterRole(cs, config, false)
-			serviceAccount = csiServiceAccount(cs, config, false)
-			csiClusterRoleBinding(cs, config, false, serviceAccount, clusterRole)
-			csiOIMMalloc(cs, config, false, f, serviceAccount, controlPlane.registryAddress, controlPlane.controllerID)
-			e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, GinkgoWriter)
-			e2eutils.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
-
-			// Always clean up, even when interrupted (https://github.com/onsi/ginkgo/issues/222).
-			cleanup = framework.AddCleanupAction(afterEach)
+			destructor, err := CreateFromManifest(f,
+				func(object interface{}) {
+					switch object := object.(type) {
+					case *appsv1.DaemonSet:
+						containers := &object.Spec.Template.Spec.Containers
+						for i := range *containers {
+							container := &(*containers)[i]
+							for e := range container.Args {
+								// Replace @OIM_REGISTRY_ADDRESS@ in the DaemonSet.
+								container.Args[e] = strings.Replace(container.Args[e], "@OIM_REGISTRY_ADDRESS@", controlPlane.registryAddress, 1)
+								// Update --drivername and --provider.
+								if strings.HasSuffix(container.Args[e], "=oim-malloc") {
+									container.Args[e] = container.Args[e] + "-" + f.UniqueName
+								}
+							}
+						}
+						volumes := &object.Spec.Template.Spec.Volumes
+						for i := range *volumes {
+							volume := &(*volumes)[i]
+							// Update path.
+							path := &volume.VolumeSource.HostPath.Path
+							if strings.HasSuffix(*path, "/oim-malloc") {
+								*path = *path + "-" + f.UniqueName
+							}
+						}
+					case *storagev1.StorageClass:
+						MangleName(f, &object.Provisioner)
+					}
+				},
+				"deploy/kubernetes/malloc/malloc-rbac.yaml",
+				"deploy/kubernetes/malloc/malloc-daemonset.yaml",
+				"deploy/kubernetes/malloc/malloc-storageclass.yaml",
+			)
+			destructors = append(destructors, destructor)
+			Expect(err).NotTo(HaveOccurred())
 		})
-
-		AfterEach(afterEach)
 
 		It("should provision storage", func() {
 			t := storageClassTest{
-				provisioner:  "oim-malloc",
+				provisioner:  "oim-malloc-" + f.UniqueName,
 				parameters:   map[string]string{},
 				claimSize:    "1Mi",
 				expectedSize: "1Mi",
@@ -309,11 +133,11 @@ var _ = utils.SIGDescribe("CSI Volumes", func() {
 			}
 
 			claim := newClaim(t, ns.GetName(), "")
-			class := newStorageClass(t, ns.GetName(), "")
-			claim.Spec.StorageClassName = &class.ObjectMeta.Name
+			scName := "oim-malloc-sc-" + f.UniqueName
+			claim.Spec.StorageClassName = &scName
 			// TODO: check machine state while volume is mounted:
 			// a missing UnmapVolume call in nodeserver.go must be detected
-			testDynamicProvisioning(t, cs, claim, class)
+			testDynamicProvisioning(t, cs, claim, nil)
 		})
 	})
 })
