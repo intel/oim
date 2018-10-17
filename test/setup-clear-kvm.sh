@@ -110,6 +110,7 @@ setup_clear_img () (
     # storage-utils is needed because of https://github.com/clearlinux/distribution/issues/217
     ( echo "Configuring Kubernetes..." ) 2>/dev/null
     _work/ssh-clear-kvm.$imagenum "$PROXY_ENV swupd bundle-add cloud-native-basic storage-cluster storage-utils"
+    _work/ssh-clear-kvm.$imagenum swupd clean
 
     # Enable IP Forwarding.
     _work/ssh-clear-kvm.$imagenum 'mkdir /etc/sysctl.d && echo net.ipv4.ip_forward = 1 >/etc/sysctl.d/60-k8s.conf && systemctl restart systemd-sysctl'
