@@ -117,18 +117,35 @@ message CephParams {
     string image = 5;
 }
 
-// The reply tells the caller enough about the mapped volume
+// The reply must tell the caller enough about the mapped volume
 // to find it in /sys/dev/block.
 message MapVolumeReply {
-    // This string must be a substring of the symlink target
-    // and has to be long enough to avoid mismatches.
-    // Example: /devices/pci0000:00/0000:00:15.0/ for a QEMU
-    // vhost SCSI device with bus=pci.0,addr=0x15
-    string device = 1;
-    // The SCSI target and LUN in the format
-    // x:y without extra zeros. Empty for non-SCSI
-    // controllers.
-    string scsi = 2;
+    // The PCI address (domain/bus/device/function, extended BDF).
+    // A controller which does not know its own PCI address can
+    // return a an address with all fields set to 0xFFFF.
+    PCIAddress pci_address = 1;
+    // The SCSI target and LUN. Only present for disks attached
+    // via a SCSI controller.
+    SCSIDisk scsi_disk = 2;
+}
+
+// Each field can be marked as unknown or unset with 0xFFFF.
+// This leads to nicer code than the other workarounds for missing
+// optional scalars (.google.protobuf.UInt32Value or oneof).
+message PCIAddress {
+    // Domain number.
+    uint32 domain = 1;
+    // Bus number.
+    uint32 bus = 2;
+    // Device number.
+    uint32 device = 3;
+    // Function number.
+    uint32 function = 4;
+}
+
+message SCSIDisk {
+    uint32 target = 1;
+    uint32 lun = 2;
 }
 
 message UnmapVolumeRequest {

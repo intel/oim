@@ -224,11 +224,12 @@ var _ = Describe("OIM Controller", func() {
 			reply, err := c.MapVolume(context.Background(), &add)
 			log.L().Info("after MapVolume")
 			Expect(err).NotTo(HaveOccurred())
+			d, err2 := oimcommon.ParseBDFString(testspdk.VHostDev)
+			Expect(err2).NotTo(HaveOccurred())
 			Expect(reply).To(Equal(&oim.MapVolumeReply{
-				Device: testspdk.VHostDev,
-				Scsi:   "0:0",
+				PciAddress: d,
+				ScsiDisk:   &oim.SCSIDisk{},
 			}))
-
 			controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(controllers).To(HaveLen(1))

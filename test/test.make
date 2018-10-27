@@ -295,7 +295,7 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 		( _output/oim-controller -endpoint unix://$$(pwd)/_work/oim-controller.sock \
 		                         -spdk _work/vhost-run/spdk.sock \
 		                         -vhost-scsi-controller scsi0 \
-		                         -vm-vhost-device /devices/pci0000:00/0000:00:15.0/ \
+		                         -vm-vhost-device 00:15.0 \
 		                         -log.level DEBUG \
 		                         >_work/oim-controller.log 2>&1 & echo $$! >_work/oim-controller.pid ) && \
 		while ! grep -q 'listening for connections' _work/oim-controller.log; do sleep 1; done; \

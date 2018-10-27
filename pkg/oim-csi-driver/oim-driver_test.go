@@ -122,8 +122,11 @@ type MockController struct {
 func (m *MockController) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
 	m.MapVolumes = append(m.MapVolumes, *in)
 	return &oim.MapVolumeReply{
-		Device: "this-is-not-the-device-you-are-looking-for",
-		Scsi:   "0:0",
+		PciAddress: &oim.PCIAddress{
+			Bus:    8,
+			Device: 7,
+		},
+		ScsiDisk: &oim.SCSIDisk{},
 	}, nil
 }
 

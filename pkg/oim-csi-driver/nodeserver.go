@@ -193,7 +193,13 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		}
 
 		// Find device node based on reply.
-		dev, major, minor, err := waitForDevice(ctx, "/sys/dev/block", reply.GetDevice(), reply.GetScsi())
+		pciAddress := reply.GetPciAddress()
+		if pciAddress == nil {
+			// TODO: retrieve bus/device from registry,
+			// add function.
+			panic("need full PCI address")
+		}
+		dev, major, minor, err := waitForDevice(ctx, "/sys/dev/block", pciAddress, reply.GetScsiDisk())
 		if err != nil {
 			return nil, err
 		}
@@ -243,11 +249,11 @@ const (
 	block = "/block/"
 )
 
-func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string, int, int, error) {
+func waitForDevice(ctx context.Context, sys string, pciAddress *oim.PCIAddress, scsiDisk *oim.SCSIDisk) (string, int, int, error) {
 	log.FromContext(ctx).Infow("waiting for block device",
 		"sys", sys,
-		"substr", blockDev,
-		"scsi", blockSCSI,
+		"PCI", pciAddress,
+		"scsi", scsiDisk,
 	)
 	watcher, err := fsnotify.NewWatcher()
 	watcher.Add(sys)
@@ -256,7 +262,7 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 	}
 
 	for {
-		dev, major, minor, err := findDev(ctx, sys, blockDev, blockSCSI)
+		dev, major, minor, err := findDev(ctx, sys, pciAddress, scsiDisk)
 		if err != nil {
 			// None of the operations should have failed. Give up.
 			return "", 0, 0, status.Error(codes.Internal, err.Error())
@@ -266,7 +272,7 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 		}
 		select {
 		case <-ctx.Done():
-			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device '%s', SCSI unit '%s'", blockDev, blockSCSI)
+			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device '%+v', SCSI disk '%+v'", pciAddress, scsiDisk)
 		case <-watcher.Events:
 			// Try again.
 			log.FromContext(ctx).Debugw("changed",
@@ -284,10 +290,38 @@ func waitForDevice(ctx context.Context, sys, blockDev, blockSCSI string) (string
 }
 
 var (
-	majorMinor = regexp.MustCompile("^(\\d+):(\\d+)$")
+	majorMinor = regexp.MustCompile(`^(\d+):(\d+)$`)
+	pciRe      = regexp.MustCompile(`/pci[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,2}/([0-9a-fA-F]{1,4}):([0-9a-fA-F]{1,2}):([0-9a-fA-F]{1,2})\.([0-7])/`)
+	scsiRe     = regexp.MustCompile(`/target\d+:\d+:\d+/\d+:\d+:(\d+):(\d+)/block/`)
 )
 
-func findDev(ctx context.Context, sys, blockDev, blockSCSI string) (string, int, int, error) {
+func extractPCIAddress(str string) (*oim.PCIAddress, string) {
+	parts := pciRe.FindStringSubmatch(str)
+	if len(parts) == 0 {
+		return nil, str
+	}
+	remainder := strings.Replace(str, parts[0], "", 1)
+	addr := &oim.PCIAddress{
+		Domain:   oimcommon.HexToU32(parts[1]),
+		Bus:      oimcommon.HexToU32(parts[2]),
+		Device:   oimcommon.HexToU32(parts[3]),
+		Function: oimcommon.HexToU32(parts[4]),
+	}
+	return addr, remainder
+}
+
+func extractSCSI(str string) *oim.SCSIDisk {
+	parts := scsiRe.FindStringSubmatch(str)
+	if len(parts) == 0 {
+		return nil
+	}
+	return &oim.SCSIDisk{
+		Target: oimcommon.HexToU32(parts[1]),
+		Lun:    oimcommon.HexToU32(parts[2]),
+	}
+}
+
+func findDev(ctx context.Context, sys string, pciAddress *oim.PCIAddress, scsiDisk *oim.SCSIDisk) (string, int, int, error) {
 	files, err := ioutil.ReadDir(sys)
 	if err != nil {
 		return "", 0, 0, err
@@ -300,30 +334,37 @@ func findDev(ctx context.Context, sys, blockDev, blockSCSI string) (string, int,
 		}
 		// target is expected to have this format:
 		// ../../devices/pci0000:00/0000:00:15.0/virtio3/host0/target0:0:7/0:0:7:0/block/sda
-		// for PCI address 0x15, SCSI target 7 and LUN 0.
+		// for PCI domain 0000, bus 00, device 15, function 9, SCSI target 7 and LUN 0.
 		log.FromContext(ctx).Debugw("symlink",
 			"from", fullpath,
 			"to", target,
 		)
-		if strings.Contains(target, blockDev) &&
-			(blockSCSI == "" || strings.Contains(target, ":"+blockSCSI+block)) {
-			// Because Readdir sorted the entries, we are guaranteed to find
-			// the main block device before its partitions (i.e. 8:0 before 8:1).
-			sep := strings.LastIndex(target, block)
-			if sep != -1 {
-				dev := target[sep+len(block):]
-				log.FromContext(ctx).Debugw("found block device",
-					"entry", entry.Name(),
-					"dev", dev,
-				)
-				parts := majorMinor.FindStringSubmatch(entry.Name())
-				if parts == nil {
-					return "", 0, 0, fmt.Errorf("Unexpected entry in %s, not a major:minor symlink: %s", sys, entry.Name())
-				}
-				major, _ := strconv.Atoi(parts[1])
-				minor, _ := strconv.Atoi(parts[2])
-				return dev, major, minor, nil
+		currentAddr, remainder := extractPCIAddress(target)
+		if currentAddr == nil || *currentAddr != *pciAddress {
+			continue
+		}
+		if scsiDisk != nil {
+			currentSCSI := extractSCSI(remainder)
+			if *currentSCSI != *scsiDisk {
+				continue
 			}
+		}
+		// Because Readdir sorted the entries, we are guaranteed to find
+		// the main block device before its partitions (i.e. 8:0 before 8:1).
+		sep := strings.LastIndex(target, block)
+		if sep != -1 {
+			dev := target[sep+len(block):]
+			log.FromContext(ctx).Debugw("found block device",
+				"entry", entry.Name(),
+				"dev", dev,
+			)
+			parts := majorMinor.FindStringSubmatch(entry.Name())
+			if parts == nil {
+				return "", 0, 0, fmt.Errorf("Unexpected entry in %s, not a major:minor symlink: %s", sys, entry.Name())
+			}
+			major, _ := strconv.Atoi(parts[1])
+			minor, _ := strconv.Atoi(parts[2])
+			return dev, major, minor, nil
 		}
 	}
 	return "", 0, 0, nil

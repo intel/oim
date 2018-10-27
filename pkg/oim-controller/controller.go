@@ -33,7 +33,7 @@ type Controller struct {
 	spdkPath        string
 	SPDK            *spdk.Client
 	vhostSCSI       string
-	vhostDev        string
+	vhostDev        *oim.PCIAddress
 
 	wg   sync.WaitGroup
 	stop chan<- interface{}
@@ -50,8 +50,8 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	if c.vhostSCSI == "" {
 		return nil, errors.New("no VHost SCSI controller configured")
 	}
-	if c.vhostDev == "" {
-		return nil, errors.New("no /sys/dev/block substring configured")
+	if c.vhostDev == nil {
+		return nil, errors.New("no PCI BDF configured")
 	}
 
 	// Reuse or create BDev.
@@ -93,8 +93,11 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 							if lun.BDevName == volumeID {
 								// BDev already active.
 								return &oim.MapVolumeReply{
-									Device: c.vhostDev,
-									Scsi:   fmt.Sprintf("%d:0", target.SCSIDevNum),
+									PciAddress: c.vhostDev,
+									ScsiDisk: &oim.SCSIDisk{
+										Target: target.SCSIDevNum,
+										Lun:    0,
+									},
 								}, nil
 							}
 						}
@@ -118,8 +121,11 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		if err == nil {
 			// Success!
 			return &oim.MapVolumeReply{
-				Device: c.vhostDev,
-				Scsi:   fmt.Sprintf("%d:0", target),
+				PciAddress: c.vhostDev,
+				ScsiDisk: &oim.SCSIDisk{
+					Target: target,
+					Lun:    0,
+				},
 			}, nil
 		}
 	}
@@ -307,7 +313,11 @@ func WithVHostController(vhost string) Option {
 
 func WithVHostDev(dev string) Option {
 	return func(c *Controller) error {
-		c.vhostDev = dev
+		d, err := oimcommon.ParseBDFString(dev)
+		if err != nil {
+			return err
+		}
+		c.vhostDev = d
 		return nil
 	}
 }

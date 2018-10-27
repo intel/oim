@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/intel/oim/pkg/log/testlog"
+	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
 func TestFindDev(t *testing.T) {
@@ -34,7 +35,7 @@ func TestFindDev(t *testing.T) {
 	defer os.RemoveAll(tmp)
 
 	// Nothing in empty dir.
-	dev, major, minor, err = findDev(ctx, tmp, "foo", "0:0")
+	dev, major, minor, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
@@ -65,34 +66,63 @@ func TestFindDev(t *testing.T) {
 		err = os.Symlink(to, filepath.Join(tmp, from))
 		require.NoError(t, err)
 	}
-	dev, major, minor, err = findDev(ctx, tmp, "foo", "0:0")
+	dev, major, minor, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
 	// Closer, but not quite.
-	dev, major, minor, err = findDev(ctx, tmp, "/devices/pci0000:00/0000:00:17.0/", "5:0")
+	dev, major, minor, err = findDev(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{
+			Target: 5,
+		},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
 	// Find sda.
-	dev, major, minor, err = findDev(ctx, tmp, "/devices/pci0000:00/0000:00:17.0/", "0:0")
+	dev, major, minor, err = findDev(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "sda", dev)
 	assert.Equal(t, major, 8)
 	assert.Equal(t, minor, 0)
 
 	// Without SCSI.
-	dev, major, minor, err = findDev(ctx, tmp, "/devices/pci0000:00/0000:00:18.0/", "")
+	dev, major, minor, err = findDev(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x18,
+		},
+		nil,
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
 	// Find sda.
-	dev, major, minor, err = findDev(ctx, tmp, "/devices/pci0000:00/0000:00:17.0/", "")
+	dev, major, minor, err = findDev(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		nil,
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "sda", dev)
+	assert.Equal(t, major, 8)
+	assert.Equal(t, minor, 0)
 
-	// No deadline.
-	dev, major, minor, err = waitForDevice(ctx, tmp, "/devices/pci0000:00/0000:00:17.0/", "0:0")
+	// Find sda, with SCSI.
+	dev, major, minor, err = waitForDevice(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "sda", dev)
 	assert.Equal(t, major, 8)
@@ -101,9 +131,16 @@ func TestFindDev(t *testing.T) {
 	// Timeout aborts wait.
 	timeout, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	dev, major, minor, err = waitForDevice(timeout, tmp, "/devices/pci0000:00/0000:00:17.0/", "1:0")
+	dev, major, minor, err = waitForDevice(timeout, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{
+			Target: 1,
+		},
+	)
 	assert.Error(t, err)
-	assert.Equal(t, "rpc error: code = DeadlineExceeded desc = timed out waiting for device '/devices/pci0000:00/0000:00:17.0/', SCSI unit '1:0'", err.Error())
+	assert.Equal(t, "rpc error: code = DeadlineExceeded desc = timed out waiting for device 'device:23 ', SCSI disk 'target:1 '", err.Error())
 
 	// Create the expected entry in two seconds, wait at most five.
 	timeout2, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -113,7 +150,14 @@ func TestFindDev(t *testing.T) {
 		require.NoError(t, err)
 	})
 	defer timer.Stop()
-	dev, major, minor, err = waitForDevice(timeout2, tmp, "/devices/pci0000:00/0000:00:17.0/", "1:0")
+	dev, major, minor, err = waitForDevice(timeout2, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{
+			Target: 1,
+		},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, "sdc", dev)
 	assert.Equal(t, major, 9)
@@ -122,7 +166,14 @@ func TestFindDev(t *testing.T) {
 	// Broken entry.
 	err = os.Symlink("../../devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:1/0:0:2:0/block/sdd", filepath.Join(tmp, "a:b"))
 	require.NoError(t, err)
-	dev, major, minor, err = findDev(ctx, tmp, "/devices/pci0000:00/0000:00:17.0/", "2:0")
+	dev, major, minor, err = findDev(ctx, tmp,
+		&oim.PCIAddress{
+			Device: 0x17,
+		},
+		&oim.SCSIDisk{
+			Target: 2,
+		},
+	)
 	if assert.Error(t, err) {
 		assert.Equal(t, fmt.Sprintf("Unexpected entry in %s, not a major:minor symlink: a:b", tmp), err.Error())
 	}

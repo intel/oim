@@ -42,7 +42,7 @@ var (
 	// Bus, address, and device string must match.
 	VHostBus  = "pci.0"
 	VHostAddr = 0x15
-	VHostDev  = fmt.Sprintf("/devices/pci0000:00/0000:00:%x.0/", VHostAddr)
+	VHostDev  = fmt.Sprintf("0000:00:%x.0", VHostAddr)
 
 	spdkSock = os.Getenv("TEST_SPDK_VHOST_SOCKET")
 	spdkApp  = os.Getenv("TEST_SPDK_VHOST_BINARY")
