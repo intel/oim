@@ -6,47 +6,43 @@ import "google/protobuf/wrappers.proto";
 
 option go_package = "oim";
 service Registry {
-    // Adds a new entry to the registry DB or overwrites
-    // an existing one.
-    rpc RegisterController(RegisterControllerRequest)
-        returns (RegisterControllerReply) {}
+    // Set or overwrite a registry DB entry.
+    rpc SetValue(SetValueRequest)
+        returns (SetValueReply) {}
 
-    // Retrieves all registry DB entries.
-    rpc GetControllers(GetControllerRequest)
-        returns (GetControllerReply) {}
+    // Retrieves registry DB entries.
+    rpc GetValues(GetValuesRequest)
+        returns (GetValuesReply) {}
 }
 
-message RegisterControllerRequest {
-    // An identifier for the OIM controller which is unique
-    // among all controllers connected to the OIM registry.
-    // The host name of each compute node might be used here
-    // if it is known to be unique.
-    string controller_id = 1;
-    // A string that can be used for grpc.Dial to connect
-    // to the OIM controller.
-    // See https://github.com/grpc/grpc/blob/master/doc/naming.md.
-    // An empty string removes the database entry.
-    string address = 2;
+message SetValueRequest {
+    Value value = 1;
 }
 
-message RegisterControllerReply {
+// A single registry DB entry.
+message Value {
+    // A value is referenced by a set of path elements,
+    // separated by slashes. Leading and trailing slashes
+    // are ignored, repeated slashes treated like a single
+    // slash. "." and ".." are invalid path elements.
+    string path = 1;
+    // The value itself is also a string.
+    string value = 2;
+}
+
+message SetValueReply {
     // Intentionally empty.
 }
 
-message GetControllerRequest {
-    // Intentionally empty.
+message GetValuesRequest {
+    // Return all values beneath or at the given path,
+    // all values when empty.
+    string path = 1;
 }
 
-message GetControllerReply {
-    // All current registry DB entries.
-    repeated DBEntry entries = 1;
-}
-
-message DBEntry {
-    // The unique key under which the OIM controller is registered.
-    string controller_id = 1;
-    // The grpc.Dial target for connecting to the OIM controller.
-    string address = 2;
+message GetValuesReply {
+    // All current registry DB values.
+    repeated Value values = 1;
 }
 
 // In addition, the Registry service also transparently proxies all

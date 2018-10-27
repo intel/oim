@@ -93,9 +93,11 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	Expect(err).NotTo(HaveOccurred())
 	defer conn.Close()
 	registryClient := oim.NewRegistryClient(conn)
-	_, err = registryClient.RegisterController(context.Background(), &oim.RegisterControllerRequest{
-		ControllerId: op.controllerID,
-		Address:      controllerAddress,
+	_, err = registryClient.SetValue(context.Background(), &oim.SetValueRequest{
+		Value: &oim.Value{
+			Path:  op.controllerID + "/" + oimcommon.RegistryAddress,
+			Value: controllerAddress,
+		},
 	})
 	Expect(err).NotTo(HaveOccurred())
 }

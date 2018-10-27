@@ -96,13 +96,38 @@ provision the necessary keys is under discussion.
 
 ### OIM Registry
 
-The OIM registry keeps track of accelerator hardware and the corresponding
-OIM controller. It makes it possible to communicate with the OIM
-controller when the components using the hardware and the controller
-are in different networks by proxying requests.
+The OIM registry keeps track of accelerator hardware and the
+corresponding OIM controller in a key/value database and uses that
+information to proxy requests from clients to the OIM
+controllers. This is relevant when clients and the controllers are on
+different networks or when the clients do not know the network address
+of the controllers.
 
-Depending on the storage backend for the registry database, deployment
-may consists of:
+Conceptually the database stores string values with a set of string
+path elements as key. All strings are UTF-8 encoded. The slash (`/`)
+is used to separate path elements and thus cannot appear in a path
+element itself. Leading and trailing slashes are ignored and repeated
+slashes are treated like a single slash.
+
+Some keys have a special meaning and are used by OIM itself, while the
+others can be used to store arbitrary meta information about an
+accelerator. The special keys are:
+
+* `<controller ID>/address`: the gRPC name that is given to
+  [Go gRPC Dial](https://godoc.org/google.golang.org/grpc#Dial) to
+  establish a connection from the registry to the OIM controller.  The
+  syntax is defined by the
+  [gRPC Name Resolution](https://github.com/grpc/grpc/blob/master/doc/naming.md).
+  Supported are currently TCP (`dns:[//authority/]host[:port]`) and
+  Unix domain sockets (`unix:path` or `unix://absolute_path`).
+* `<controller ID>/pci`: the PCI address of the accelerator card,
+  in extended bus/device/function (BDF) notation ([domain:]bus:device:function,
+  all in hex, with optional leading zeros). Unknown values that will
+  be supplied at runtime by the OIM controller can be set to zero,
+  they will be replaced.
+
+Depending on the storage backend for the registry database, deployments
+may consist of:
 * a single instance when storing the registry in memory (only for
   testing purposes)
 * a set of daemons when storing the registry in etcd

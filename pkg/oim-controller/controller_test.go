@@ -83,7 +83,7 @@ var _ = Describe("OIM Controller", func() {
 
 			Eventually(func() oimregistry.MemRegistryDB {
 				return *db
-			}).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+			}).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 		})
 
 		It("should re-register", func() {
@@ -102,10 +102,10 @@ var _ = Describe("OIM Controller", func() {
 			getDB := func() oimregistry.MemRegistryDB {
 				return *db
 			}
-			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
-			(*db)[controllerID] = ""
-			Consistently(getDB, 4*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: ""}))
-			Eventually(getDB, 120*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
+			(*db)[controllerID+"/"+oimcommon.RegistryAddress] = ""
+			Consistently(getDB, 4*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: ""}))
+			Eventually(getDB, 120*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 		})
 
 		It("should really stop", func() {
@@ -123,10 +123,10 @@ var _ = Describe("OIM Controller", func() {
 			getDB := func() oimregistry.MemRegistryDB {
 				return *db
 			}
-			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: addr}))
+			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 			c.Stop()
-			(*db)[controllerID] = ""
-			Consistently(getDB, 10*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID: ""}))
+			(*db)[controllerID+"/"+oimcommon.RegistryAddress] = ""
+			Consistently(getDB, 10*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: ""}))
 		})
 	})
 

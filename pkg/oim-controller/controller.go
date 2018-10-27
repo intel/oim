@@ -402,9 +402,11 @@ func (c *Controller) register(ctx context.Context) {
 	}
 	defer conn.Close()
 	registry := oim.NewRegistryClient(conn)
-	registry.RegisterController(ctx, &oim.RegisterControllerRequest{
-		ControllerId: c.controllerID,
-		Address:      c.controllerAddr,
+	registry.SetValue(ctx, &oim.SetValueRequest{
+		Value: &oim.Value{
+			Path:  c.controllerID + "/" + oimcommon.RegistryAddress,
+			Value: c.controllerAddr,
+		},
 	})
 }
 

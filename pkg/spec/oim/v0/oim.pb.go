@@ -8,11 +8,11 @@
 		oim.proto
 
 	It has these top-level messages:
-		RegisterControllerRequest
-		RegisterControllerReply
-		GetControllerRequest
-		GetControllerReply
-		DBEntry
+		SetValueRequest
+		Value
+		SetValueReply
+		GetValuesRequest
+		GetValuesReply
 		MapVolumeRequest
 		MallocParams
 		CephParams
@@ -49,95 +49,93 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 
-type RegisterControllerRequest struct {
-	// An identifier for the OIM controller which is unique
-	// among all controllers connected to the OIM registry.
-	// The host name of each compute node might be used here
-	// if it is known to be unique.
-	ControllerId string `protobuf:"bytes,1,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"`
-	// A string that can be used for grpc.Dial to connect
-	// to the OIM controller.
-	// See https://github.com/grpc/grpc/blob/master/doc/naming.md.
-	// An empty string removes the database entry.
-	Address string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+type SetValueRequest struct {
+	Value *Value `protobuf:"bytes,1,opt,name=value" json:"value,omitempty"`
 }
 
-func (m *RegisterControllerRequest) Reset()                    { *m = RegisterControllerRequest{} }
-func (m *RegisterControllerRequest) String() string            { return proto.CompactTextString(m) }
-func (*RegisterControllerRequest) ProtoMessage()               {}
-func (*RegisterControllerRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{0} }
+func (m *SetValueRequest) Reset()                    { *m = SetValueRequest{} }
+func (m *SetValueRequest) String() string            { return proto.CompactTextString(m) }
+func (*SetValueRequest) ProtoMessage()               {}
+func (*SetValueRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{0} }
 
-func (m *RegisterControllerRequest) GetControllerId() string {
+func (m *SetValueRequest) GetValue() *Value {
 	if m != nil {
-		return m.ControllerId
-	}
-	return ""
-}
-
-func (m *RegisterControllerRequest) GetAddress() string {
-	if m != nil {
-		return m.Address
-	}
-	return ""
-}
-
-type RegisterControllerReply struct {
-}
-
-func (m *RegisterControllerReply) Reset()                    { *m = RegisterControllerReply{} }
-func (m *RegisterControllerReply) String() string            { return proto.CompactTextString(m) }
-func (*RegisterControllerReply) ProtoMessage()               {}
-func (*RegisterControllerReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{1} }
-
-type GetControllerRequest struct {
-}
-
-func (m *GetControllerRequest) Reset()                    { *m = GetControllerRequest{} }
-func (m *GetControllerRequest) String() string            { return proto.CompactTextString(m) }
-func (*GetControllerRequest) ProtoMessage()               {}
-func (*GetControllerRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{2} }
-
-type GetControllerReply struct {
-	// All current registry DB entries.
-	Entries []*DBEntry `protobuf:"bytes,1,rep,name=entries" json:"entries,omitempty"`
-}
-
-func (m *GetControllerReply) Reset()                    { *m = GetControllerReply{} }
-func (m *GetControllerReply) String() string            { return proto.CompactTextString(m) }
-func (*GetControllerReply) ProtoMessage()               {}
-func (*GetControllerReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{3} }
-
-func (m *GetControllerReply) GetEntries() []*DBEntry {
-	if m != nil {
-		return m.Entries
+		return m.Value
 	}
 	return nil
 }
 
-type DBEntry struct {
-	// The unique key under which the OIM controller is registered.
-	ControllerId string `protobuf:"bytes,1,opt,name=controller_id,json=controllerId,proto3" json:"controller_id,omitempty"`
-	// The grpc.Dial target for connecting to the OIM controller.
-	Address string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+// A single registry DB entry.
+type Value struct {
+	// A value is referenced by a set of path elements,
+	// separated by slashes. Leading and trailing slashes
+	// are ignored, repeated slashes treated like a single
+	// slash. "." and ".." are invalid path elements.
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// The value itself is also a string.
+	Value string `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
 }
 
-func (m *DBEntry) Reset()                    { *m = DBEntry{} }
-func (m *DBEntry) String() string            { return proto.CompactTextString(m) }
-func (*DBEntry) ProtoMessage()               {}
-func (*DBEntry) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{4} }
+func (m *Value) Reset()                    { *m = Value{} }
+func (m *Value) String() string            { return proto.CompactTextString(m) }
+func (*Value) ProtoMessage()               {}
+func (*Value) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{1} }
 
-func (m *DBEntry) GetControllerId() string {
+func (m *Value) GetPath() string {
 	if m != nil {
-		return m.ControllerId
+		return m.Path
 	}
 	return ""
 }
 
-func (m *DBEntry) GetAddress() string {
+func (m *Value) GetValue() string {
 	if m != nil {
-		return m.Address
+		return m.Value
 	}
 	return ""
+}
+
+type SetValueReply struct {
+}
+
+func (m *SetValueReply) Reset()                    { *m = SetValueReply{} }
+func (m *SetValueReply) String() string            { return proto.CompactTextString(m) }
+func (*SetValueReply) ProtoMessage()               {}
+func (*SetValueReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{2} }
+
+type GetValuesRequest struct {
+	// Return all values beneath or at the given path,
+	// all values when empty.
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+}
+
+func (m *GetValuesRequest) Reset()                    { *m = GetValuesRequest{} }
+func (m *GetValuesRequest) String() string            { return proto.CompactTextString(m) }
+func (*GetValuesRequest) ProtoMessage()               {}
+func (*GetValuesRequest) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{3} }
+
+func (m *GetValuesRequest) GetPath() string {
+	if m != nil {
+		return m.Path
+	}
+	return ""
+}
+
+type GetValuesReply struct {
+	// All current registry DB values.
+	Values []*Value `protobuf:"bytes,1,rep,name=values" json:"values,omitempty"`
+}
+
+func (m *GetValuesReply) Reset()                    { *m = GetValuesReply{} }
+func (m *GetValuesReply) String() string            { return proto.CompactTextString(m) }
+func (*GetValuesReply) ProtoMessage()               {}
+func (*GetValuesReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{4} }
+
+func (m *GetValuesReply) GetValues() []*Value {
+	if m != nil {
+		return m.Values
+	}
+	return nil
 }
 
 type MapVolumeRequest struct {
@@ -531,11 +529,11 @@ func (*CheckMallocBDevReply) ProtoMessage()               {}
 func (*CheckMallocBDevReply) Descriptor() ([]byte, []int) { return fileDescriptorOim, []int{16} }
 
 func init() {
-	proto.RegisterType((*RegisterControllerRequest)(nil), "oim.v0.RegisterControllerRequest")
-	proto.RegisterType((*RegisterControllerReply)(nil), "oim.v0.RegisterControllerReply")
-	proto.RegisterType((*GetControllerRequest)(nil), "oim.v0.GetControllerRequest")
-	proto.RegisterType((*GetControllerReply)(nil), "oim.v0.GetControllerReply")
-	proto.RegisterType((*DBEntry)(nil), "oim.v0.DBEntry")
+	proto.RegisterType((*SetValueRequest)(nil), "oim.v0.SetValueRequest")
+	proto.RegisterType((*Value)(nil), "oim.v0.Value")
+	proto.RegisterType((*SetValueReply)(nil), "oim.v0.SetValueReply")
+	proto.RegisterType((*GetValuesRequest)(nil), "oim.v0.GetValuesRequest")
+	proto.RegisterType((*GetValuesReply)(nil), "oim.v0.GetValuesReply")
 	proto.RegisterType((*MapVolumeRequest)(nil), "oim.v0.MapVolumeRequest")
 	proto.RegisterType((*MallocParams)(nil), "oim.v0.MallocParams")
 	proto.RegisterType((*CephParams)(nil), "oim.v0.CephParams")
@@ -561,11 +559,10 @@ const _ = grpc.SupportPackageIsVersion4
 // Client API for Registry service
 
 type RegistryClient interface {
-	// Adds a new entry to the registry DB or overwrites
-	// an existing one.
-	RegisterController(ctx context.Context, in *RegisterControllerRequest, opts ...grpc.CallOption) (*RegisterControllerReply, error)
-	// Retrieves all registry DB entries.
-	GetControllers(ctx context.Context, in *GetControllerRequest, opts ...grpc.CallOption) (*GetControllerReply, error)
+	// Set or overwrite a registry DB entry.
+	SetValue(ctx context.Context, in *SetValueRequest, opts ...grpc.CallOption) (*SetValueReply, error)
+	// Retrieves registry DB entries.
+	GetValues(ctx context.Context, in *GetValuesRequest, opts ...grpc.CallOption) (*GetValuesReply, error)
 }
 
 type registryClient struct {
@@ -576,18 +573,18 @@ func NewRegistryClient(cc *grpc.ClientConn) RegistryClient {
 	return &registryClient{cc}
 }
 
-func (c *registryClient) RegisterController(ctx context.Context, in *RegisterControllerRequest, opts ...grpc.CallOption) (*RegisterControllerReply, error) {
-	out := new(RegisterControllerReply)
-	err := grpc.Invoke(ctx, "/oim.v0.Registry/RegisterController", in, out, c.cc, opts...)
+func (c *registryClient) SetValue(ctx context.Context, in *SetValueRequest, opts ...grpc.CallOption) (*SetValueReply, error) {
+	out := new(SetValueReply)
+	err := grpc.Invoke(ctx, "/oim.v0.Registry/SetValue", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *registryClient) GetControllers(ctx context.Context, in *GetControllerRequest, opts ...grpc.CallOption) (*GetControllerReply, error) {
-	out := new(GetControllerReply)
-	err := grpc.Invoke(ctx, "/oim.v0.Registry/GetControllers", in, out, c.cc, opts...)
+func (c *registryClient) GetValues(ctx context.Context, in *GetValuesRequest, opts ...grpc.CallOption) (*GetValuesReply, error) {
+	out := new(GetValuesReply)
+	err := grpc.Invoke(ctx, "/oim.v0.Registry/GetValues", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -597,49 +594,48 @@ func (c *registryClient) GetControllers(ctx context.Context, in *GetControllerRe
 // Server API for Registry service
 
 type RegistryServer interface {
-	// Adds a new entry to the registry DB or overwrites
-	// an existing one.
-	RegisterController(context.Context, *RegisterControllerRequest) (*RegisterControllerReply, error)
-	// Retrieves all registry DB entries.
-	GetControllers(context.Context, *GetControllerRequest) (*GetControllerReply, error)
+	// Set or overwrite a registry DB entry.
+	SetValue(context.Context, *SetValueRequest) (*SetValueReply, error)
+	// Retrieves registry DB entries.
+	GetValues(context.Context, *GetValuesRequest) (*GetValuesReply, error)
 }
 
 func RegisterRegistryServer(s *grpc.Server, srv RegistryServer) {
 	s.RegisterService(&_Registry_serviceDesc, srv)
 }
 
-func _Registry_RegisterController_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterControllerRequest)
+func _Registry_SetValue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetValueRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RegistryServer).RegisterController(ctx, in)
+		return srv.(RegistryServer).SetValue(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/oim.v0.Registry/RegisterController",
+		FullMethod: "/oim.v0.Registry/SetValue",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RegistryServer).RegisterController(ctx, req.(*RegisterControllerRequest))
+		return srv.(RegistryServer).SetValue(ctx, req.(*SetValueRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Registry_GetControllers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetControllerRequest)
+func _Registry_GetValues_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetValuesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RegistryServer).GetControllers(ctx, in)
+		return srv.(RegistryServer).GetValues(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/oim.v0.Registry/GetControllers",
+		FullMethod: "/oim.v0.Registry/GetValues",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RegistryServer).GetControllers(ctx, req.(*GetControllerRequest))
+		return srv.(RegistryServer).GetValues(ctx, req.(*GetValuesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -649,12 +645,12 @@ var _Registry_serviceDesc = grpc.ServiceDesc{
 	HandlerType: (*RegistryServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "RegisterController",
-			Handler:    _Registry_RegisterController_Handler,
+			MethodName: "SetValue",
+			Handler:    _Registry_SetValue_Handler,
 		},
 		{
-			MethodName: "GetControllers",
-			Handler:    _Registry_GetControllers_Handler,
+			MethodName: "GetValues",
+			Handler:    _Registry_GetValues_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -846,7 +842,7 @@ var _Controller_serviceDesc = grpc.ServiceDesc{
 	Metadata: "oim.proto",
 }
 
-func (m *RegisterControllerRequest) Marshal() (dAtA []byte, err error) {
+func (m *SetValueRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalTo(dAtA)
@@ -856,27 +852,55 @@ func (m *RegisterControllerRequest) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *RegisterControllerRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *SetValueRequest) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if len(m.ControllerId) > 0 {
+	if m.Value != nil {
 		dAtA[i] = 0xa
 		i++
-		i = encodeVarintOim(dAtA, i, uint64(len(m.ControllerId)))
-		i += copy(dAtA[i:], m.ControllerId)
+		i = encodeVarintOim(dAtA, i, uint64(m.Value.Size()))
+		n1, err := m.Value.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n1
 	}
-	if len(m.Address) > 0 {
+	return i, nil
+}
+
+func (m *Value) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Value) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Path) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintOim(dAtA, i, uint64(len(m.Path)))
+		i += copy(dAtA[i:], m.Path)
+	}
+	if len(m.Value) > 0 {
 		dAtA[i] = 0x12
 		i++
-		i = encodeVarintOim(dAtA, i, uint64(len(m.Address)))
-		i += copy(dAtA[i:], m.Address)
+		i = encodeVarintOim(dAtA, i, uint64(len(m.Value)))
+		i += copy(dAtA[i:], m.Value)
 	}
 	return i, nil
 }
 
-func (m *RegisterControllerReply) Marshal() (dAtA []byte, err error) {
+func (m *SetValueReply) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalTo(dAtA)
@@ -886,7 +910,7 @@ func (m *RegisterControllerReply) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *RegisterControllerReply) MarshalTo(dAtA []byte) (int, error) {
+func (m *SetValueReply) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
@@ -894,7 +918,7 @@ func (m *RegisterControllerReply) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
-func (m *GetControllerRequest) Marshal() (dAtA []byte, err error) {
+func (m *GetValuesRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalTo(dAtA)
@@ -904,15 +928,21 @@ func (m *GetControllerRequest) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *GetControllerRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *GetValuesRequest) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
+	if len(m.Path) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintOim(dAtA, i, uint64(len(m.Path)))
+		i += copy(dAtA[i:], m.Path)
+	}
 	return i, nil
 }
 
-func (m *GetControllerReply) Marshal() (dAtA []byte, err error) {
+func (m *GetValuesReply) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalTo(dAtA)
@@ -922,13 +952,13 @@ func (m *GetControllerReply) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *GetControllerReply) MarshalTo(dAtA []byte) (int, error) {
+func (m *GetValuesReply) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if len(m.Entries) > 0 {
-		for _, msg := range m.Entries {
+	if len(m.Values) > 0 {
+		for _, msg := range m.Values {
 			dAtA[i] = 0xa
 			i++
 			i = encodeVarintOim(dAtA, i, uint64(msg.Size()))
@@ -938,36 +968,6 @@ func (m *GetControllerReply) MarshalTo(dAtA []byte) (int, error) {
 			}
 			i += n
 		}
-	}
-	return i, nil
-}
-
-func (m *DBEntry) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalTo(dAtA)
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *DBEntry) MarshalTo(dAtA []byte) (int, error) {
-	var i int
-	_ = i
-	var l int
-	_ = l
-	if len(m.ControllerId) > 0 {
-		dAtA[i] = 0xa
-		i++
-		i = encodeVarintOim(dAtA, i, uint64(len(m.ControllerId)))
-		i += copy(dAtA[i:], m.ControllerId)
-	}
-	if len(m.Address) > 0 {
-		dAtA[i] = 0x12
-		i++
-		i = encodeVarintOim(dAtA, i, uint64(len(m.Address)))
-		i += copy(dAtA[i:], m.Address)
 	}
 	return i, nil
 }
@@ -994,11 +994,11 @@ func (m *MapVolumeRequest) MarshalTo(dAtA []byte) (int, error) {
 		i += copy(dAtA[i:], m.VolumeId)
 	}
 	if m.Params != nil {
-		nn1, err := m.Params.MarshalTo(dAtA[i:])
+		nn2, err := m.Params.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += nn1
+		i += nn2
 	}
 	return i, nil
 }
@@ -1009,11 +1009,11 @@ func (m *MapVolumeRequest_Malloc) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x12
 		i++
 		i = encodeVarintOim(dAtA, i, uint64(m.Malloc.Size()))
-		n2, err := m.Malloc.MarshalTo(dAtA[i:])
+		n3, err := m.Malloc.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n2
+		i += n3
 	}
 	return i, nil
 }
@@ -1023,11 +1023,11 @@ func (m *MapVolumeRequest_Ceph) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x1a
 		i++
 		i = encodeVarintOim(dAtA, i, uint64(m.Ceph.Size()))
-		n3, err := m.Ceph.MarshalTo(dAtA[i:])
+		n4, err := m.Ceph.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n3
+		i += n4
 	}
 	return i, nil
 }
@@ -1116,21 +1116,21 @@ func (m *MapVolumeReply) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintOim(dAtA, i, uint64(m.PciAddress.Size()))
-		n4, err := m.PciAddress.MarshalTo(dAtA[i:])
+		n5, err := m.PciAddress.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n4
+		i += n5
 	}
 	if m.ScsiDisk != nil {
 		dAtA[i] = 0x12
 		i++
 		i = encodeVarintOim(dAtA, i, uint64(m.ScsiDisk.Size()))
-		n5, err := m.ScsiDisk.MarshalTo(dAtA[i:])
+		n6, err := m.ScsiDisk.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n5
+		i += n6
 	}
 	return i, nil
 }
@@ -1341,54 +1341,54 @@ func encodeVarintOim(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return offset + 1
 }
-func (m *RegisterControllerRequest) Size() (n int) {
+func (m *SetValueRequest) Size() (n int) {
 	var l int
 	_ = l
-	l = len(m.ControllerId)
-	if l > 0 {
-		n += 1 + l + sovOim(uint64(l))
-	}
-	l = len(m.Address)
-	if l > 0 {
+	if m.Value != nil {
+		l = m.Value.Size()
 		n += 1 + l + sovOim(uint64(l))
 	}
 	return n
 }
 
-func (m *RegisterControllerReply) Size() (n int) {
+func (m *Value) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.Path)
+	if l > 0 {
+		n += 1 + l + sovOim(uint64(l))
+	}
+	l = len(m.Value)
+	if l > 0 {
+		n += 1 + l + sovOim(uint64(l))
+	}
+	return n
+}
+
+func (m *SetValueReply) Size() (n int) {
 	var l int
 	_ = l
 	return n
 }
 
-func (m *GetControllerRequest) Size() (n int) {
+func (m *GetValuesRequest) Size() (n int) {
 	var l int
 	_ = l
+	l = len(m.Path)
+	if l > 0 {
+		n += 1 + l + sovOim(uint64(l))
+	}
 	return n
 }
 
-func (m *GetControllerReply) Size() (n int) {
+func (m *GetValuesReply) Size() (n int) {
 	var l int
 	_ = l
-	if len(m.Entries) > 0 {
-		for _, e := range m.Entries {
+	if len(m.Values) > 0 {
+		for _, e := range m.Values {
 			l = e.Size()
 			n += 1 + l + sovOim(uint64(l))
 		}
-	}
-	return n
-}
-
-func (m *DBEntry) Size() (n int) {
-	var l int
-	_ = l
-	l = len(m.ControllerId)
-	if l > 0 {
-		n += 1 + l + sovOim(uint64(l))
-	}
-	l = len(m.Address)
-	if l > 0 {
-		n += 1 + l + sovOim(uint64(l))
 	}
 	return n
 }
@@ -1564,7 +1564,7 @@ func sovOim(x uint64) (n int) {
 func sozOim(x uint64) (n int) {
 	return sovOim(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *RegisterControllerRequest) Unmarshal(dAtA []byte) error {
+func (m *SetValueRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1587,223 +1587,15 @@ func (m *RegisterControllerRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: RegisterControllerRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: SetValueRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: RegisterControllerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: SetValueRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ControllerId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOim
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOim
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ControllerId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowOim
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= (uint64(b) & 0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthOim
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Address = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOim(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if skippy < 0 {
-				return ErrInvalidLengthOim
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *RegisterControllerReply) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOim
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: RegisterControllerReply: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: RegisterControllerReply: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOim(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if skippy < 0 {
-				return ErrInvalidLengthOim
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *GetControllerRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOim
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: GetControllerRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetControllerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		default:
-			iNdEx = preIndex
-			skippy, err := skipOim(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if skippy < 0 {
-				return ErrInvalidLengthOim
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *GetControllerReply) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowOim
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= (uint64(b) & 0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: GetControllerReply: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: GetControllerReply: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Entries", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -1827,8 +1619,10 @@ func (m *GetControllerReply) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Entries = append(m.Entries, &DBEntry{})
-			if err := m.Entries[len(m.Entries)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			if m.Value == nil {
+				m.Value = &Value{}
+			}
+			if err := m.Value.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -1853,7 +1647,7 @@ func (m *GetControllerReply) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *DBEntry) Unmarshal(dAtA []byte) error {
+func (m *Value) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1876,15 +1670,15 @@ func (m *DBEntry) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: DBEntry: wiretype end group for non-group")
+			return fmt.Errorf("proto: Value: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DBEntry: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: Value: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ControllerId", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Path", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -1909,11 +1703,11 @@ func (m *DBEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.ControllerId = string(dAtA[iNdEx:postIndex])
+			m.Path = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Address", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
 			}
 			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
@@ -1938,7 +1732,217 @@ func (m *DBEntry) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Address = string(dAtA[iNdEx:postIndex])
+			m.Value = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *SetValueReply) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: SetValueReply: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: SetValueReply: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *GetValuesRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: GetValuesRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: GetValuesRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Path", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowOim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthOim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Path = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipOim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthOim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *GetValuesReply) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowOim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: GetValuesReply: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: GetValuesReply: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Values", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowOim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthOim
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Values = append(m.Values, &Value{})
+			if err := m.Values[len(m.Values)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -3193,51 +3197,50 @@ var (
 func init() { proto.RegisterFile("oim.proto", fileDescriptorOim) }
 
 var fileDescriptorOim = []byte{
-	// 728 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x55, 0xdd, 0x4e, 0xdb, 0x4a,
-	0x10, 0xc6, 0x04, 0xf2, 0x33, 0x21, 0x10, 0xed, 0xe1, 0x04, 0xe3, 0x83, 0x72, 0x38, 0x7b, 0x6e,
-	0xe8, 0x45, 0x43, 0x1b, 0xda, 0x6b, 0xd4, 0x04, 0x54, 0x22, 0x95, 0x8a, 0x1a, 0xb5, 0x17, 0x48,
-	0x55, 0xe4, 0xd8, 0x4b, 0xd8, 0x62, 0x7b, 0xdd, 0x5d, 0x3b, 0x55, 0x7a, 0xdb, 0x17, 0xa8, 0xd4,
-	0x57, 0xe9, 0x33, 0x54, 0xbd, 0xec, 0x23, 0x54, 0xf4, 0x45, 0xaa, 0x5d, 0xff, 0x24, 0x21, 0x0e,
-	0x12, 0xea, 0xdd, 0xce, 0x37, 0xdf, 0x7c, 0x33, 0xb3, 0xb3, 0x1e, 0x43, 0x85, 0x51, 0xaf, 0x15,
-	0x70, 0x16, 0x32, 0x54, 0x94, 0xc7, 0xd1, 0x23, 0xa3, 0x39, 0x64, 0x6c, 0xe8, 0x92, 0x7d, 0x85,
-	0x0e, 0xa2, 0xcb, 0xfd, 0x0f, 0xdc, 0x0a, 0x02, 0xc2, 0x45, 0xcc, 0xc3, 0x17, 0xb0, 0x6d, 0x92,
-	0x21, 0x15, 0x21, 0xe1, 0x5d, 0xe6, 0x87, 0x9c, 0xb9, 0x2e, 0xe1, 0x26, 0x79, 0x1f, 0x11, 0x11,
-	0xa2, 0xff, 0xa1, 0x66, 0x67, 0x60, 0x9f, 0x3a, 0xba, 0xb6, 0xab, 0xed, 0x55, 0xcc, 0xb5, 0x09,
-	0xd8, 0x73, 0x90, 0x0e, 0x25, 0xcb, 0x71, 0x38, 0x11, 0x42, 0x5f, 0x56, 0xee, 0xd4, 0xc4, 0xdb,
-	0xb0, 0x95, 0xa7, 0x1d, 0xb8, 0x63, 0xdc, 0x80, 0xcd, 0xe7, 0x24, 0x9c, 0xcb, 0x88, 0x0f, 0x01,
-	0xdd, 0xc2, 0x03, 0x77, 0x8c, 0x1e, 0x40, 0x89, 0xf8, 0x21, 0xa7, 0x44, 0xe8, 0xda, 0x6e, 0x61,
-	0xaf, 0xda, 0xde, 0x68, 0xc5, 0xed, 0xb5, 0x8e, 0x3a, 0xc7, 0x7e, 0xc8, 0xc7, 0x66, 0xea, 0xc7,
-	0x27, 0x50, 0x4a, 0xb0, 0x3f, 0xad, 0xfe, 0x8b, 0x06, 0xf5, 0x53, 0x2b, 0x78, 0xc3, 0xdc, 0xc8,
-	0x23, 0xe9, 0x8d, 0xfc, 0x03, 0x95, 0x91, 0x02, 0x26, 0x7a, 0xe5, 0x18, 0xe8, 0x39, 0xa8, 0x05,
-	0x45, 0xcf, 0x72, 0x5d, 0x66, 0x2b, 0xa9, 0x6a, 0x7b, 0x33, 0xad, 0xf2, 0x54, 0xa1, 0x67, 0x16,
-	0xb7, 0x3c, 0x71, 0xb2, 0x64, 0x26, 0x2c, 0xb4, 0x07, 0x2b, 0x36, 0x09, 0xae, 0xf4, 0x82, 0x62,
-	0xa3, 0x94, 0xdd, 0x25, 0xc1, 0x55, 0xc6, 0x55, 0x8c, 0x4e, 0x19, 0x8a, 0x81, 0x42, 0xf0, 0x3a,
-	0xac, 0x4d, 0xab, 0xe1, 0x4f, 0x1a, 0xc0, 0x24, 0x00, 0x6d, 0x41, 0x29, 0x12, 0xd3, 0xdd, 0x16,
-	0xa5, 0xd9, 0x73, 0x50, 0x03, 0x8a, 0x82, 0xd8, 0x9c, 0x84, 0x49, 0x9b, 0x89, 0x85, 0x0c, 0x28,
-	0x7b, 0xcc, 0xa7, 0x21, 0xe3, 0x42, 0xd5, 0x51, 0x31, 0x33, 0x1b, 0x21, 0x58, 0x09, 0x18, 0x73,
-	0xf5, 0x15, 0x85, 0xab, 0x33, 0xda, 0x84, 0x55, 0xea, 0x59, 0x43, 0xa2, 0xaf, 0x2a, 0x30, 0x36,
-	0x70, 0x08, 0xeb, 0x53, 0x57, 0x25, 0x47, 0x76, 0x00, 0xd5, 0xc0, 0xa6, 0xfd, 0xf4, 0x6e, 0xb5,
-	0xd9, 0x16, 0xcf, 0xba, 0xbd, 0x67, 0xb1, 0xc7, 0x84, 0xc0, 0xa6, 0xc9, 0x19, 0x3d, 0x84, 0x8a,
-	0xb0, 0x05, 0xed, 0x3b, 0x54, 0x5c, 0x27, 0x77, 0x58, 0x4f, 0x43, 0xce, 0xbb, 0xe7, 0xbd, 0x23,
-	0x2a, 0xae, 0xcd, 0xb2, 0xa4, 0xc8, 0x13, 0x7e, 0x07, 0x30, 0x11, 0x92, 0x1d, 0x3a, 0xcc, 0xb3,
-	0xa8, 0xaf, 0x92, 0xd5, 0xcc, 0xc4, 0x42, 0x75, 0x28, 0x0c, 0xa2, 0x78, 0xba, 0x35, 0x53, 0x1e,
-	0x15, 0x93, 0x8c, 0xa8, 0x4d, 0x54, 0xc7, 0x92, 0xa9, 0x2c, 0x79, 0x17, 0x97, 0x91, 0x6f, 0x87,
-	0x94, 0xf9, 0xaa, 0xe7, 0x9a, 0x99, 0xd9, 0xf8, 0x09, 0x94, 0xd3, 0x0a, 0x64, 0x7c, 0x68, 0xf1,
-	0x21, 0x09, 0xd3, 0x4c, 0xb1, 0x25, 0x33, 0xb9, 0x91, 0x9f, 0x66, 0x72, 0x23, 0x1f, 0x3f, 0x06,
-	0xf4, 0xda, 0xf7, 0xee, 0xf3, 0x88, 0x30, 0x82, 0xfa, 0x4c, 0x88, 0xfc, 0x5a, 0x4e, 0xc1, 0x38,
-	0xe3, 0x6c, 0x44, 0x05, 0x65, 0x7e, 0x3c, 0xfd, 0xce, 0x11, 0x19, 0x4d, 0xc9, 0x0d, 0x1c, 0x32,
-	0xea, 0xfb, 0x96, 0x47, 0x52, 0x39, 0x09, 0xbc, 0xb4, 0x3c, 0x22, 0x67, 0x28, 0xe8, 0x47, 0xa2,
-	0x8a, 0x2a, 0x98, 0xea, 0x8c, 0x0d, 0xd0, 0x73, 0xe5, 0x64, 0xaa, 0xa7, 0xd0, 0xe8, 0x5e, 0x11,
-	0xfb, 0xfa, 0x7e, 0x69, 0xe4, 0xf7, 0x3c, 0x17, 0x16, 0xb8, 0xe3, 0xf6, 0x57, 0x0d, 0xca, 0xf1,
-	0x0e, 0xe0, 0x63, 0x74, 0x01, 0x68, 0x7e, 0x1f, 0xa0, 0xff, 0xd2, 0x09, 0x2f, 0xdc, 0x43, 0xc6,
-	0xbf, 0x77, 0x51, 0x64, 0xd5, 0x4b, 0xe8, 0x05, 0xac, 0xcf, 0x2c, 0x0e, 0x81, 0x76, 0xd2, 0xa0,
-	0xbc, 0x45, 0x63, 0x18, 0x0b, 0xbc, 0x4a, 0xad, 0xfd, 0x6d, 0x19, 0x60, 0xaa, 0xc4, 0x43, 0xa8,
-	0x64, 0xcf, 0x1b, 0xe9, 0x93, 0xaf, 0x7a, 0x76, 0xae, 0x46, 0x23, 0xc7, 0x13, 0x57, 0x77, 0x0c,
-	0xd5, 0xa9, 0xa1, 0xa2, 0x2c, 0xf9, 0xfc, 0xe3, 0x30, 0xf4, 0x5c, 0x5f, 0x2c, 0xf3, 0x16, 0xfe,
-	0xca, 0x19, 0x1c, 0xc2, 0xd9, 0x67, 0xb5, 0xf0, 0x91, 0x18, 0xbb, 0x77, 0x72, 0x62, 0xf9, 0x57,
-	0xb0, 0x71, 0x6b, 0x88, 0xa8, 0x99, 0x2d, 0xa5, 0xdc, 0x47, 0x61, 0xec, 0x2c, 0xf4, 0x2b, 0xc9,
-	0xce, 0xdf, 0xdf, 0x6f, 0x9a, 0xda, 0x8f, 0x9b, 0xa6, 0xf6, 0xf3, 0xa6, 0xa9, 0x7d, 0xfe, 0xd5,
-	0x5c, 0xba, 0x28, 0x30, 0xea, 0x0d, 0x8a, 0xea, 0xe7, 0x73, 0xf0, 0x3b, 0x00, 0x00, 0xff, 0xff,
-	0x2e, 0x00, 0xdc, 0x1d, 0xb1, 0x06, 0x00, 0x00,
+	// 718 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x55, 0x4b, 0x6f, 0xd3, 0x40,
+	0x10, 0x8e, 0x9b, 0xd6, 0x38, 0x13, 0xd2, 0x46, 0x4b, 0x9b, 0x5a, 0x06, 0x45, 0xd5, 0x22, 0x50,
+	0x2f, 0xa4, 0x34, 0xe5, 0x71, 0x41, 0x42, 0x34, 0x45, 0x90, 0x43, 0x51, 0x71, 0x45, 0x0f, 0x48,
+	0x28, 0x72, 0xec, 0x6d, 0xb2, 0x74, 0xed, 0x35, 0x5e, 0xdb, 0x28, 0x5c, 0x39, 0x71, 0x43, 0xe2,
+	0x3f, 0x21, 0x8e, 0xfc, 0x04, 0x54, 0xfe, 0x08, 0xda, 0xf5, 0x23, 0x69, 0x93, 0x22, 0xf5, 0x36,
+	0x8f, 0x6f, 0xbe, 0x99, 0x9d, 0x87, 0x0d, 0x35, 0x4e, 0xfd, 0x4e, 0x18, 0xf1, 0x98, 0x23, 0x5d,
+	0x8a, 0xe9, 0x43, 0xab, 0x3d, 0xe2, 0x7c, 0xc4, 0xc8, 0x8e, 0xb2, 0x0e, 0x93, 0xd3, 0x9d, 0xcf,
+	0x91, 0x13, 0x86, 0x24, 0x12, 0x19, 0x0e, 0x3f, 0x81, 0xb5, 0x63, 0x12, 0x9f, 0x38, 0x2c, 0x21,
+	0x36, 0xf9, 0x94, 0x10, 0x11, 0xa3, 0xbb, 0xb0, 0x92, 0x4a, 0xdd, 0xd4, 0xb6, 0xb4, 0xed, 0x7a,
+	0xb7, 0xd1, 0xc9, 0xa8, 0x3a, 0x19, 0x28, 0xf3, 0xe1, 0x5d, 0x58, 0x51, 0x3a, 0x42, 0xb0, 0x1c,
+	0x3a, 0xf1, 0x58, 0x81, 0x6b, 0xb6, 0x92, 0xd1, 0x7a, 0xc1, 0xb0, 0xa4, 0x8c, 0x79, 0xc8, 0x1a,
+	0x34, 0xa6, 0xa9, 0x42, 0x36, 0xc1, 0xf7, 0xa1, 0xf9, 0x2a, 0x37, 0x88, 0x22, 0xf9, 0x02, 0x3a,
+	0xfc, 0x14, 0x56, 0x67, 0x70, 0x21, 0x9b, 0xa0, 0x7b, 0xa0, 0x2b, 0x4e, 0x61, 0x6a, 0x5b, 0xd5,
+	0xf9, 0x1a, 0x73, 0x27, 0xfe, 0xa1, 0x41, 0xf3, 0xd0, 0x09, 0x4f, 0x38, 0x4b, 0xfc, 0xf2, 0x79,
+	0xb7, 0xa1, 0x96, 0x2a, 0xc3, 0x80, 0x7a, 0x79, 0x1a, 0x23, 0x33, 0xf4, 0x3d, 0xd4, 0x01, 0xdd,
+	0x77, 0x18, 0xe3, 0xae, 0x2a, 0xbd, 0xde, 0x5d, 0x2f, 0x88, 0x0f, 0x95, 0xf5, 0xc8, 0x89, 0x1c,
+	0x5f, 0xbc, 0xae, 0xd8, 0x39, 0x0a, 0x6d, 0xc3, 0xb2, 0x4b, 0xc2, 0xb1, 0x59, 0x55, 0x68, 0x54,
+	0xa0, 0x7b, 0x24, 0x1c, 0x97, 0x58, 0x85, 0xd8, 0x37, 0x40, 0x0f, 0x95, 0x05, 0xaf, 0xc2, 0xcd,
+	0x59, 0x36, 0xfc, 0x55, 0x03, 0x98, 0x06, 0xa0, 0x4d, 0xb8, 0x91, 0x08, 0x12, 0x4d, 0xab, 0xd3,
+	0xa5, 0xda, 0xf7, 0x50, 0x0b, 0x74, 0x41, 0xdc, 0x88, 0xc4, 0x79, 0x5b, 0x73, 0x0d, 0x59, 0x60,
+	0xf8, 0x3c, 0xa0, 0x31, 0x8f, 0x84, 0xaa, 0xa3, 0x66, 0x97, 0xba, 0x6a, 0x27, 0xe7, 0xcc, 0x5c,
+	0xce, 0xdb, 0xc9, 0x39, 0x93, 0xd3, 0xa1, 0xbe, 0x33, 0x22, 0xe6, 0x4a, 0x36, 0x1d, 0xa5, 0xe0,
+	0x18, 0x56, 0x67, 0x5a, 0x25, 0x9b, 0xbc, 0x07, 0xf5, 0xd0, 0xa5, 0x03, 0xc7, 0xf3, 0x22, 0x22,
+	0x44, 0xbe, 0x0d, 0xe5, 0x13, 0x8f, 0x7a, 0xfd, 0x17, 0x99, 0xc7, 0x86, 0xd0, 0xa5, 0xb9, 0x8c,
+	0x1e, 0x40, 0x4d, 0xb8, 0x82, 0x0e, 0x3c, 0x2a, 0xce, 0xf2, 0x1e, 0x36, 0x8b, 0x90, 0xe3, 0xde,
+	0x71, 0xff, 0x80, 0x8a, 0x33, 0xdb, 0x90, 0x10, 0x29, 0xe1, 0x8f, 0x00, 0x53, 0x22, 0xf9, 0x42,
+	0x8f, 0xfb, 0x0e, 0x0d, 0x54, 0xb2, 0x86, 0x9d, 0x6b, 0xa8, 0x09, 0xd5, 0x61, 0x22, 0x14, 0x5d,
+	0xc3, 0x96, 0xa2, 0x42, 0x92, 0x94, 0xba, 0x44, 0xbd, 0x58, 0x22, 0x95, 0x26, 0x7b, 0x71, 0x9a,
+	0x04, 0x6e, 0x4c, 0x79, 0xa0, 0xde, 0xdc, 0xb0, 0x4b, 0x1d, 0x3f, 0x02, 0xa3, 0xa8, 0x40, 0xc6,
+	0xc7, 0x4e, 0x34, 0x22, 0x71, 0x91, 0x29, 0xd3, 0x64, 0x26, 0x96, 0x04, 0x45, 0x26, 0x96, 0x04,
+	0x78, 0x17, 0xd0, 0xbb, 0xc0, 0xbf, 0xce, 0x12, 0x61, 0x04, 0xcd, 0x0b, 0x21, 0x72, 0xd7, 0x0f,
+	0xc1, 0x3a, 0x8a, 0x78, 0x4a, 0x05, 0xe5, 0x41, 0x36, 0xfd, 0xfd, 0x03, 0x92, 0xce, 0xd0, 0x0d,
+	0x3d, 0x92, 0x0e, 0x02, 0xc7, 0x27, 0x05, 0x9d, 0x34, 0xbc, 0x71, 0x7c, 0x75, 0x61, 0x82, 0x7e,
+	0xc9, 0x8e, 0xa9, 0x6a, 0x2b, 0x19, 0x5b, 0x60, 0x2e, 0xa4, 0x93, 0xa9, 0x1e, 0x43, 0xab, 0x37,
+	0x26, 0xee, 0xd9, 0xf5, 0xd2, 0xe0, 0x16, 0xac, 0xcf, 0x85, 0x85, 0x6c, 0xd2, 0xfd, 0xa6, 0x81,
+	0x61, 0x93, 0x11, 0x15, 0x71, 0x34, 0x41, 0xcf, 0xc0, 0x28, 0x6e, 0x18, 0x6d, 0x96, 0x73, 0xbd,
+	0xf8, 0x01, 0xb1, 0x36, 0xe6, 0x1d, 0xb2, 0xae, 0x0a, 0x7a, 0x0e, 0xb5, 0xf2, 0x90, 0x91, 0x59,
+	0xa0, 0x2e, 0x7f, 0x03, 0xac, 0xd6, 0x02, 0x8f, 0x22, 0xe8, 0xfe, 0x5c, 0x02, 0xe8, 0xf1, 0x20,
+	0x8e, 0x38, 0x63, 0x24, 0x92, 0x7c, 0xe5, 0xce, 0x4e, 0xf9, 0x2e, 0x5f, 0xfc, 0x94, 0xef, 0xe2,
+	0x82, 0xe3, 0x0a, 0x7a, 0x09, 0xf5, 0x99, 0x49, 0x21, 0xab, 0x00, 0xce, 0x4f, 0xdc, 0x32, 0x17,
+	0xfa, 0x32, 0x9a, 0x0f, 0x70, 0x6b, 0xc1, 0x34, 0x10, 0x2e, 0x6f, 0xe5, 0xca, 0xc9, 0x5b, 0x5b,
+	0xff, 0xc5, 0x64, 0xf4, 0x6f, 0x61, 0xed, 0xd2, 0x64, 0x50, 0xbb, 0xfc, 0xd2, 0x2c, 0x9c, 0xb4,
+	0x75, 0xe7, 0x4a, 0xbf, 0xa2, 0xdc, 0xdf, 0xf8, 0x75, 0xde, 0xd6, 0x7e, 0x9f, 0xb7, 0xb5, 0x3f,
+	0xe7, 0x6d, 0xed, 0xfb, 0xdf, 0x76, 0xe5, 0x7d, 0x95, 0x53, 0x7f, 0xa8, 0xab, 0x9f, 0xc2, 0xde,
+	0xbf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x09, 0x6d, 0x9f, 0x26, 0x49, 0x06, 0x00, 0x00,
 }

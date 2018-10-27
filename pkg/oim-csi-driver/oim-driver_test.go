@@ -173,9 +173,11 @@ func TestMockOIM(t *testing.T) {
 	require.NoError(t, err)
 	defer controllerServer.ForceStop(ctx)
 
-	_, err = registry.RegisterController(ctx, &oim.RegisterControllerRequest{
-		ControllerId: controllerID,
-		Address:      controllerAddress,
+	_, err = registry.SetValue(ctx, &oim.SetValueRequest{
+		Value: &oim.Value{
+			Path:  controllerID + "/" + oimcommon.RegistryAddress,
+			Value: controllerAddress,
+		},
 	})
 	require.NoError(t, err)
 

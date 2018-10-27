@@ -40,24 +40,41 @@ type Registry struct {
 	db RegistryDB
 }
 
-func (r *Registry) RegisterController(ctx context.Context, in *oim.RegisterControllerRequest) (*oim.RegisterControllerReply, error) {
-	controllerID := in.GetControllerId()
-	if controllerID == "" {
-		return nil, errors.New("Empty controller ID")
+func (r *Registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.SetValueReply, error) {
+	value := in.GetValue()
+	if value == nil {
+		return nil, errors.New("missing value")
 	}
-	address := in.GetAddress()
-	r.db.Store(controllerID, address)
-	return &oim.RegisterControllerReply{}, nil
+	// sanitize path
+	elements, err := oimcommon.SplitRegistryPath(value.Path)
+	if err != nil {
+		return nil, err
+	}
+	key := oimcommon.JoinRegistryPath(elements)
+	r.db.Store(key, value.Value)
+	return &oim.SetValueReply{}, nil
 }
 
-func (r *Registry) GetControllers(ctx context.Context, in *oim.GetControllerRequest) (*oim.GetControllerReply, error) {
-	out := oim.GetControllerReply{}
-	r.db.Foreach(func(controllerID, address string) bool {
-		out.Entries = append(out.Entries,
-			&oim.DBEntry{
-				ControllerId: controllerID,
-				Address:      address,
-			})
+func (r *Registry) GetValues(ctx context.Context, in *oim.GetValuesRequest) (*oim.GetValuesReply, error) {
+	// sanitize path
+	elements, err := oimcommon.SplitRegistryPath(in.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	prefix := oimcommon.JoinRegistryPath(elements)
+
+	out := oim.GetValuesReply{}
+	r.db.Foreach(func(key, value string) bool {
+		if prefix == "" ||
+			strings.HasPrefix(key, prefix) &&
+				(len(key) == len(prefix) ||
+					key[len(prefix)] == '/') {
+			out.Values = append(out.Values,
+				&oim.Value{
+					Path:  key,
+					Value: value,
+				})
+		}
 		// More data please...
 		return true
 	})
@@ -85,9 +102,9 @@ func (sd *StreamDirector) Connect(ctx context.Context, method string) (context.C
 	if ok {
 		// Decide on which backend to dial
 		if controllerID, exists := md["controllerid"]; exists {
-			address := sd.r.db.Lookup(controllerID[0])
+			address := sd.r.db.Lookup(controllerID[0] + "/" + oimcommon.RegistryAddress)
 			if address == "" {
-				return outCtx, nil, status.Errorf(codes.Unavailable, "%s: not registered", controllerID[0])
+				return outCtx, nil, status.Errorf(codes.Unavailable, "%s: no address registered", controllerID[0])
 			}
 			opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()))
 

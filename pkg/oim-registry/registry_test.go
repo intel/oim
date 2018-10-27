@@ -61,14 +61,103 @@ var _ = Describe("OIM Registry", func() {
 			var err error
 			r, err := oimregistry.New(oimregistry.DB(db))
 			Expect(err).NotTo(HaveOccurred())
-			controllerID := "foo"
-			address := "tpc:///1.1.1.1/"
-			_, err = r.RegisterController(ctx, &oim.RegisterControllerRequest{
-				ControllerId: controllerID,
-				Address:      address,
+			key1 := "foo/controller-id"
+			value1 := "dns:///1.1.1.1/"
+			expected := oimregistry.MemRegistryDB{key1: value1}
+			_, err = r.SetValue(ctx, &oim.SetValueRequest{
+				Value: &oim.Value{
+					Path:  key1,
+					Value: value1,
+				},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(db).To(Equal(oimregistry.MemRegistryDB{controllerID: address}))
+			Expect(db).To(Equal(expected))
+
+			key2 := "foo/pci"
+			value2 := "0000:0003:20.1"
+			expected[key2] = value2
+			_, err = r.SetValue(ctx, &oim.SetValueRequest{
+				Value: &oim.Value{
+					Path:  key2,
+					Value: value2,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(db).To(Equal(expected))
+
+			key3 := "bar/pci"
+			value3 := "0000:0004:30.2"
+			expected[key3] = value3
+			_, err = r.SetValue(ctx, &oim.SetValueRequest{
+				Value: &oim.Value{
+					Path:  key3,
+					Value: value3,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(db).To(Equal(expected))
+
+			var values *oim.GetValuesReply
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+				&oim.Value{Path: key2, Value: value2},
+				&oim.Value{Path: key3, Value: value3},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: "",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+				&oim.Value{Path: key2, Value: value2},
+				&oim.Value{Path: key3, Value: value3},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: key1,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: key2,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key2, Value: value2},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: "foo/",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+				&oim.Value{Path: key2, Value: value2},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: "/foo///",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+				&oim.Value{Path: key2, Value: value2},
+			}))
+
+			values, err = r.GetValues(ctx, &oim.GetValuesRequest{
+				Path: "foo",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(values.Values).To(ConsistOf([]*oim.Value{
+				&oim.Value{Path: key1, Value: value1},
+				&oim.Value{Path: key2, Value: value2},
+			}))
 		})
 	})
 
@@ -114,7 +203,7 @@ var _ = Describe("OIM Registry", func() {
 			ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", "no-such-controller")
 			_, err := controllerClient.MapVolume(ctx, &oim.MapVolumeRequest{})
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("no-such-controller: not registered"))
+			Expect(err.Error()).To(ContainSubstring("no-such-controller: no address registered"))
 		})
 
 		Context("with controller", func() {
@@ -135,9 +224,11 @@ var _ = Describe("OIM Registry", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				// Register this controller.
-				_, err = registry.RegisterController(ctx, &oim.RegisterControllerRequest{
-					ControllerId: controllerID,
-					Address:      controllerAddress,
+				_, err = registry.SetValue(ctx, &oim.SetValueRequest{
+					Value: &oim.Value{
+						Path:  controllerID + "/" + oimcommon.RegistryAddress,
+						Value: controllerAddress,
+					},
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -156,7 +247,7 @@ var _ = Describe("OIM Registry", func() {
 				callCtx = metadata.AppendToOutgoingContext(ctx, "controllerid", "no-such-controller")
 				_, err = controllerClient.MapVolume(callCtx, &oim.MapVolumeRequest{})
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("no-such-controller: not registered"))
+				Expect(err.Error()).To(ContainSubstring("no-such-controller: no address registered"))
 
 				callCtx = metadata.AppendToOutgoingContext(ctx, "controllerid", controllerID)
 				args := oim.MapVolumeRequest{

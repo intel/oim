@@ -28,8 +28,10 @@ var (
 	// Quick-and-dirty bool flags for triggering operations. What we want instead is
 	// probably something like a Cobra-based command line tool. We also need to consider
 	// keys which contain the = sign: right now, the command line parsing does not support those.
-	get = flag.Bool("get", false, "prints the current registry as <key>=<value> pairs to stdout")
-	set = flag.String("set", "", "sets or updates (for <key>=<value>) or removes (for <key>= or just <key>) a registry entry")
+	get   = flag.Bool("get", false, "retrieve values from the registry as <key>=<value> pairs to stdout")
+	set   = flag.Bool("set", false, "sets or updates a registry value, deletes it when value is empty")
+	path  = flag.String("path", "", "the complete path of a value (set, delete, get of single value) or a path prefix (get multiple values)")
+	value = flag.String("value", "", "the value to set or update")
 )
 
 func main() {
@@ -56,31 +58,43 @@ func main() {
 
 	registry := oim.NewRegistryClient(conn)
 
-	if *set != "" {
-		values := strings.SplitN(*set, "=", 2)
-		controllerID := values[0]
-		var controllerAddr string
-		if len(values) == 2 {
-			controllerAddr = values[1]
-		}
-		_, err := registry.RegisterController(ctx, &oim.RegisterControllerRequest{
-			ControllerId: controllerID,
-			Address:      controllerAddr,
-		})
-		if err != nil {
-			logger.Fatalw("setting a registry entry", "error", err, "key", controllerID, "value", controllerAddr)
-		}
+	// sanitize path
+	elements, err := oimcommon.SplitRegistryPath(*path)
+	if err != nil {
+		logger.Fatalw("path", *path, "error", err)
 	}
-	if *get {
-		reply, err := registry.GetControllers(ctx, &oim.GetControllerRequest{})
-		if err != nil {
-			logger.Fatalw("getting registry entries", "error", err)
+	key := oimcommon.JoinRegistryPath(elements)
+
+	if *set {
+		if key == "" {
+			logger.Fatal("key required")
 		}
-		sort.SliceStable(reply.Entries, func(i, j int) bool {
-			return strings.Compare(reply.Entries[i].ControllerId, reply.Entries[j].ControllerId) < 0
+		_, err := registry.SetValue(ctx, &oim.SetValueRequest{
+			Value: &oim.Value{
+				Path:  key,
+				Value: *value,
+			},
 		})
-		for _, entry := range reply.Entries {
-			fmt.Printf("%s=%s\n", entry.ControllerId, entry.Address)
+		if err != nil {
+			logger.Fatalw("setting a registry value", "error", err, "path", key, "value", *value)
 		}
+	} else if *get {
+		if *value != "" {
+			logger.Fatalw("value not allowed for --get", "value", *value)
+		}
+		reply, err := registry.GetValues(ctx, &oim.GetValuesRequest{
+			Path: key,
+		})
+		if err != nil {
+			logger.Fatalw("getting registry values", "error", err)
+		}
+		sort.SliceStable(reply.Values, func(i, j int) bool {
+			return strings.Compare(reply.Values[i].Path, reply.Values[j].Path) < 0
+		})
+		for _, entry := range reply.Values {
+			fmt.Printf("%s=%s\n", entry.Path, entry.Value)
+		}
+	} else {
+		logger.Fatal("either --get or --set must be chosen")
 	}
 }
