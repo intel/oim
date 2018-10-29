@@ -170,21 +170,47 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", ns.od.oimRegistryAddress, err))
 		}
+		defer conn.Close()
 		controllerClient := oim.NewControllerClient(conn)
+		registryClient := oim.NewRegistryClient(conn)
+
+		// Find out about configured PCI address before
+		// triggering the more complex MapVolume operation.
+		var defPCIAddress oim.PCIAddress
+		path := ns.od.oimControllerID + "/" + oimcommon.RegistryPCI
+		valuesReply, err := registryClient.GetValues(ctx, &oim.GetValuesRequest{
+			Path: path,
+		})
+		if err != nil {
+			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("get PCI address from registry: %s", err))
+		}
+		if len(valuesReply.GetValues()) > 1 {
+			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("expected at most one PCI address in registry at path %s: %s", path, valuesReply.GetValues()))
+		}
+		if len(valuesReply.GetValues()) == 1 {
+			p, err := oimcommon.ParseBDFString(valuesReply.GetValues()[0].Value)
+			if err != nil {
+				return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("get PCI address from registry at path %s: %s", path, err))
+			}
+			defPCIAddress = *p
+		}
 
 		// Make volume available and/or find out where it is.
 		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", ns.od.oimControllerID)
 		request := &oim.MapVolumeRequest{
 			VolumeId: volumeID,
-			// TODO: map attrib to params
-			// For now we assume that we map a Malloc BDev with the same name.
+			// Malloc BDev is the default. It takes no special parameters.
 			Params: &oim.MapVolumeRequest_Malloc{
 				Malloc: &oim.MallocParams{},
 			},
 		}
 		if ns.od.emulate != nil {
+			// Replace default parameters with the actual
+			// values for the request. Interpretation of
+			// the request depends on which CSI driver we
+			// emulate.
 			if err := ns.od.emulate.MapVolumeParams(req, request); err != nil {
-				return nil, errors.Wrap(err, "create MapVolumeRequest parameters")
+				return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("create MapVolumeRequest parameters: %s", err))
 			}
 		}
 		reply, err := controllerClient.MapVolume(ctx, request)
@@ -192,14 +218,29 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("MapVolume for %s failed: %s", volumeID, err))
 		}
 
-		// Find device node based on reply.
+		// Find device node based on reply. If the PCI address
+		// is missing or incomplete, it must be set in the
+		// registry.
 		pciAddress := reply.GetPciAddress()
 		if pciAddress == nil {
-			// TODO: retrieve bus/device from registry,
-			// add function.
-			panic("need full PCI address")
+			pciAddress = &oim.PCIAddress{}
 		}
-		dev, major, minor, err := waitForDevice(ctx, "/sys/dev/block", pciAddress, reply.GetScsiDisk())
+		complete := oimcommon.CompletePCIAddress(*pciAddress, defPCIAddress)
+		if complete.Domain == 0xFFFF {
+			// We default the domain to zero because it
+			// rarely needed. Everything else must be
+			// specified.
+			complete.Domain = 0
+		}
+		if complete.Bus == 0xFFFF || complete.Device == 0xFFFF || complete.Function == 0xFFFF {
+			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("need complete PCI address with bus:device.function: %s from controller, %s from registry at path %s => combined %s",
+				oimcommon.PrettyPCIAddress(pciAddress),
+				oimcommon.PrettyPCIAddress(&defPCIAddress),
+				oimcommon.PrettyPCIAddress(&complete),
+				path))
+		}
+
+		dev, major, minor, err := waitForDevice(ctx, "/sys/dev/block", &complete, reply.GetScsiDisk())
 		if err != nil {
 			return nil, err
 		}
@@ -272,7 +313,8 @@ func waitForDevice(ctx context.Context, sys string, pciAddress *oim.PCIAddress, 
 		}
 		select {
 		case <-ctx.Done():
-			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device '%+v', SCSI disk '%+v'", pciAddress, scsiDisk)
+			return "", 0, 0, status.Errorf(codes.DeadlineExceeded, "timed out waiting for device %s, SCSI disk '%+v'",
+				oimcommon.PrettyPCIAddress(pciAddress), scsiDisk)
 		case <-watcher.Events:
 			// Try again.
 			log.FromContext(ctx).Debugw("changed",

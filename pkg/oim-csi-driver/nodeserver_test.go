@@ -140,7 +140,7 @@ func TestFindDev(t *testing.T) {
 		},
 	)
 	assert.Error(t, err)
-	assert.Equal(t, "rpc error: code = DeadlineExceeded desc = timed out waiting for device 'device:23 ', SCSI disk 'target:1 '", err.Error())
+	assert.Equal(t, "rpc error: code = DeadlineExceeded desc = timed out waiting for device 0000:00:17.0, SCSI disk 'target:1 '", err.Error())
 
 	// Create the expected entry in two seconds, wait at most five.
 	timeout2, cancel := context.WithTimeout(ctx, 5*time.Second)

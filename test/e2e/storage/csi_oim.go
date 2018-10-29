@@ -76,7 +76,7 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	controllerAddress := "unix:///" + op.tmpDir + "/controller.sock"
 	op.controller, err = oimcontroller.New(
 		oimcontroller.WithVHostController(spdk.VHost),
-		oimcontroller.WithVHostDev(spdk.VHostDev),
+		oimcontroller.WithVHostDev(":.0"), // Only PCI function provided by controller, rest comes from registry.
 		oimcontroller.WithSPDK(spdk.SPDKPath),
 	)
 	Expect(err).NotTo(HaveOccurred())
@@ -97,6 +97,13 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 		Value: &oim.Value{
 			Path:  op.controllerID + "/" + oimcommon.RegistryAddress,
 			Value: controllerAddress,
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	_, err = registryClient.SetValue(context.Background(), &oim.SetValueRequest{
+		Value: &oim.Value{
+			Path:  op.controllerID + "/" + oimcommon.RegistryPCI,
+			Value: spdk.VHostDev,
 		},
 	})
 	Expect(err).NotTo(HaveOccurred())

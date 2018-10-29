@@ -21,7 +21,7 @@ var (
 	endpoint          = flag.String("endpoint", "tcp://:8999", "OIM controller endpoint for net.Listen")
 	spdk              = flag.String("spdk", "/var/tmp/vhost.sock", "SPDK VHost RPC socket path")
 	vhost             = flag.String("vhost-scsi-controller", "vhost.0", "SPDK VirtIO SCSI controller name")
-	vhostDev          = flag.String("vm-vhost-device", "", "the PCI address of the SCSI controller in a VM ([domain:]bus:device.function)")
+	vhostDev          = flag.String("vm-vhost-device", "", "the PCI address of the SCSI controller in a VM ([domain:]bus:device.function), partial address allowed (:.3)")
 	controllerID      = flag.String("controllerid", "", "unique id for this controller instance")
 	controllerAddress = flag.String("controller-address", "ipv4:///oim-controller:8999", "external gRPC name for use with grpc.Dial that corresponds to the endpoint")
 	registry          = flag.String("registry", "", "gRPC name that connects to the OIM registry, empty disables registration")
