@@ -9,10 +9,10 @@ package oimcsidriver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
+	"github.com/pkg/errors"
 
 	"github.com/intel/oim/pkg/oim-common"
 	"google.golang.org/grpc"
@@ -35,6 +35,8 @@ type oimDriver struct {
 	csiEndpoint        string
 	vhostEndpoint      string
 	oimRegistryAddress string
+	registryCA         string
+	registryKey        string
 	oimControllerID    string
 	emulate            *EmulateCSIDriver
 
@@ -96,6 +98,14 @@ func WithOIMRegistryAddress(address string) Option {
 	}
 }
 
+func WithRegistryCreds(ca, key string) Option {
+	return func(od *oimDriver) error {
+		od.registryCA = ca
+		od.registryKey = key
+		return nil
+	}
+}
+
 func WithOIMControllerID(id string) Option {
 	return func(od *oimDriver) error {
 		od.oimControllerID = id
@@ -136,8 +146,10 @@ func New(options ...Option) (*oimDriver, error) {
 	if od.vhostEndpoint == "" && od.oimRegistryAddress == "" {
 		return nil, errors.New("Either SPDK or OIM registry must be selected")
 	}
-	if od.oimRegistryAddress != "" && od.oimControllerID == "" {
-		return nil, errors.New("Cannot use a OIM registry without a controller ID")
+	if od.oimRegistryAddress != "" && (od.oimControllerID == "" ||
+		od.registryCA == "" ||
+		od.registryKey == "") {
+		return nil, errors.New("Cannot use a OIM registry without a controller ID, CA file and key file")
 	}
 	return &od, nil
 }
@@ -209,4 +221,19 @@ func (od *oimDriver) Run(ctx context.Context) error {
 	}
 	s.Wait(ctx)
 	return nil
+}
+
+func (od *oimDriver) DialRegistry(ctx context.Context) (*grpc.ClientConn, error) {
+	// Intentionally loaded anew for each connection attempt.
+	// File content can change over time.
+	transportCreds, err := oimcommon.LoadTLS(od.registryCA, od.registryKey, "component.registry")
+	if err != nil {
+		return nil, errors.Wrap(err, "load TLS certs")
+	}
+	opts := oimcommon.ChooseDialOpts(od.oimRegistryAddress, grpc.WithTransportCredentials(transportCreds))
+	conn, err := grpc.Dial(od.oimRegistryAddress, opts...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "connect to OIM registry at %s", od.oimRegistryAddress)
+	}
+	return conn, nil
 }

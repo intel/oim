@@ -85,12 +85,6 @@ removes the need to configure or auto-detect the controller ID on the
 host system and is therefore the default in the OIM CSI driver. More
 complex deployment scenarios are still possible.
 
-### Security
-
-Eventually all communication will be protected by TLS when going over
-a network and authentication/authorization will be added. How to
-provision the necessary keys is under discussion.
-
 
 ## Components
 
@@ -174,6 +168,48 @@ When used with accelerator hardware, SPDK runs on separate hardware and
 the volumes appear as new SCSI devices on the same virtio SCSI
 controller (VHost SCSI). In the future, dynamically attaching new
 virtio block controllers for each new volume might also be supported.
+
+
+## Security
+
+All communication is protected by mutual TLS. Both client and server
+must identify themselves and the certificate they present must be
+trusted. The common name in each certificate is used to identify the
+different components and authorizes certain operations. The following
+common names have a special meaning:
+
+- `component.registry` is used by the OIM registry.
+- `user.admin` is used by privileged clients talking to the OIM
+  registry and everything else with a `user.` prefix for
+  non-privileged clients.
+- `user.<anything else>` is used by unprivileged clients talking to
+  the OIM registry.
+- `host:<controller ID>` is used by a OIM CSI driver which needs to to
+  send commands to the controller with that ID.
+- `controller.<controller ID>` is used by the OIM controller with that
+  ID.
+
+All components trust the registry when it presents a
+`component.registry` certificate. The registry accepts connections
+only from trusted peers and in addition, checks for `user.admin` in
+privileged operations (like `SetValue`) and `host:<controller ID>`
+when proxying commands. Connections from the registry proxy to the
+controller expect the controller to have `controller.<controller ID>`.
+
+The OIM controller therefore only needs to check that incoming
+commands come from the registry and can rely on the registry to ensure
+that the command comes from the right OIM CSI driver. Likewise, the
+registry protects secrets embedded in commands by verifying the
+identity of the controller it connects to and detects configuration
+mistakes (like an address that points to the wrong controller).
+
+Certificates and keys get loaded anew for each connection attempt. For
+clients, this makes it possible to update secrets without restarting
+long-running processes (OIM CSI driver), but servers (OIM registry,
+OIM controller) have to be restarted.
+
+The usage instructions below explain how to create and use these
+certificates.
 
 
 ## Building
@@ -503,6 +539,35 @@ PVCs and apps can use this new storage class like before:
     oim-rbd-pvc   Bound     pvc-78de5c73-db99-11e8-8266-deadbeef0100   1Gi        RWO            oim-rbd-sc     1m
     $ _work/ssh-clear-kvm rbd list
     pvc-78de5c73-db99-11e8-8266-deadbeef0100
+
+### Certificates
+
+The [`test/setup-ca.sh`](test/setup-ca.sh) script shows how to create
+certificates with the `certstrap` tool that is bundled with the OIM
+source code. This is just an example. Administrators of a cluster must
+ensure that they choose key lengths and algorithms of sufficient
+strength for their purposes and manage certificate distribution.
+
+Setting up the cluster already called that script to generate the
+certificates in the `_work/ca` directory and used them to bring up the
+different components. In addition, there is a `_work/evil-ca`
+directory with certificates that have the right common names, but
+aren't trusted by any of the running components. They can be used to
+test man-in-the-middle attacks.
+
+Securely distributing just the required certificate to the OIM CSI
+driver on each node is not possible with builtin Kubernetes
+primitives. To achieve full separation between nodes, the goal is
+to provide only the `host:<controller ID>.[key|crt]` files on the node
+for that controller. But the builtin mechanism, Kubernetes secrets,
+can only provide the same secret to all pods in a deployment. The demo
+cluster therefore makes the secret keys for all nodes available on all
+nodes and then points the OIM CSI driver to the right files with a
+command line parameter. In command line parameters it is possible to
+embed the node name.
+
+A production deployment can improve upon that by using some other key
+delivery mechanism, like for example [Vault](https://www.vaultproject.io/).
 
 
 ## Troubleshooting

@@ -67,6 +67,7 @@ github.com/sirupsen/logrus;logrus;MIT License
 github.com/spdk/spdk;spdk spdk;BSD 3-clause "New" or "Revised" License
 github.com/spf13/cobra;cobra;BSD 3-clause "New" or "Revised" License
 github.com/spf13/pflag;Steve Francia pflag;BSD 3-clause "New" or "Revised" License
+github.com/square/certstrap;certstrap;Apache License 2.0
 github.com/stretchr/testify;testify;MIT License
 github.com/vgough/grpc-proxy;vgough grpc proxy;Apache License 2.0
 golang.org/x/crypto;golang - crypto;BSD 3-clause "New" or "Revised" License

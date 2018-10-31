@@ -15,10 +15,8 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
@@ -188,10 +186,9 @@ func (cs *controllerServer) deleteVolumeOIM(ctx context.Context, req *csi.Delete
 
 func (cs *controllerServer) provisionOIM(ctx context.Context, bdevName string, size int64) error {
 	// Connect to OIM controller through OIM registry.
-	opts := oimcommon.ChooseDialOpts(cs.od.oimRegistryAddress)
-	conn, err := grpc.Dial(cs.od.oimRegistryAddress, opts...)
+	conn, err := cs.od.DialRegistry(ctx)
 	if err != nil {
-		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", cs.od.oimRegistryAddress, err))
+		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	defer conn.Close()
 	controllerClient := oim.NewControllerClient(conn)
@@ -251,10 +248,9 @@ func (cs *controllerServer) checkVolumeExistsSPDK(ctx context.Context, volumeID 
 
 func (cs *controllerServer) checkVolumeExistsOIM(ctx context.Context, volumeID string) error {
 	// Connect to OIM controller through OIM registry.
-	opts := oimcommon.ChooseDialOpts(cs.od.oimRegistryAddress)
-	conn, err := grpc.Dial(cs.od.oimRegistryAddress, opts...)
+	conn, err := cs.od.DialRegistry(ctx)
 	if err != nil {
-		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", cs.od.oimRegistryAddress, err))
+		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	defer conn.Close()
 	controllerClient := oim.NewControllerClient(conn)

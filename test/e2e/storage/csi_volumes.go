@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -119,6 +120,7 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		BeforeEach(func() {
 			destructor, err := f.CreateFromManifests(
 				patchOIM,
+				os.ExpandEnv("${TEST_WORK}/ca/secret.yaml"),
 				"deploy/kubernetes/malloc/malloc-rbac.yaml",
 				"deploy/kubernetes/malloc/malloc-daemonset.yaml",
 				"deploy/kubernetes/malloc/malloc-storageclass.yaml",
@@ -149,6 +151,7 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		BeforeEach(func() {
 			destructor, err := f.CreateFromManifests(
 				patchOIM,
+				os.ExpandEnv("${TEST_WORK}/ca/secret.yaml"),
 				"deploy/kubernetes/ceph-csi/rbd-rbac.yaml",
 				"deploy/kubernetes/ceph-csi/rbd-node.yaml",
 				"deploy/kubernetes/ceph-csi/oim-node.yaml",

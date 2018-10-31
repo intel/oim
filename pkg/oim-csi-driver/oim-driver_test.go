@@ -9,15 +9,14 @@ package oimcsidriver
 import (
 	"context"
 	"fmt"
+	"github.com/kubernetes-csi/csi-test/pkg/sanity"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/kubernetes-csi/csi-test/pkg/sanity"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -148,19 +147,21 @@ func (m *MockController) CheckMallocBDev(ctx context.Context, in *oim.CheckMallo
 func TestMockOIM(t *testing.T) {
 	defer testlog.SetGlobal(t)()
 	ctx := context.Background()
-
+	adminCtx := oimregistry.RegistryClientContext(ctx, "user.admin")
 	var err error
 
 	tmp, err := ioutil.TempDir("", "oim-driver")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmp)
 
-	controllerID := "my-test-controller-ID"
+	controllerID := "host-0"
 
 	registryAddress := "unix://" + tmp + "/oim-registry.sock"
-	registry, err := oimregistry.New()
+	tlsConfig, err := oimcommon.LoadTLSConfig(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/component.registry.key"), "")
 	require.NoError(t, err)
-	registryServer, service := oimregistry.Server(registryAddress, registry)
+	registry, err := oimregistry.New(oimregistry.TLS(tlsConfig))
+	require.NoError(t, err)
+	registryServer, service := registry.Server(registryAddress)
 	err = registryServer.Start(ctx, service)
 	require.NoError(t, err)
 	defer registryServer.ForceStop(ctx)
@@ -168,12 +169,16 @@ func TestMockOIM(t *testing.T) {
 	controllerAddress := "unix://" + tmp + "/oim-controller.sock"
 	controller := &MockController{}
 	require.NoError(t, err)
-	controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller)
+	controllerCreds, err := oimcommon.LoadTLS(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"),
+		os.ExpandEnv("${TEST_WORK}/ca/controller."+controllerID),
+		"component.registry")
+	require.NoError(t, err)
+	controllerServer, controllerService := oimcontroller.Server(controllerAddress, controller, controllerCreds)
 	err = controllerServer.Start(ctx, controllerService)
 	require.NoError(t, err)
 	defer controllerServer.ForceStop(ctx)
 
-	_, err = registry.SetValue(ctx, &oim.SetValueRequest{
+	_, err = registry.SetValue(adminCtx, &oim.SetValueRequest{
 		Value: &oim.Value{
 			Path:  controllerID + "/" + oimcommon.RegistryAddress,
 			Value: controllerAddress,
@@ -184,13 +189,15 @@ func TestMockOIM(t *testing.T) {
 	endpoint := "unix://" + tmp + "/oim-driver.sock"
 	driver, err := New(WithCSIEndpoint(endpoint),
 		WithOIMRegistryAddress(registryAddress),
+		WithRegistryCreds(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/host."+controllerID)),
 		WithOIMControllerID(controllerID),
 	)
 	require.NoError(t, err)
 	s, err := driver.Start(ctx)
 	defer s.ForceStop(ctx)
 
-	opts := oimcommon.ChooseDialOpts(endpoint, grpc.WithBlock())
+	// CSI does not use transport security for its Unix domain socket.
+	opts := oimcommon.ChooseDialOpts(endpoint, grpc.WithBlock(), grpc.WithInsecure())
 	conn, err := grpc.Dial(endpoint, opts...)
 	require.NoError(t, err)
 	csiClient := csi.NewNodeClient(conn)

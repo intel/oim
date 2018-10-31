@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"github.com/intel/oim/pkg/log"
@@ -26,6 +27,7 @@ import (
 
 // Controller implements oim.Controller.
 type Controller struct {
+	creds           credentials.TransportCredentials
 	registryAddress string
 	registryDelay   time.Duration
 	controllerID    string
@@ -280,6 +282,13 @@ func WithRegistryDelay(delay time.Duration) Option {
 	}
 }
 
+func WithCreds(creds credentials.TransportCredentials) Option {
+	return func(c *Controller) error {
+		c.creds = creds
+		return nil
+	}
+}
+
 // WithControllerAddress sets the *external* address for the
 // controller, i.e. what the OIM registry needs to use for gRPC.Dial
 // to contact the controller.
@@ -346,6 +355,10 @@ func New(options ...Option) (*Controller, error) {
 		return nil, errors.New("Need both controller ID and external controller address for registering  with the OIM registry.")
 	}
 
+	if c.creds == nil {
+		return nil, errors.New("transport credentials missing")
+	}
+
 	return &c, nil
 }
 
@@ -394,8 +407,7 @@ func (c *Controller) register(ctx context.Context) {
 	// a permanent connection from each controller to
 	// the registry.
 	log.L().Infof("Registering OIM controller %s at address %s with OIM registry %s", c.controllerID, c.controllerAddr, c.registryAddress)
-	// TODO: secure connection
-	opts := oimcommon.ChooseDialOpts(c.registryAddress, grpc.WithInsecure())
+	opts := oimcommon.ChooseDialOpts(c.registryAddress, grpc.WithTransportCredentials(c.creds))
 	conn, err := grpc.DialContext(ctx, c.registryAddress, opts...)
 	if err != nil {
 		log.L().Infow("connecting to OIM registry", "error", err)
@@ -418,12 +430,19 @@ func (c *Controller) Stop() {
 	}
 }
 
-func Server(endpoint string, c oim.ControllerServer) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+func (c *Controller) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+	return Server(endpoint, c, c.creds)
+}
+
+func Server(endpoint string, c oim.ControllerServer, creds credentials.TransportCredentials) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
 	service := func(s *grpc.Server) {
 		oim.RegisterControllerServer(s, c)
 	}
 	server := &oimcommon.NonBlockingGRPCServer{
 		Endpoint: endpoint,
+		ServerOptions: []grpc.ServerOption{
+			grpc.Creds(creds),
+		},
 	}
 	return server, service
 }

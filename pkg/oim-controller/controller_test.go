@@ -10,7 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
+
+	"google.golang.org/grpc/credentials"
 
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/log/level"
@@ -28,9 +31,16 @@ import (
 
 var _ = Describe("OIM Controller", func() {
 	var (
-		c   *oimcontroller.Controller
-		ctx context.Context
+		c               *oimcontroller.Controller
+		ctx             context.Context
+		controllerCreds credentials.TransportCredentials
 	)
+
+	BeforeEach(func() {
+		var err error
+		controllerCreds, err = oimcommon.LoadTLS(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/controller.host-0.key"), "component.registry")
+		Expect(err).NotTo(HaveOccurred())
+	})
 
 	Describe("registration", func() {
 		var (
@@ -50,10 +60,12 @@ var _ = Describe("OIM Controller", func() {
 				}).With("at", "oim-registry"))
 
 			// Spin up registry.
-			db = &oimregistry.MemRegistryDB{}
-			registry, err = oimregistry.New(oimregistry.DB(db))
+			tlsConfig, err := oimcommon.LoadTLSConfig(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/component.registry.key"), "")
 			Expect(err).NotTo(HaveOccurred())
-			registryServer, service := oimregistry.Server("tcp4://:0", registry)
+			db = &oimregistry.MemRegistryDB{}
+			registry, err = oimregistry.New(oimregistry.DB(db), oimregistry.TLS(tlsConfig))
+			Expect(err).NotTo(HaveOccurred())
+			registryServer, service := registry.Server("tcp4://:0")
 			err = registryServer.Start(ctx, service)
 			Expect(err).NotTo(HaveOccurred())
 			addr := registryServer.Addr()
@@ -71,9 +83,10 @@ var _ = Describe("OIM Controller", func() {
 
 		It("should work", func() {
 			addr := "foo://bar"
-			controllerID := "controller-registration-test-1"
+			controllerID := "host-0"
 			c, err := oimcontroller.New(
 				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithCreds(controllerCreds),
 				oimcontroller.WithControllerID(controllerID),
 				oimcontroller.WithControllerAddress(addr),
 			)
@@ -88,9 +101,10 @@ var _ = Describe("OIM Controller", func() {
 
 		It("should re-register", func() {
 			addr := "foo://bar"
-			controllerID := "controller-registration-test-2"
+			controllerID := "host-0"
 			c, err := oimcontroller.New(
 				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithCreds(controllerCreds),
 				oimcontroller.WithControllerID(controllerID),
 				oimcontroller.WithControllerAddress(addr),
 				oimcontroller.WithRegistryDelay(5*time.Second),
@@ -110,9 +124,10 @@ var _ = Describe("OIM Controller", func() {
 
 		It("should really stop", func() {
 			addr := "foo://bar"
-			controllerID := "controller-registration-test-3"
+			controllerID := "host-0"
 			c, err := oimcontroller.New(
 				oimcontroller.WithRegistry(registryAddress),
+				oimcontroller.WithCreds(controllerCreds),
 				oimcontroller.WithControllerID(controllerID),
 				oimcontroller.WithControllerAddress(addr),
 				oimcontroller.WithRegistryDelay(5*time.Second),
@@ -155,6 +170,7 @@ var _ = Describe("OIM Controller", func() {
 			// controller are not getting logged because
 			// we are not using gRPC.
 			c, err = oimcontroller.New(oimcontroller.WithSPDK(testspdk.SPDKPath),
+				oimcontroller.WithCreds(controllerCreds),
 				oimcontroller.WithVHostDev(testspdk.VHostDev),
 				oimcontroller.WithVHostController(testspdk.VHostPath))
 			Expect(err).NotTo(HaveOccurred())

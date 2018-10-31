@@ -23,6 +23,8 @@ import (
 
 var (
 	endpoint = flag.String("registry", "", "the gRPC endpoint of the OIM registry (for example, dns:///localhost:8999)")
+	ca       = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections to the registry")
+	key      = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry client")
 	_        = log.InitSimpleFlags()
 
 	// Quick-and-dirty bool flags for triggering operations. What we want instead is
@@ -47,9 +49,18 @@ func main() {
 	if *endpoint == "" {
 		logger.Fatal("-registry must be set")
 	}
+	if *ca == "" {
+		logger.Fatalf("A CA file is required.")
+	}
+	if *key == "" {
+		logger.Fatalf("A key file is required.")
+	}
 
-	// TODO: secure connection
-	opts := oimcommon.ChooseDialOpts(*endpoint, grpc.WithInsecure())
+	transportCreds, err := oimcommon.LoadTLS(*ca, *key, "component.registry")
+	if err != nil {
+		logger.Fatalw("load TLS certs", "error", err)
+	}
+	opts := oimcommon.ChooseDialOpts(*endpoint, grpc.WithTransportCredentials(transportCreds))
 	conn, err := grpc.DialContext(ctx, *endpoint, opts...)
 	if err != nil {
 		logger.Fatalw("connecting to OIM registry", "error", err)

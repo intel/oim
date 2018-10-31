@@ -8,13 +8,17 @@ package oimregistry
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/vgough/grpc-proxy/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/intel/oim/pkg/oim-common"
@@ -37,7 +41,25 @@ type RegistryDB interface {
 
 // Registry implements oim.Registry.
 type Registry struct {
-	db RegistryDB
+	db        RegistryDB
+	tlsConfig *tls.Config
+}
+
+func getPeer(ctx context.Context) (string, error) {
+	peer, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", status.Error(codes.FailedPrecondition, "cannot determine caller identity")
+	}
+	tlsInfo, ok := peer.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", status.Error(codes.FailedPrecondition, "no TLS info")
+	}
+	if len(tlsInfo.State.VerifiedChains) == 0 ||
+		len(tlsInfo.State.VerifiedChains[0]) == 0 {
+		return "", status.Error(codes.FailedPrecondition, "cannot determine peer, empty TLS verification chain")
+	}
+	commonName := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
+	return commonName, nil
 }
 
 func (r *Registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.SetValueReply, error) {
@@ -45,12 +67,28 @@ func (r *Registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.
 	if value == nil {
 		return nil, errors.New("missing value")
 	}
+
 	// sanitize path
 	elements, err := oimcommon.SplitRegistryPath(value.Path)
 	if err != nil {
 		return nil, err
 	}
+	if len(elements) == 0 {
+		return nil, errors.New("empty path")
+	}
 	key := oimcommon.JoinRegistryPath(elements)
+
+	// Permission check: admin can set anything, controller only '<controller ID>/address'.
+	peer, err := getPeer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allowed := peer == "user.admin" ||
+		peer == "controller."+elements[0] && len(elements) == 2 && elements[1] == oimcommon.RegistryAddress
+	if !allowed {
+		return nil, status.Errorf(codes.PermissionDenied, "caller %q not allowed to set %q", peer, key)
+	}
+
 	r.db.Store(key, value.Value)
 	return &oim.SetValueReply{}, nil
 }
@@ -62,6 +100,12 @@ func (r *Registry) GetValues(ctx context.Context, in *oim.GetValuesRequest) (*oi
 		return nil, err
 	}
 	prefix := oimcommon.JoinRegistryPath(elements)
+
+	// Permission check: everyone can read, but we want to at least know that
+	// we have identified a peer (i.e. TLS is active).
+	if _, err := getPeer(ctx); err != nil {
+		return nil, err
+	}
 
 	out := oim.GetValuesReply{}
 	r.db.Foreach(func(key, value string) bool {
@@ -94,26 +138,50 @@ type StreamDirector struct {
 func (sd *StreamDirector) Connect(ctx context.Context, method string) (context.Context, *grpc.ClientConn, error) {
 	// Make sure we never forward internal services.
 	if strings.HasPrefix(method, "/oim.v0.Registry/") {
-		return nil, nil, status.Error(codes.Unimplemented, "Unknown method")
+		return nil, nil, status.Error(codes.Unimplemented, "unknown method")
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, nil, status.Error(codes.FailedPrecondition, "missing metadata")
+	}
+
+	// Decide on which backend to dial
+	controllerIDs, exists := md["controllerid"]
+	if !exists || len(controllerIDs) != 1 {
+		return nil, nil, status.Error(codes.FailedPrecondition, "missing or invalid controllerid meta data")
+	}
+	controllerID := controllerIDs[0]
+
+	// Permission check: only the host service with the same
+	// controller ID can contact the controller.
+	peer, err := getPeer(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	prefix := "host."
+	if !strings.HasPrefix(peer, prefix) ||
+		peer[len(prefix):] != controllerID {
+		return nil, nil, status.Errorf(codes.PermissionDenied, "caller %q not allowed to contact controller %q", peer, controllerID)
+	}
+
+	address := sd.r.db.Lookup(controllerID + "/" + oimcommon.RegistryAddress)
+	if address == "" {
+		return nil, nil, status.Errorf(codes.Unavailable, "%s: no address registered", controllerID)
+	}
+
+	// We check the controller's common name to ensure that we talk to the right service
+	// and not some man-in-the-middle attacker, or simply use the wrong address.
+	outgoingTLS := sd.r.tlsConfig.Clone()
+	outgoingTLS.ServerName = fmt.Sprintf("controller.%s", controllerID)
+	creds := credentials.NewTLS(outgoingTLS)
+	opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()), grpc.WithTransportCredentials(creds))
+
 	// Copy the inbound metadata explicitly.
 	outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
-	if ok {
-		// Decide on which backend to dial
-		if controllerID, exists := md["controllerid"]; exists {
-			address := sd.r.db.Lookup(controllerID[0] + "/" + oimcommon.RegistryAddress)
-			if address == "" {
-				return outCtx, nil, status.Errorf(codes.Unavailable, "%s: no address registered", controllerID[0])
-			}
-			opts := oimcommon.ChooseDialOpts(address, grpc.WithCodec(proxy.Codec()))
 
-			// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
-			conn, err := grpc.DialContext(ctx, address, opts...)
-			return outCtx, conn, err
-		}
-	}
-	return outCtx, nil, status.Error(codes.Unimplemented, "Unknown method")
+	// Make sure we use DialContext so the dialing can be cancelled/time out together with the context.
+	conn, err := grpc.DialContext(ctx, address, opts...)
+	return outCtx, conn, err
 }
 
 func (sd *StreamDirector) Release(ctx context.Context, conn *grpc.ClientConn) {
@@ -129,6 +197,13 @@ func DB(db RegistryDB) Option {
 	}
 }
 
+func TLS(tlsConfig *tls.Config) Option {
+	return func(r *Registry) error {
+		r.tlsConfig = tlsConfig
+		return nil
+	}
+}
+
 func New(options ...Option) (*Registry, error) {
 	r := Registry{}
 	r.db = make(MemRegistryDB)
@@ -138,19 +213,23 @@ func New(options ...Option) (*Registry, error) {
 			return nil, err
 		}
 	}
+	if r.tlsConfig == nil {
+		return nil, errors.New("transport credentials missing")
+	}
 	return &r, nil
 }
 
 // Creates a server as required to run the registry service.
-func Server(endpoint string, registry *Registry) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+func (r *Registry) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
 	service := func(s *grpc.Server) {
-		oim.RegisterRegistryServer(s, registry)
+		oim.RegisterRegistryServer(s, r)
 	}
 	server := &oimcommon.NonBlockingGRPCServer{
 		Endpoint: endpoint,
 		ServerOptions: []grpc.ServerOption{
 			grpc.CustomCodec(proxy.Codec()),
-			grpc.UnknownServiceHandler(proxy.TransparentHandler(&StreamDirector{registry})),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(&StreamDirector{r})),
+			grpc.Creds(credentials.NewTLS(r.tlsConfig)),
 		},
 	}
 	return server, service

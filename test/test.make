@@ -70,11 +70,12 @@ TEST_QEMU_DEPS=$(_TEST_QEMU_IMAGE) $(TEST_QEMU_START) $(TEST_QEMU_SSH) $(TEST_QE
 TEST_E2E_DEPS=$(if $(filter $(IMPORT_PATH)/test/e2e, $(TEST_ARGS)), push-oim-csi-driver)
 
 .PHONY: run_tests
-run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi-driver
+run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi-driver _work/ca/.ca-stamp _work/evil-ca/.ca-stamp
 	TEST_OIM_CSI_DRIVER_BINARY=$(abspath _output/oim-csi-driver) \
 	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
 	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
+	TEST_WORK=$(abspath _work) \
 	REPO_ROOT=$(abspath .) \
 	KUBECONFIG=$(abspath _work)/clear-kvm-kube.config \
 	    $(TEST_CMD) $(shell go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);./;' )
@@ -267,16 +268,21 @@ _work/id:
 	mkdir -p _work
 	ssh-keygen -N '' -f $@
 
+_work/%/.ca-stamp: test/setup-ca.sh
+	rm -rf $(@D)
+	NUM_NODES=$(NUM_NODES) DEPOT_PATH='$(@D)' CA='$*' $<
+	touch $@
+
 # Brings up the emulator environment:
 # - starts the OIM control plane and SPDK on the local host
 # - creates an SPDK virtio-scsi controller
 # - starts a QEMU virtual machine connected to SPDK's virtio-scsi controller
 # - starts a Kubernetes cluster
 # - deploys the OIM driver
-start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-clear-kvm
+start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-clear-kvm _work/ca/.ca-stamp
 	if ! [ -e _work/oim-registry.pid ] || ! kill -0 $$(cat _work/oim-registry.pid) 2>/dev/null; then \
 		truncate -s 0 _work/oim-registry.log && \
-		( _output/oim-registry -endpoint tcp://192.168.7.1:0 -log.level DEBUG >>_work/oim-registry.log 2>&1 & echo $$! >_work/oim-registry.pid ) && \
+		( _output/oim-registry -endpoint tcp://192.168.7.1:0 -ca _work/ca/ca.crt -key _work/ca/component.registry.key -log.level DEBUG >>_work/oim-registry.log 2>&1 & echo $$! >_work/oim-registry.pid ) && \
 		while ! grep -m 1 'listening for connections' _work/oim-registry.log > _work/oim-registry.port; do sleep 1; done && \
 		sed -i -e 's/.*address: .*://' _work/oim-registry.port; \
 	fi
@@ -293,6 +299,8 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 	fi
 	if ! [ -e _work/oim-controller.pid ] || ! kill -0 $$(cat _work/oim-controller.pid) 2>/dev/null; then \
 		( _output/oim-controller -endpoint unix://$$(pwd)/_work/oim-controller.sock \
+		                         -ca _work/ca/ca.crt \
+		                         -key _work/ca/controller.host-0.key \
 		                         -spdk _work/vhost-run/spdk.sock \
 		                         -vhost-scsi-controller scsi0 \
 		                         -vm-vhost-device :.0 \
@@ -300,9 +308,9 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 		                         >_work/oim-controller.log 2>&1 & echo $$! >_work/oim-controller.pid ) && \
 		while ! grep -q 'listening for connections' _work/oim-controller.log; do sleep 1; done; \
 	fi
-	_output/oimctl -registry 192.168.7.1:$$(cat _work/oim-registry.port) \
+	_output/oimctl -registry 192.168.7.1:$$(cat _work/oim-registry.port) -ca _work/ca/ca.crt -key _work/ca/user.admin.key \
 		-set -path "host-0/address" -value "unix://$$(pwd)/_work/oim-controller.sock"
-	_output/oimctl -registry 192.168.7.1:$$(cat _work/oim-registry.port) \
+	_output/oimctl -registry 192.168.7.1:$$(cat _work/oim-registry.port) -ca _work/ca/ca.crt -key _work/ca/user.admin.key \
 		-set -path "host-0/pci" -value "00:15."
 	for i in $$(seq 0 $$(($(NUM_NODES) - 1))); do \
 		if ! [ -e _work/clear-kvm.$$i.pid ] || ! kill -0 $$(cat _work/clear-kvm.$$i.pid) 2>/dev/null; then \
@@ -316,6 +324,7 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 		fi; \
 	done
 	_work/kube-clear-kvm
+	cat _work/ca/secret.yaml | _work/ssh-clear-kvm kubectl create -f -
 	for i in malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
 		cat deploy/kubernetes/malloc/$$i | \
 			sed -e "s;@OIM_REGISTRY_ADDRESS@;192.168.7.1:$$(cat _work/oim-registry.port);" | \
@@ -328,6 +337,7 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 
 stop:
 	if [ -e _work/clear-kvm.0.pid ]; then \
+		cat _work/ca/secret.yaml | _work/ssh-clear-kvm kubectl delete -f - || true; \
 		for i in example/malloc-app.yaml example/malloc-pvc.yaml malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
 			cat deploy/kubernetes/malloc/$$i | _work/ssh-clear-kvm kubectl delete -f - || true; \
 		done; \

@@ -25,6 +25,8 @@ var (
 	controllerID      = flag.String("controllerid", "", "unique id for this controller instance")
 	controllerAddress = flag.String("controller-address", "ipv4:///oim-controller:8999", "external gRPC name for use with grpc.Dial that corresponds to the endpoint")
 	registry          = flag.String("registry", "", "gRPC name that connects to the OIM registry, empty disables registration")
+	ca                = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections to the registry")
+	key               = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry client")
 	registryDelay     = flag.Duration("registry-delay", time.Minute, "determines how long the controller waits before registering at the OIM registry")
 	_                 = log.InitSimpleFlags()
 )
@@ -42,6 +44,11 @@ func main() {
 	}
 	defer closer.Close()
 
+	transportCreds, err := oimcommon.LoadTLS(*ca, *key, "component.registry")
+	if err != nil {
+		logger.Fatalw("load TLS certs", "error", err)
+	}
+
 	options := []oimcontroller.Option{
 		oimcontroller.WithControllerID(*controllerID),
 		oimcontroller.WithSPDK(*spdk),
@@ -50,6 +57,7 @@ func main() {
 		oimcontroller.WithControllerAddress(*controllerAddress),
 		oimcontroller.WithRegistry(*registry),
 		oimcontroller.WithRegistryDelay(*registryDelay),
+		oimcontroller.WithCreds(transportCreds),
 	}
 	controller, err := oimcontroller.New(options...)
 	if err != nil {
@@ -59,7 +67,7 @@ func main() {
 		logger.Fatalf("Failed to start auto-registrationg: %s\n", err)
 	}
 	defer controller.Stop()
-	server, service := oimcontroller.Server(*endpoint, controller)
+	server, service := controller.Server(*endpoint)
 	if err := server.Run(context.Background(), service); err != nil {
 		logger.Fatalf("Failed to run server: %s\n", err)
 	}

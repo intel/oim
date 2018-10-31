@@ -24,7 +24,7 @@
 #   go-tests = true
 #   unused-packages = true
 
-required = ["github.com/spdk/spdk/go"]
+required = ["github.com/spdk/spdk/go", "github.com/square/certstrap"]
 
 # golang/protobuf gets replaced with gogo/protobuf by
 # post-processing the vendored sources, see "update_dep"

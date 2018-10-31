@@ -37,6 +37,8 @@ spec:
         - --log.level=DEBUG
         - --oim-registry-address=@OIM_REGISTRY_ADDRESS@ # needs to be replaced
         - --controller-id=$(KUBE_NODE_NAME)
+        - --ca=/ca/ca.crt
+        - --key=/ca/host.$(KUBE_NODE_NAME).key
         env:
         - name: CSI_ENDPOINT
           value: unix:///csi/csi.sock
@@ -55,6 +57,8 @@ spec:
         - mountPath: /var/lib/kubelet/pods
           mountPropagation: Bidirectional
           name: mountpoint-dir
+        - mountPath: /ca
+          name: oim-ca
       - name: external-provisioner
         args:
         - --v=5
@@ -101,3 +105,6 @@ spec:
           path: /var/lib/kubelet/pods
           type: DirectoryOrCreate
         name: mountpoint-dir
+      - secret:
+          secretName: oim-ca
+        name: oim-ca

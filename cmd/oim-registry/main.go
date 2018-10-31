@@ -18,6 +18,8 @@ import (
 
 var (
 	endpoint = flag.String("endpoint", "unix:///tmp/registry.sock", "OIM registry endpoint")
+	ca       = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections")
+	key      = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry")
 	_        = log.InitSimpleFlags()
 )
 
@@ -28,17 +30,29 @@ func main() {
 	logger := log.NewSimpleLogger(log.NewSimpleConfig())
 	log.Set(logger)
 
+	if *ca == "" {
+		logger.Fatalf("A CA file is required.")
+	}
+	if *key == "" {
+		logger.Fatalf("A key file is required.")
+	}
+
 	closer, err := oimcommon.InitTracer(app)
 	if err != nil {
 		logger.Fatalf("Failed to initialize tracer: %s\n", err)
 	}
 	defer closer.Close()
 
-	registry, err := oimregistry.New()
+	tlsConfig, err := oimcommon.LoadTLSConfig(*ca, *key, "")
+	if err != nil {
+		logger.Fatalw("load TLS certs", "error", err)
+	}
+
+	registry, err := oimregistry.New(oimregistry.TLS(tlsConfig))
 	if err != nil {
 		logger.Fatalf("Failed to initialize server: %s\n", err)
 	}
-	server, service := oimregistry.Server(*endpoint, registry)
+	server, service := registry.Server(*endpoint)
 	if err := server.Run(context.Background(), service); err != nil {
 		logger.Fatalf("Failed to run server: %s\n", err)
 	}

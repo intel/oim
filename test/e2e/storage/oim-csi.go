@@ -66,11 +66,21 @@ var _ = Describe("OIM CSI driver", func() {
 		targetTmp, err = qemu.VM.SSH("mktemp", "-d", "-p", "/var/tmp")
 		Expect(err).NotTo(HaveOccurred())
 		targetTmp = strings.Trim(targetTmp, "\n")
+		install := func(from, to string) {
+			f, err := os.Open(from)
+			defer f.Close()
+			Expect(err).NotTo(HaveOccurred())
+			err = qemu.VM.Install(to, f, 0555)
+			Expect(err).NotTo(HaveOccurred())
+		}
 		driverPath := filepath.Join(targetTmp, "oim-csi-driver")
-		f, err := os.Open(driverBinary)
-		Expect(err).NotTo(HaveOccurred())
-		err = qemu.VM.Install(driverPath, f, 0555)
-		Expect(err).NotTo(HaveOccurred())
+		install(driverBinary, driverPath)
+		caPath := filepath.Join(targetTmp, "ca.crt")
+		install(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), caPath)
+		keyPath := filepath.Join(targetTmp, "host.host-0.key")
+		install(os.ExpandEnv("${TEST_WORK}/ca/host.host-0.key"), keyPath)
+		crtPath := filepath.Join(targetTmp, "host.host-0.crt")
+		install(os.ExpandEnv("${TEST_WORK}/ca/host.host-0.crt"), crtPath)
 		csiSock := filepath.Join(targetTmp, "csi.sock")
 		csiEndpoint := "unix://" + csiSock
 		localSock := filepath.Join(localTmp, "csi.sock")
@@ -83,7 +93,9 @@ var _ = Describe("OIM CSI driver", func() {
 			"--v=5", // TODO: remove glog
 			"--log.level=DEBUG",
 			"--endpoint", csiEndpoint,
-			"--nodeid=csi-sanity-node",
+			"--nodeid=host-0",
+			"--ca="+caPath,
+			"--key="+keyPath,
 			"--oim-registry-address", controlPlane.registryAddress,
 			"--controller-id", controlPlane.controllerID,
 		)

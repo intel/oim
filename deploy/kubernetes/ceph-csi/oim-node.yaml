@@ -34,6 +34,8 @@ spec:
             - --endpoint=$(CSI_ENDPOINT)
             - --oim-registry-address=@OIM_REGISTRY_ADDRESS@ # needs to be replaced
             - --controller-id=$(KUBE_NODE_NAME)
+            - --ca=/ca/ca.crt
+            - --key=/ca/host.$(KUBE_NODE_NAME).key
             - --v=5
             - --drivername=oim-rbd
             - --emulate=ceph-csi
@@ -56,6 +58,8 @@ spec:
             - mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
               name: mountpoint-dir
+            - mountPath: /ca
+              name: oim-ca
         - name: driver-registrar
           image: quay.io/k8scsi/driver-registrar:v0.4.0
           imagePullPolicy: Always
@@ -80,3 +84,6 @@ spec:
             path: /var/lib/kubelet/pods
             type: DirectoryOrCreate
           name: mountpoint-dir
+        - secret:
+            secretName: oim-ca
+          name: oim-ca

@@ -625,6 +625,22 @@
   version = "v1.0.1"
 
 [[projects]]
+  digest = "1:ee747da0e05a70463742d1e84fa21835de386038e82ba36207f8faf68e82b7a4"
+  name = "github.com/square/certstrap"
+  packages = [
+    ".",
+    "Godeps/_workspace/src/github.com/codegangsta/cli",
+    "Godeps/_workspace/src/github.com/howeyc/gopass",
+    "Godeps/_workspace/src/golang.org/x/crypto/ssh/terminal",
+    "cmd",
+    "depot",
+    "pkix",
+  ]
+  pruneopts = "UT"
+  revision = "fa1359e6e510efcf9cd67bc0edbe43d7300a7833"
+  version = "v1.1.1"
+
+[[projects]]
   digest = "1:c40d65817cdd41fac9aa7af8bed56927bb2d6d47e4fea566a74880f5c2b1c41e"
   name = "github.com/stretchr/testify"
   packages = [
@@ -1592,12 +1608,15 @@
     "github.com/onsi/gomega",
     "github.com/pkg/errors",
     "github.com/spdk/spdk/go",
+    "github.com/square/certstrap",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
     "github.com/vgough/grpc-proxy/proxy",
     "google.golang.org/grpc",
     "google.golang.org/grpc/codes",
+    "google.golang.org/grpc/credentials",
     "google.golang.org/grpc/metadata",
+    "google.golang.org/grpc/peer",
     "google.golang.org/grpc/status",
     "gopkg.in/fsnotify/fsnotify.v1",
     "k8s.io/api/apps/v1",

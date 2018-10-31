@@ -20,7 +20,6 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 	"github.com/pkg/errors"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -165,10 +164,9 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		device = nbdDevice
 	} else {
 		// Connect to OIM controller through OIM registry.
-		opts := oimcommon.ChooseDialOpts(ns.od.oimRegistryAddress)
-		conn, err := grpc.Dial(ns.od.oimRegistryAddress, opts...)
+		conn, err := ns.od.DialRegistry(ctx)
 		if err != nil {
-			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", ns.od.oimRegistryAddress, err))
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		defer conn.Close()
 		controllerClient := oim.NewControllerClient(conn)
@@ -452,10 +450,9 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 		}
 	} else {
 		// Connect to OIM controller through OIM registry.
-		opts := oimcommon.ChooseDialOpts(ns.od.oimRegistryAddress)
-		conn, err := grpc.Dial(ns.od.oimRegistryAddress, opts...)
+		conn, err := ns.od.DialRegistry(ctx)
 		if err != nil {
-			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to OIM registry at %s: %s", ns.od.oimRegistryAddress, err))
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		controllerClient := oim.NewControllerClient(conn)
 

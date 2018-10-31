@@ -56,11 +56,13 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	//   can be reached via the QEMU NAT from inside
 	//   the virtual machine
 	By("starting OIM registry")
-	registry, err := oimregistry.New()
+	tlsConfig, err := oimcommon.LoadTLSConfig(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/component.registry.key"), "")
+	Expect(err).NotTo(HaveOccurred())
+	registry, err := oimregistry.New(oimregistry.TLS(tlsConfig))
 	Expect(err).NotTo(HaveOccurred())
 	hostname, err := os.Hostname()
 	Expect(err).NotTo(HaveOccurred())
-	rs, registryService := oimregistry.Server("tcp4://"+hostname+":0", registry)
+	rs, registryService := registry.Server("tcp4://" + hostname + ":0")
 	op.registryServer = rs
 	err = op.registryServer.Start(ctx, registryService)
 	Expect(err).NotTo(HaveOccurred())
@@ -73,14 +75,19 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	op.controllerID = "host-0"
 	op.tmpDir, err = ioutil.TempDir("", "oim-e2e-test")
 	Expect(err).NotTo(HaveOccurred())
+	transportCreds, err := oimcommon.LoadTLS(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/controller.host-0.key"), "component.registry")
+	Expect(err).NotTo(HaveOccurred())
 	controllerAddress := "unix:///" + op.tmpDir + "/controller.sock"
 	op.controller, err = oimcontroller.New(
 		oimcontroller.WithVHostController(spdk.VHost),
 		oimcontroller.WithVHostDev(":.0"), // Only PCI function provided by controller, rest comes from registry.
 		oimcontroller.WithSPDK(spdk.SPDKPath),
+		oimcontroller.WithCreds(transportCreds),
 	)
 	Expect(err).NotTo(HaveOccurred())
-	cs, controllerService := oimcontroller.Server(controllerAddress, op.controller)
+	controllerCreds, err := oimcommon.LoadTLS(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/controller.host-0.key"), "component.registry")
+	Expect(err).NotTo(HaveOccurred())
+	cs, controllerService := oimcontroller.Server(controllerAddress, op.controller, controllerCreds)
 	op.controllerServer = cs
 	err = op.controllerServer.Start(ctx, controllerService)
 	Expect(err).NotTo(HaveOccurred())
@@ -88,7 +95,9 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Register the controller in the registry.
-	opts := oimcommon.ChooseDialOpts(op.registryAddress, grpc.WithInsecure())
+	clientCreds, err := oimcommon.LoadTLS(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/user.admin.key"), "component.registry")
+	Expect(err).NotTo(HaveOccurred())
+	opts := oimcommon.ChooseDialOpts(op.registryAddress, grpc.WithTransportCredentials(clientCreds))
 	conn, err := grpc.DialContext(ctx, op.registryAddress, opts...)
 	Expect(err).NotTo(HaveOccurred())
 	defer conn.Close()
