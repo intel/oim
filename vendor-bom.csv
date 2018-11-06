@@ -17,12 +17,14 @@ github.com/emicklei/go-restful-swagger12;go-restful-swagger12;MIT License
 github.com/evanphx/json-patch;Go-json-patch;BSD 3-clause "New" or "Revised" License
 github.com/fatih/camelcase;fatih camelcase;MIT License
 github.com/ghodss/yaml;Sam Ghods yaml;MIT License
+github.com/globalsign/mgo;mgo;BSD 2-clause "Simplified" License
 github.com/gogo/protobuf;gogo protobuf;BSD 3-clause "New" or "Revised" License
 github.com/golang/glog;glog;Apache License 2.0
 github.com/golang/groupcache;groupcache;Apache License 2.0
 github.com/googleapis/gnostic;googleapis gnostic;Apache License 2.0
 github.com/google/btree;google btree;Apache License 2.0
 github.com/google/gofuzz;Google gofuzz;Apache License 2.0
+github.com/google/uuid;Google uuid;BSD 3-clause "New" or "Revised" License
 github.com/go-openapi/analysis;go-openapi analysis;Apache License 2.0
 github.com/go-openapi/errors;go-opanapi-errors;Apache License 2.0
 github.com/go-openapi/jsonpointer;go-openapi jsonpointer;Apache License 2.0
@@ -36,6 +38,7 @@ github.com/go-openapi/validate;go-openapi-validate;Apache License 2.0
 github.com/gregjones/httpcache;httpcache;BSD 1-clause
 github.com/grpc-ecosystem/go-grpc-prometheus;Apache License 2.0
 github.com/hashicorp/golang-lru;golang-lru;Mozilla Public License 2.0
+github.com/hpcloud/tail;HP Cloud tail;MIT License
 github.com/imdario/mergo;mergo;BSD 3-clause "New" or "Revised" License
 github.com/inconshreveable/mousetrap;inconshreveable-mousetrap;Apache License 2.0
 github.com/intel/govmm;Intel govmm;Apache License 2.0
@@ -63,7 +66,7 @@ github.com/prometheus/common;Prometheus common;Apache License 2.0
 github.com/prometheus/procfs;Prometheus procfs;Apache License 2.0
 github.com/PuerkitoBio/purell;purell;BSD 3-clause "New" or "Revised" License
 github.com/PuerkitoBio/urlesc;Urlesc;BSD 3-clause "New" or "Revised" License
-github.com/sirupsen/logrus;logrus;MIT License
+github.com/Sirupsen/logrus;logrus;MIT License
 github.com/spdk/spdk;spdk spdk;BSD 3-clause "New" or "Revised" License
 github.com/spf13/cobra;cobra;BSD 3-clause "New" or "Revised" License
 github.com/spf13/pflag;Steve Francia pflag;BSD 3-clause "New" or "Revised" License
@@ -79,11 +82,12 @@ golang.org/x/time;golang time;BSD 3-clause "New" or "Revised" License
 google.golang.org/appengine;Golang appengine;Apache License 2.0
 google.golang.org/genproto;Google go-genproto;Apache License 2.0
 google.golang.org/grpc;grpc grpc-go;Apache License 2.0
-gopkg.in/fsnotify/fsnotify.v1
+gopkg.in/fsnotify/fsnotify.v1;fsnotify;BSD 3-clause "New" or "Revised" License
+gopkg.in/fsnotify.v1;fsnotify;BSD 3-clause "New" or "Revised" License
 gopkg.in/inf.v0;go-inf;BSD 3-clause "New" or "Revised" License
-gopkg.in/mgo.v2;mgo;BSD 2-clause "Simplified" License
 gopkg.in/natefinch/lumberjack.v2;Nate Finch lumberjack;MIT License
 gopkg.in/square/go-jose.v2;go-jose;Apache License 2.0
+gopkg.in/tomb.v1;tomb;BSD 3-clause "New" or "Revised" License
 gopkg.in/yaml.v2;go-yaml;Apache License 2.0
 k8s.io/api;kubernetes api;Apache License 2.0
 k8s.io/apiextensions-apiserver;kubernetes apiextensions-apiserver;Apache License 2.0

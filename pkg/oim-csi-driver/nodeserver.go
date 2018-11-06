@@ -493,3 +493,7 @@ func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
+
+func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
+	return &csi.NodeGetVolumeStatsResponse{}, nil
+}

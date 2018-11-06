@@ -54,42 +54,13 @@ ignored = [
   branch = "rbd"
 
 [[override]]
-  name = "github.com/kubernetes-csi/csi-test"
+  # csi-test v0.3.0-3 depends on an unreleased version of the spec.
+  name = "github.com/container-storage-interface/spec"
   branch = "master"
-
-[[constraint]]
-  branch = "master"
-  name = "github.com/golang/glog"
-
-[[constraint]]
-  name = "github.com/grpc-ecosystem/go-grpc-middleware"
-  version = "1.0.0"
-
-[[constraint]]
-  branch = "master"
-  name = "github.com/grpc-ecosystem/grpc-opentracing"
-
-[[constraint]]
-  name = "github.com/opentracing/opentracing-go"
-  version = "1.0.2"
-
-[[constraint]]
-  name = "github.com/stretchr/testify"
-  version = "1.2.1"
-
-[[constraint]]
-  name = "github.com/uber/jaeger-client-go"
-  version = "2.14.0"
-
-[[override]]
-  name = "github.com/uber/jaeger-lib"
-  branch = "metrics-local"
-  source = "github.com/pohly/jaeger-lib"
 
 [[constraint]]
   name = "k8s.io/kubernetes"
-  branch = "e2e-create-secrets" # https://github.com/kubernetes/kubernetes/pull/70669
-  source = "github.com/pohly/kubernetes"
+  branch = "master"
 
 [[override]]
   name = "k8s.io/apimachinery"
@@ -108,7 +79,7 @@ ignored = [
   branch = "master"
 
 [[override]]
-  # Both Kubernetes and docker/docker need the new reference.ParseNormalizedNamed
+  # kubernetes/pkg/util/parsers/parsers.go needs the new reference.ParseNormalizedNamed
   # API call, which isn't yet in any stable release.
   name = "github.com/docker/distribution"
   branch = "master"
