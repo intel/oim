@@ -17,13 +17,13 @@ limitations under the License.
 package e2e
 
 import (
-	"flag"
-	"fmt"
 	"os"
 	"testing"
 
+	"k8s.io/kubernetes/test/e2e/framework"
+	"k8s.io/kubernetes/test/e2e/framework/testfiles"
+
 	"github.com/intel/oim/pkg/log"
-	"github.com/intel/oim/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
 
@@ -34,12 +34,14 @@ import (
 func init() {
 	log.SetOutput(GinkgoWriter)
 
-	framework.ViperizeFlags()
-	// This check probably should be in the Kubernetes framework itself.
-	args := flag.Args()
-	if len(args) > 0 {
-		fmt.Fprintf(os.Stderr, "unhandled extra command line arguments: %v\n", args)
-		os.Exit(1)
+	// Register framework flags, then handle flags.
+	framework.HandleFlags()
+	framework.AfterReadingAllFlags(&framework.TestContext)
+
+	// We need extra files at runtime.
+	repoRoot := os.Getenv("REPO_ROOT")
+	if repoRoot != "" {
+		testfiles.AddFileSource(RootFileSource{Root: repoRoot})
 	}
 }
 

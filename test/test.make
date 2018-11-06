@@ -75,6 +75,8 @@ run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi
 	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
 	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
+	REPO_ROOT=$(abspath .) \
+	KUBECONFIG=$(abspath _work)/clear-kvm-kube.config \
 	    $(TEST_CMD) $(shell go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);./;' )
 
 .PHONY: force_test
@@ -264,14 +266,6 @@ _work/OVMF.fd:
 _work/id:
 	mkdir -p _work
 	ssh-keygen -N '' -f $@
-
-.PHONY: test_protobuf
-test: test_protobuf
-test_protobuf:
-	@ if go list -f '{{ join .Deps "\n" }}' $(foreach i,$(OIM_CMDS),./cmd/$(i)) | grep -q github.com/golang/protobuf; then \
-		echo "binaries should not depend on golang/protobuf, use gogo/protobuf instead"; \
-		false; \
-	fi
 
 # Brings up the emulator environment:
 # - starts the OIM control plane and SPDK on the local host

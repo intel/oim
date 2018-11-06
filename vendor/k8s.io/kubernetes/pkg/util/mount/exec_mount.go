@@ -44,10 +44,10 @@ var _ Interface = &execMounter{}
 
 // Mount runs mount(8) using given exec interface.
 func (m *execMounter) Mount(source string, target string, fstype string, options []string) error {
-	bind, bindRemountOpts := isBind(options)
+	bind, bindOpts, bindRemountOpts := isBind(options)
 
 	if bind {
-		err := m.doExecMount(source, target, fstype, []string{"bind"})
+		err := m.doExecMount(source, target, fstype, bindOpts)
 		if err != nil {
 			return err
 		}
@@ -136,8 +136,12 @@ func (m *execMounter) MakeDir(pathname string) error {
 	return m.wrappedMounter.MakeDir(pathname)
 }
 
-func (m *execMounter) ExistsPath(pathname string) bool {
+func (m *execMounter) ExistsPath(pathname string) (bool, error) {
 	return m.wrappedMounter.ExistsPath(pathname)
+}
+
+func (m *execMounter) EvalHostSymlinks(pathname string) (string, error) {
+	return m.wrappedMounter.EvalHostSymlinks(pathname)
 }
 
 func (m *execMounter) PrepareSafeSubpath(subPath Subpath) (newHostPath string, cleanupAction func(), err error) {
@@ -152,6 +156,18 @@ func (m *execMounter) SafeMakeDir(pathname string, base string, perm os.FileMode
 	return m.wrappedMounter.SafeMakeDir(pathname, base, perm)
 }
 
+func (m *execMounter) GetMountRefs(pathname string) ([]string, error) {
+	return m.wrappedMounter.GetMountRefs(pathname)
+}
+
+func (m *execMounter) GetFSGroup(pathname string) (int64, error) {
+	return m.wrappedMounter.GetFSGroup(pathname)
+}
+
 func (m *execMounter) GetSELinuxSupport(pathname string) (bool, error) {
 	return m.wrappedMounter.GetSELinuxSupport(pathname)
+}
+
+func (m *execMounter) GetMode(pathname string) (os.FileMode, error) {
+	return m.wrappedMounter.GetMode(pathname)
 }

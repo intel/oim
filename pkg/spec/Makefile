@@ -91,42 +91,6 @@ OIM_PKG := $(shell cat $(OIM_PROTO) | sed -n -e 's/^package.\([^;]*\);$$/\1/p'|t
 OIM_GO := $(OIM_PKG)/oim.pb.go
 OIM_GO_TMP := .build/oim.pb.go
 
-GEN_PBGO += CSI
-CSI_PROTO := vendor/csi.proto
-CSI_PKG := vendor/github.com/container-storage-interface/spec/lib/go/$(shell cat $(CSI_PROTO) | sed -n -e 's/^package.\([^;]*\);$$/\1/p'|tr '.' '/')
-CSI_GO := $(CSI_PKG)/csi.pb.go
-CSI_GO_TMP := .build/vendor/csi.pb.go
-
-# Copied from https://github.com/googleapis/googleapis/blob/31bf8302c3077d624fe61f40efc8eb92702dc491/google/rpc/status.proto
-GEN_PBGO += STATUS
-STATUS_GO := vendor/google.golang.org/genproto/googleapis/rpc/status/status.pb.go
-STATUS_GO_TMP := .build/$(STATUS_GO)
-
-# Copied from https://github.com/grpc/grpc/blob/83714b0373b4c61836ce68b24387f41be2610c35/src/proto/grpc/health/v1/health.proto
-GEN_PBGO += HEALTH
-HEALTH_GO := vendor/google.golang.org/grpc/health/grpc_health_v1/health.pb.go
-HEALTH_GO_TMP := .build/$(HEALTH_GO)
-
-GEN_PBGO += OPENAPIV2
-OPENAPIV2_GO := vendor/github.com/googleapis/gnostic/OpenAPIv2/OpenAPIv2.pb.go
-OPENAPIV2_GO_TMP := .build/vendor/OpenAPIv2.pb.go
-
-GEN_PBGO += EXTENSION
-EXTENSION_GO := vendor/github.com/googleapis/gnostic/extensions/extension.pb.go
-EXTENSION_GO_TMP := .build/vendor/extension.pb.go
-
-GEN_PBGO += KB
-KB_GO := vendor/github.com/coreos/etcd/mvcc/mvccpb/kv.pb.go
-KB_GO_TMP := .build/vendor/kv.pb.go
-
-GEN_PBGO += AUTH
-AUTH_GO := vendor/github.com/coreos/etcd/auth/authpb/auth.pb.go
-AUTH_GO_TMP := .build/vendor/auth.pb.go
-
-GEN_PBGO += ETCDSERVER
-ETCDSERVER_GO := vendor/github.com/coreos/etcd/etcdserver/etcdserverpb/etcdserver.pb.go
-ETCDSERVER_GO_TMP := .build/vendor/etcdserver.pb.go
-
 # This recipe generates the go language bindings to a temp area.
 GO_OUT := plugins=grpc
 GO_OUT := $(GO_OUT),Mgoogle/protobuf/any.proto=github.com/gogo/protobuf/types

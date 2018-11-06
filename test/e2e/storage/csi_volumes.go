@@ -23,12 +23,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-
-	"github.com/intel/oim/test/e2e/framework"
-	"github.com/intel/oim/test/e2e/storage/utils"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/test/e2e/framework"
+	"k8s.io/kubernetes/test/e2e/storage/utils"
 
-	e2eutils "github.com/intel/oim/test/e2e/utils"
 	"github.com/intel/oim/test/pkg/spdk"
 
 	. "github.com/onsi/ginkgo"
@@ -73,9 +71,9 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		cleanup = framework.AddCleanupAction(destructor)
 		destructors = append(destructors, destructor)
 
-		// TOOD (?): move this into the E2E framework?
-		e2eutils.CopyAllLogs(controlPlane.ctx, cs, ns.Name, GinkgoWriter)
-		e2eutils.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
+		// TODO
+		// podlogs.CopyAllLogs(controlPlane.ctx, cs, ns.Name, GinkgoWriter)
+		// podlogs.WatchPods(controlPlane.ctx, cs, GinkgoWriter)
 	})
 
 	AfterEach(func() {
@@ -84,37 +82,43 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		}
 	})
 
+	patchOIM := func(object interface{}) error {
+		switch object := object.(type) {
+		case *appsv1.DaemonSet:
+			containers := &object.Spec.Template.Spec.Containers
+			for i := range *containers {
+				container := &(*containers)[i]
+				for e := range container.Args {
+					// Replace @OIM_REGISTRY_ADDRESS@ in the DaemonSet.
+					container.Args[e] = strings.Replace(container.Args[e], "@OIM_REGISTRY_ADDRESS@", controlPlane.registryAddress, 1)
+					// Update --drivername and --provider.
+					if strings.HasSuffix(container.Args[e], "=oim-malloc") {
+						container.Args[e] = container.Args[e] + "-" + f.UniqueName
+					}
+				}
+			}
+			volumes := &object.Spec.Template.Spec.Volumes
+			for i := range *volumes {
+				volume := &(*volumes)[i]
+				// Update path.
+				if volume.VolumeSource.HostPath != nil {
+					path := &volume.VolumeSource.HostPath.Path
+					if strings.HasSuffix(*path, "/oim-malloc") {
+						*path = *path + "-" + f.UniqueName
+					}
+				}
+			}
+		case *storagev1.StorageClass:
+			f.PatchName(&object.Provisioner)
+		}
+
+		return nil
+	}
+
 	Describe("Sanity CSI plugin test using OIM CSI with Malloc BDev", func() {
 		BeforeEach(func() {
-			destructor, err := CreateFromManifest(f,
-				func(object interface{}) {
-					switch object := object.(type) {
-					case *appsv1.DaemonSet:
-						containers := &object.Spec.Template.Spec.Containers
-						for i := range *containers {
-							container := &(*containers)[i]
-							for e := range container.Args {
-								// Replace @OIM_REGISTRY_ADDRESS@ in the DaemonSet.
-								container.Args[e] = strings.Replace(container.Args[e], "@OIM_REGISTRY_ADDRESS@", controlPlane.registryAddress, 1)
-								// Update --drivername and --provider.
-								if strings.HasSuffix(container.Args[e], "=oim-malloc") {
-									container.Args[e] = container.Args[e] + "-" + f.UniqueName
-								}
-							}
-						}
-						volumes := &object.Spec.Template.Spec.Volumes
-						for i := range *volumes {
-							volume := &(*volumes)[i]
-							// Update path.
-							path := &volume.VolumeSource.HostPath.Path
-							if strings.HasSuffix(*path, "/oim-malloc") {
-								*path = *path + "-" + f.UniqueName
-							}
-						}
-					case *storagev1.StorageClass:
-						MangleName(f, &object.Provisioner)
-					}
-				},
+			destructor, err := f.CreateFromManifests(
+				patchOIM,
 				"deploy/kubernetes/malloc/malloc-rbac.yaml",
 				"deploy/kubernetes/malloc/malloc-daemonset.yaml",
 				"deploy/kubernetes/malloc/malloc-storageclass.yaml",

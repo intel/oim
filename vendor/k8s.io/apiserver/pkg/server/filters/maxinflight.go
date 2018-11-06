@@ -45,8 +45,8 @@ const (
 var nonMutatingRequestVerbs = sets.NewString("get", "list", "watch")
 
 func handleError(w http.ResponseWriter, r *http.Request, err error) {
-	w.WriteHeader(http.StatusInternalServerError)
-	fmt.Fprintf(w, "Internal Server Error: %#v", r.RequestURI)
+	errorMsg := fmt.Sprintf("Internal Server Error: %#v", r.RequestURI)
+	http.Error(w, errorMsg, http.StatusInternalServerError)
 	glog.Errorf(err.Error())
 }
 
@@ -98,7 +98,6 @@ func WithMaxInFlightLimit(
 	handler http.Handler,
 	nonMutatingLimit int,
 	mutatingLimit int,
-	requestContextMapper apirequest.RequestContextMapper,
 	longRunningRequestCheck apirequest.LongRunningRequestCheck,
 ) http.Handler {
 	startOnce.Do(startRecordingUsage)
@@ -115,11 +114,7 @@ func WithMaxInFlightLimit(
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, ok := requestContextMapper.Get(r)
-		if !ok {
-			handleError(w, r, fmt.Errorf("no context found for request, handler chain must be wrong"))
-			return
-		}
+		ctx := r.Context()
 		requestInfo, ok := apirequest.RequestInfoFrom(ctx)
 		if !ok {
 			handleError(w, r, fmt.Errorf("no RequestInfo found in context, handler chain must be wrong"))
@@ -172,7 +167,7 @@ func WithMaxInFlightLimit(
 					metrics.DroppedRequests.WithLabelValues(metrics.ReadOnlyKind).Inc()
 				}
 				// at this point we're about to return a 429, BUT not all actors should be rate limited.  A system:master is so powerful
-				// that he should always get an answer.  It's a super-admin or a loopback connection.
+				// that they should always get an answer.  It's a super-admin or a loopback connection.
 				if currUser, ok := apirequest.UserFrom(ctx); ok {
 					for _, group := range currUser.GetGroups() {
 						if group == user.SystemPrivilegedGroup {

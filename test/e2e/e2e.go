@@ -17,28 +17,25 @@ limitations under the License.
 package e2e
 
 import (
-	"errors"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
+	"github.com/pkg/errors"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/version"
-	// commontest "github.com/intel/oim/test/e2e/common"
-	"github.com/intel/oim/test/e2e/framework"
-	"github.com/intel/oim/test/e2e/framework/ginkgowrapper"
-	"github.com/intel/oim/test/e2e/manifest"
-	testutils "k8s.io/kubernetes/test/utils"
+	"k8s.io/kubernetes/test/e2e/framework"
+	"k8s.io/kubernetes/test/e2e/framework/ginkgowrapper"
 
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/qemu"
 	"github.com/intel/oim/test/pkg/spdk"
 )
+
+var initialized = false
 
 // setupProviderConfig validates and sets up cloudConfig based on framework.TestContext.Provider.
 func setupProviderConfig(data *[]byte) error {
@@ -56,8 +53,9 @@ func setupProviderConfig(data *[]byte) error {
 			}
 			// Tell child nodes about our SPDK path.
 			*data = []byte(spdk.SPDKPath)
+			initialized = true
 		} else {
-			if framework.TestContext.KubeConfig != "" {
+			if initialized {
 				// This gets called twice on the master node, once with data and once without.
 				// We don't need to do anything the second time.
 				return nil
@@ -74,7 +72,20 @@ func setupProviderConfig(data *[]byte) error {
 		if err != nil {
 			return err
 		}
+
+		// This is no longer enough to make the following code use the config.
+		// KUBECONFIG must already be set correctly before invoking the binary.
 		framework.TestContext.KubeConfig = config
+		abs := func(path string) string {
+			p, err := filepath.Abs(path)
+			if err != nil {
+				return path
+			}
+			return p
+		}
+		if abs(os.Getenv("KUBECONFIG")) != abs(config) {
+			return errors.Errorf("KUBECONFIG must be set to %s", abs(config))
+		}
 	}
 
 	return nil
@@ -135,41 +146,14 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// #41007. To avoid those pods preventing the whole test runs (and just
 	// wasting the whole run), we allow for some not-ready pods (with the
 	// number equal to the number of allowed not-ready nodes).
-	if err := framework.WaitForPodsRunningReady(c, metav1.NamespaceSystem, int32(framework.TestContext.MinStartupPods), int32(framework.TestContext.AllowedNotReadyNodes), podStartupTimeout, framework.ImagePullerLabels); err != nil {
+	if err := framework.WaitForPodsRunningReady(c, metav1.NamespaceSystem, int32(framework.TestContext.MinStartupPods), int32(framework.TestContext.AllowedNotReadyNodes), podStartupTimeout, map[string]string{}); err != nil {
 		framework.DumpAllNamespaceInfo(c, metav1.NamespaceSystem)
 		framework.LogFailedContainers(c, metav1.NamespaceSystem, framework.Logf)
-		runKubernetesServiceTestContainer(c, metav1.NamespaceDefault)
 		framework.Failf("Error waiting for all pods to be running and ready: %v", err)
 	}
 
-	if err := framework.WaitForPodsSuccess(c, metav1.NamespaceSystem, framework.ImagePullerLabels, framework.ImagePrePullingTimeout); err != nil {
-		// There is no guarantee that the image pulling will succeed in 3 minutes
-		// and we don't even run the image puller on all platforms (including GKE).
-		// We wait for it so we get an indication of failures in the logs, and to
-		// maximize benefit of image pre-pulling.
-		framework.Logf("WARNING: Image pulling pods failed to enter success in %v: %v", framework.ImagePrePullingTimeout, err)
-	}
-
-	// Dump the output of the nethealth containers only once per run
-	if framework.TestContext.DumpLogsOnFailure {
-		logFunc := framework.Logf
-		if framework.TestContext.ReportDir != "" {
-			filePath := path.Join(framework.TestContext.ReportDir, "nethealth.txt")
-			file, err := os.Create(filePath)
-			if err != nil {
-				framework.Logf("Failed to create a file with network health data %v: %v\nPrinting to stdout", filePath, err)
-			} else {
-				defer file.Close()
-				if err = file.Chmod(0644); err != nil {
-					framework.Logf("Failed to chmod to 644 of %v: %v", filePath, err)
-				}
-				logFunc = framework.GetLogToFileFunc(file)
-				framework.Logf("Dumping network health container logs from all nodes to file %v", filePath)
-			}
-		} else {
-			framework.Logf("Dumping network health container logs from all nodes...")
-		}
-		framework.LogContainersInPodsWithLabels(c, metav1.NamespaceSystem, framework.ImagePullerLabels, "nethealth", logFunc)
+	if err := framework.WaitForDaemonSets(c, metav1.NamespaceSystem, int32(framework.TestContext.AllowedNotReadyNodes), framework.TestContext.SystemDaemonsetStartupTimeout); err != nil {
+		framework.Logf("WARNING: Waiting for all daemonsets to be ready failed: %v", err)
 	}
 
 	// Log the version of the server and this client.
@@ -219,37 +203,4 @@ func RunE2ETests(t *testing.T) {
 	// TODO: with "ginkgo ./test/e2e" we shouldn't get verbose output, but somehow we do.
 	gomega.RegisterFailHandler(ginkgowrapper.Fail)
 	ginkgo.RunSpecs(t, "OIM E2E suite")
-}
-
-// Run a test container to try and contact the Kubernetes api-server from a pod, wait for it
-// to flip to Ready, log its output and delete it.
-func runKubernetesServiceTestContainer(c clientset.Interface, ns string) {
-	path := "test/images/clusterapi-tester/pod.yaml"
-	framework.Logf("Parsing pod from %v", path)
-	p, err := manifest.PodFromManifest(path)
-	if err != nil {
-		framework.Logf("Failed to parse clusterapi-tester from manifest %v: %v", path, err)
-		return
-	}
-	p.Namespace = ns
-	if _, err := c.CoreV1().Pods(ns).Create(p); err != nil {
-		framework.Logf("Failed to create %v: %v", p.Name, err)
-		return
-	}
-	defer func() {
-		if err := c.CoreV1().Pods(ns).Delete(p.Name, nil); err != nil {
-			framework.Logf("Failed to delete pod %v: %v", p.Name, err)
-		}
-	}()
-	timeout := 5 * time.Minute
-	if err := framework.WaitForPodCondition(c, ns, p.Name, "clusterapi-tester", timeout, testutils.PodRunningReady); err != nil {
-		framework.Logf("Pod %v took longer than %v to enter running/ready: %v", p.Name, timeout, err)
-		return
-	}
-	logs, err := framework.GetPodLogs(c, ns, p.Name, p.Spec.Containers[0].Name)
-	if err != nil {
-		framework.Logf("Failed to retrieve logs from %v: %v", p.Name, err)
-	} else {
-		framework.Logf("Output of clusterapi-tester:\n%v", logs)
-	}
 }

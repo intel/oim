@@ -17,6 +17,7 @@ limitations under the License.
 package utils
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -124,6 +125,7 @@ type RCConfig struct {
 	CpuLimit          int64 // millicores
 	MemRequest        int64 // bytes
 	MemLimit          int64 // bytes
+	GpuLimit          int64 // count
 	ReadinessProbe    *v1.Probe
 	DNSPolicy         *v1.DNSPolicy
 	PriorityClassName string
@@ -131,11 +133,15 @@ type RCConfig struct {
 	// Env vars, set the same for every pod.
 	Env map[string]string
 
-	// Extra labels added to every pod.
-	Labels map[string]string
+	// Extra labels and annotations added to every pod.
+	Labels      map[string]string
+	Annotations map[string]string
 
 	// Node selector for pods in the RC.
 	NodeSelector map[string]string
+
+	// Tolerations for pods in the RC.
+	Tolerations []v1.Toleration
 
 	// Ports to declare in the container (map of name to containerPort).
 	Ports map[string]int
@@ -166,6 +172,8 @@ type RCConfig struct {
 	// Names of the secrets and configmaps to mount.
 	SecretNames    []string
 	ConfigMapNames []string
+
+	ServiceAccountTokenProjections int
 }
 
 func (rc *RCConfig) RCConfigLog(fmt string, args ...interface{}) {
@@ -292,7 +300,8 @@ func (config *DeploymentConfig) create() error {
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"name": config.Name},
+					Labels:      map[string]string{"name": config.Name},
+					Annotations: config.Annotations,
 				},
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{
@@ -313,6 +322,10 @@ func (config *DeploymentConfig) create() error {
 	}
 	if len(config.ConfigMapNames) > 0 {
 		attachConfigMaps(&deployment.Spec.Template, config.ConfigMapNames)
+	}
+
+	for i := 0; i < config.ServiceAccountTokenProjections; i++ {
+		attachServiceAccountTokenProjection(&deployment.Spec.Template, fmt.Sprintf("tok-%d", i))
 	}
 
 	config.applyTo(&deployment.Spec.Template)
@@ -362,7 +375,8 @@ func (config *ReplicaSetConfig) create() error {
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"name": config.Name},
+					Labels:      map[string]string{"name": config.Name},
+					Annotations: config.Annotations,
 				},
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{
@@ -428,7 +442,8 @@ func (config *JobConfig) create() error {
 			Completions: func(i int) *int32 { x := int32(i); return &x }(config.Replicas),
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"name": config.Name},
+					Labels:      map[string]string{"name": config.Name},
+					Annotations: config.Annotations,
 				},
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{
@@ -542,7 +557,8 @@ func (config *RCConfig) create() error {
 			},
 			Template: &v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"name": config.Name},
+					Labels:      map[string]string{"name": config.Name},
+					Annotations: config.Annotations,
 				},
 				Spec: v1.PodSpec{
 					Affinity: config.Affinity,
@@ -557,6 +573,7 @@ func (config *RCConfig) create() error {
 					},
 					DNSPolicy:                     *config.DNSPolicy,
 					NodeSelector:                  config.NodeSelector,
+					Tolerations:                   config.Tolerations,
 					TerminationGracePeriodSeconds: &one,
 					PriorityClassName:             config.PriorityClassName,
 				},
@@ -598,6 +615,9 @@ func (config *RCConfig) applyTo(template *v1.PodTemplateSpec) {
 			template.Spec.NodeSelector[k] = v
 		}
 	}
+	if config.Tolerations != nil {
+		template.Spec.Tolerations = append([]v1.Toleration{}, config.Tolerations...)
+	}
 	if config.Ports != nil {
 		for k, v := range config.Ports {
 			c := &template.Spec.Containers[0]
@@ -610,7 +630,7 @@ func (config *RCConfig) applyTo(template *v1.PodTemplateSpec) {
 			c.Ports = append(c.Ports, v1.ContainerPort{Name: k, ContainerPort: int32(v), HostPort: int32(v)})
 		}
 	}
-	if config.CpuLimit > 0 || config.MemLimit > 0 {
+	if config.CpuLimit > 0 || config.MemLimit > 0 || config.GpuLimit > 0 {
 		template.Spec.Containers[0].Resources.Limits = v1.ResourceList{}
 	}
 	if config.CpuLimit > 0 {
@@ -627,6 +647,9 @@ func (config *RCConfig) applyTo(template *v1.PodTemplateSpec) {
 	}
 	if config.MemRequest > 0 {
 		template.Spec.Containers[0].Resources.Requests[v1.ResourceMemory] = *resource.NewQuantity(config.MemRequest, resource.DecimalSI)
+	}
+	if config.GpuLimit > 0 {
+		template.Spec.Containers[0].Resources.Limits["nvidia.com/gpu"] = *resource.NewQuantity(config.GpuLimit, resource.DecimalSI)
 	}
 	if len(config.Volumes) > 0 {
 		template.Spec.Volumes = config.Volumes
@@ -646,6 +669,7 @@ type RCStartupStatus struct {
 	RunningButNotReady    int
 	Waiting               int
 	Pending               int
+	Scheduled             int
 	Unknown               int
 	Inactive              int
 	FailedContainers      int
@@ -698,6 +722,10 @@ func ComputeRCStartupStatus(pods []*v1.Pod, expected int) RCStartupStatus {
 			startupStatus.Inactive++
 		} else if p.Status.Phase == v1.PodUnknown {
 			startupStatus.Unknown++
+		}
+		// Record count of scheduled pods (useful for computing scheduler throughput).
+		if p.Spec.NodeName != "" {
+			startupStatus.Scheduled++
 		}
 	}
 	return startupStatus
@@ -1005,7 +1033,7 @@ func MakePodSpec() v1.PodSpec {
 	return v1.PodSpec{
 		Containers: []v1.Container{{
 			Name:  "pause",
-			Image: "kubernetes/pause",
+			Image: "k8s.gcr.io/pause:3.1",
 			Ports: []v1.ContainerPort{{ContainerPort: 80}},
 			Resources: v1.ResourceRequirements{
 				Limits: v1.ResourceList{
@@ -1040,9 +1068,9 @@ func CreatePod(client clientset.Interface, namespace string, podCount int, podTe
 	}
 
 	if podCount < 30 {
-		workqueue.Parallelize(podCount, podCount, createPodFunc)
+		workqueue.ParallelizeUntil(context.TODO(), podCount, podCount, createPodFunc)
 	} else {
-		workqueue.Parallelize(30, podCount, createPodFunc)
+		workqueue.ParallelizeUntil(context.TODO(), 30, podCount, createPodFunc)
 	}
 	return createError
 }
@@ -1219,6 +1247,57 @@ func attachConfigMaps(template *v1.PodTemplateSpec, configMapNames []string) {
 	template.Spec.Containers[0].VolumeMounts = mounts
 }
 
+func attachServiceAccountTokenProjection(template *v1.PodTemplateSpec, name string) {
+	template.Spec.Containers[0].VolumeMounts = append(template.Spec.Containers[0].VolumeMounts,
+		v1.VolumeMount{
+			Name:      name,
+			MountPath: "/var/service-account-tokens/" + name,
+		})
+
+	template.Spec.Volumes = append(template.Spec.Volumes,
+		v1.Volume{
+			Name: name,
+			VolumeSource: v1.VolumeSource{
+				Projected: &v1.ProjectedVolumeSource{
+					Sources: []v1.VolumeProjection{
+						{
+							ServiceAccountToken: &v1.ServiceAccountTokenProjection{
+								Path:     "token",
+								Audience: name,
+							},
+						},
+						{
+							ConfigMap: &v1.ConfigMapProjection{
+								LocalObjectReference: v1.LocalObjectReference{
+									Name: "kube-root-ca-crt",
+								},
+								Items: []v1.KeyToPath{
+									{
+										Key:  "ca.crt",
+										Path: "ca.crt",
+									},
+								},
+							},
+						},
+						{
+							DownwardAPI: &v1.DownwardAPIProjection{
+								Items: []v1.DownwardAPIVolumeFile{
+									{
+										Path: "namespace",
+										FieldRef: &v1.ObjectFieldSelector{
+											APIVersion: "v1",
+											FieldPath:  "metadata.namespace",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+}
+
 type DaemonConfig struct {
 	Client    clientset.Interface
 	Name      string
@@ -1232,7 +1311,7 @@ type DaemonConfig struct {
 
 func (config *DaemonConfig) Run() error {
 	if config.Image == "" {
-		config.Image = "kubernetes/pause"
+		config.Image = "k8s.gcr.io/pause:3.1"
 	}
 	nameLabel := map[string]string{
 		"name": config.Name + "-daemon",

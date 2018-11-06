@@ -6,7 +6,7 @@ package etcdserverpb
 import (
 	"fmt"
 
-	proto "github.com/gogo/protobuf/proto"
+	proto "github.com/golang/protobuf/proto"
 
 	math "math"
 

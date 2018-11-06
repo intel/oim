@@ -30,7 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"golang.org/x/net/context"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"

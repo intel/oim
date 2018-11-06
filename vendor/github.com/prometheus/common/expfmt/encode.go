@@ -18,7 +18,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	"github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg"
 

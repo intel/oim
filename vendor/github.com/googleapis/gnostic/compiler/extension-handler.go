@@ -23,8 +23,8 @@ import (
 
 	"errors"
 
-	"github.com/gogo/protobuf/proto"
-	any "github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes/any"
 	ext_plugin "github.com/googleapis/gnostic/extensions"
 	yaml "gopkg.in/yaml.v2"
 )

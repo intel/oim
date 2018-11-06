@@ -33,6 +33,7 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/serviceaccount"
@@ -41,13 +42,13 @@ import (
 )
 
 // ControllerClientBuilder allows you to get clients and configs for controllers
+// Please note a copy also exists in staging/src/k8s.io/cloud-provider/cloud.go
+// TODO: Extract this into a separate controller utilities repo (issues/68947)
 type ControllerClientBuilder interface {
 	Config(name string) (*restclient.Config, error)
 	ConfigOrDie(name string) *restclient.Config
 	Client(name string) (clientset.Interface, error)
 	ClientOrDie(name string) clientset.Interface
-	ClientGoClient(name string) (clientset.Interface, error)
-	ClientGoClientOrDie(name string) clientset.Interface
 }
 
 // SimpleControllerClientBuilder returns a fixed client with different user agents
@@ -79,22 +80,6 @@ func (b SimpleControllerClientBuilder) Client(name string) (clientset.Interface,
 
 func (b SimpleControllerClientBuilder) ClientOrDie(name string) clientset.Interface {
 	client, err := b.Client(name)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	return client
-}
-
-func (b SimpleControllerClientBuilder) ClientGoClient(name string) (clientset.Interface, error) {
-	clientConfig, err := b.Config(name)
-	if err != nil {
-		return nil, err
-	}
-	return clientset.NewForConfig(clientConfig)
-}
-
-func (b SimpleControllerClientBuilder) ClientGoClientOrDie(name string) clientset.Interface {
-	client, err := b.ClientGoClient(name)
 	if err != nil {
 		glog.Fatal(err)
 	}
@@ -140,7 +125,7 @@ func (b SAControllerClientBuilder) Config(name string) (*restclient.Config, erro
 			return b.CoreClient.Secrets(b.Namespace).Watch(options)
 		},
 	}
-	_, err = cache.ListWatchUntil(30*time.Second, lw,
+	_, err = watchtools.ListWatchUntil(30*time.Second, lw,
 		func(event watch.Event) (bool, error) {
 			switch event.Type {
 			case watch.Deleted:
@@ -269,22 +254,6 @@ func (b SAControllerClientBuilder) Client(name string) (clientset.Interface, err
 
 func (b SAControllerClientBuilder) ClientOrDie(name string) clientset.Interface {
 	client, err := b.Client(name)
-	if err != nil {
-		glog.Fatal(err)
-	}
-	return client
-}
-
-func (b SAControllerClientBuilder) ClientGoClient(name string) (clientset.Interface, error) {
-	clientConfig, err := b.Config(name)
-	if err != nil {
-		return nil, err
-	}
-	return clientset.NewForConfig(clientConfig)
-}
-
-func (b SAControllerClientBuilder) ClientGoClientOrDie(name string) clientset.Interface {
-	client, err := b.ClientGoClient(name)
 	if err != nil {
 		glog.Fatal(err)
 	}

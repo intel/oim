@@ -117,42 +117,6 @@ test: test_proto
 test_proto: $(OIM_PROTO)
 	awk '{ if (length > 72) print NR, $$0 }' $? | diff - /dev/null
 
-# We need to modify the upstream source code a bit because we want to
-# use only gogo/protobuf, not a mixture of gogo/protobuf and
-# golang/protobuf. This works because gogo/protobuf is a drop-in
-# replacement, but we need to:
-# - replace import statements
-# - replace some .pb.go files with symlinks to files that we
-#   generated from the upstream .proto files with gogofaster
-#   (done in pkg/spec)
-#
-# To upgrade to a different version:
-# - "dep ensure -v -update" to pull new code into vendor and/or
-#   update the copy of the upstream .proto files under pkg/spec
-#   (some are not in vendor)
-# - "make update_spec" to re-generate the .pb.go files
-# - "make update_dep" to fix up the vendored sources (gogo/protobuf instead of golang/protobuf)
 update: update_dep
 update_dep:
 	dep ensure -v
-	if [ -d vendor/github.com/golang/protobuf ]; then \
-	    echo "vendor/github.com/golang/protobuf not properly ignored, update Gopkg.toml"; \
-	    false; \
-	fi
-	sed -i -e 's;"github.com/golang/protobuf/ptypes/any";any "github.com/gogo/protobuf/types";' \
-	       -e 's;"github.com/golang/protobuf/ptypes";ptypes "github.com/gogo/protobuf/types";' \
-	       -e 's;"github.com/golang/protobuf/proto";"github.com/gogo/protobuf/proto";' \
-	    $$(grep -r -l github.com/golang/protobuf vendor/ | grep '.go$$')
-	for pbgo in $(PB_GO_FILES); do \
-		ln -sf $$(echo $$pbgo | sed -e 's;[^/]*;;g' -e 's;/;../;g')../pkg/spec/vendor/$$pbgo vendor/$$pbgo; \
-	done
-
-PB_GO_FILES := \
-	github.com/container-storage-interface/spec/lib/go/csi/v0/csi.pb.go \
-	github.com/coreos/etcd/auth/authpb/auth.pb.go \
-	github.com/coreos/etcd/etcdserver/etcdserverpb/etcdserver.pb.go \
-	github.com/coreos/etcd/mvcc/mvccpb/kv.pb.go \
-	github.com/googleapis/gnostic/OpenAPIv2/OpenAPIv2.pb.go \
-	github.com/googleapis/gnostic/extensions/extension.pb.go \
-	google.golang.org/genproto/googleapis/rpc/status/status.pb.go \
-	google.golang.org/grpc/health/grpc_health_v1/health.pb.go \
