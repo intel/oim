@@ -64,38 +64,39 @@ ignored = [
 
 [[constraint]]
   name = "k8s.io/kubernetes"
-  version = "1.13.1"
+  branch = "storage-volume-testsuites-concurrency"
+  source = "github.com/pohly/kubernetes"
 
 [[override]]
   name = "k8s.io/apimachinery"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/api"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/apiserver"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/apiextensions-apiserver"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/cli-runtime"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/client-go"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/cloud-provider"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/cluster-bootstrap"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/csi-api"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 [[override]]
   name = "k8s.io/kube-aggregator"
-  version = "kubernetes-1.13.1"
+  branch = "master"
 
 # Doesn't do proper releases.
 [[override]]

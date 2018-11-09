@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"flag"
 	"os"
 	"testing"
 
@@ -33,6 +34,9 @@ import (
 
 func init() {
 	log.SetOutput(GinkgoWriter)
+
+	// Skip slow or distruptive tests by default.
+	flag.Set("ginkgo.skip", `\[Slow|Disruptive\]`)
 
 	// Register framework flags, then handle flags.
 	framework.HandleFlags()

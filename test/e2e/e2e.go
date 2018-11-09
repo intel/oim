@@ -64,6 +64,7 @@ func setupProviderConfig(data *[]byte) error {
 			if err := qemu.SimpleInit(); err != nil {
 				return err
 			}
+			log.L().Info("using SPDK with path %s", string(*data))
 			if err := spdk.Init(spdk.WithSPDKSocket(string(*data))); err != nil {
 				return err
 			}
