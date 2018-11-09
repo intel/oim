@@ -36,6 +36,7 @@
 
 #include "spdk_internal/event.h"
 #include "spdk_internal/log.h"
+#include "spdk_internal/thread.h"
 
 #include "spdk/log.h"
 #include "spdk/thread.h"
@@ -52,24 +53,24 @@ enum spdk_reactor_state {
 	SPDK_REACTOR_STATE_SHUTDOWN = 4,
 };
 
+struct spdk_lw_thread {
+	TAILQ_ENTRY(spdk_lw_thread)	link;
+};
+
 struct spdk_reactor {
 	/* Logical core number for this reactor. */
 	uint32_t					lcore;
 
+	/* Lightweight threads running on this reactor */
+	TAILQ_HEAD(, spdk_lw_thread)			threads;
+
 	/* Poller for get the rusage for the reactor. */
 	struct spdk_poller				*rusage_poller;
-
-	/* Reactor tsc stats */
-	struct spdk_reactor_tsc_stats			tsc_stats;
-
-	uint64_t					tsc_last;
 
 	/* The last known rusage values */
 	struct rusage					rusage;
 
 	struct spdk_ring				*events;
-
-	uint64_t					max_delay_us;
 } __attribute__((aligned(64)));
 
 static struct spdk_reactor *g_reactors;
@@ -78,8 +79,7 @@ static enum spdk_reactor_state	g_reactor_state = SPDK_REACTOR_STATE_INVALID;
 
 static bool g_context_switch_monitor_enabled = true;
 
-static void spdk_reactor_construct(struct spdk_reactor *w, uint32_t lcore,
-				   uint64_t max_delay_us);
+static void spdk_reactor_construct(struct spdk_reactor *w, uint32_t lcore);
 
 static struct spdk_mempool *g_spdk_event_mempool = NULL;
 
@@ -134,7 +134,7 @@ spdk_event_call(struct spdk_event *event)
 }
 
 static inline uint32_t
-_spdk_event_queue_run_batch(struct spdk_reactor *reactor)
+_spdk_event_queue_run_batch(struct spdk_reactor *reactor, struct spdk_thread *thread)
 {
 	unsigned count, i;
 	void *events[SPDK_EVENT_BATCH_SIZE];
@@ -153,6 +153,8 @@ _spdk_event_queue_run_batch(struct spdk_reactor *reactor)
 		return 0;
 	}
 
+	spdk_set_thread(thread);
+
 	for (i = 0; i < count; i++) {
 		struct spdk_event *event = events[i];
 
@@ -160,15 +162,18 @@ _spdk_event_queue_run_batch(struct spdk_reactor *reactor)
 		event->fn(event->arg1, event->arg2);
 	}
 
+	spdk_set_thread(NULL);
+
 	spdk_mempool_put_bulk(g_spdk_event_mempool, events, count);
 
 	return count;
 }
 
+#define CONTEXT_SWITCH_MONITOR_PERIOD 1000000
+
 static int
-get_rusage(void *arg)
+get_rusage(struct spdk_reactor *reactor)
 {
-	struct spdk_reactor	*reactor = arg;
 	struct rusage		rusage;
 
 	if (getrusage(RUSAGE_THREAD, &rusage) != 0) {
@@ -186,46 +191,14 @@ get_rusage(void *arg)
 	return -1;
 }
 
-static void
-_spdk_reactor_context_switch_monitor_start(void *arg1, void *arg2)
-{
-	struct spdk_reactor *reactor = arg1;
-
-	if (reactor->rusage_poller == NULL) {
-		getrusage(RUSAGE_THREAD, &reactor->rusage);
-		reactor->rusage_poller = spdk_poller_register(get_rusage, reactor, 1000000);
-	}
-}
-
-static void
-_spdk_reactor_context_switch_monitor_stop(void *arg1, void *arg2)
-{
-	struct spdk_reactor *reactor = arg1;
-
-	if (reactor->rusage_poller != NULL) {
-		spdk_poller_unregister(&reactor->rusage_poller);
-	}
-}
-
 void
 spdk_reactor_enable_context_switch_monitor(bool enable)
 {
-	struct spdk_reactor *reactor;
-	spdk_event_fn fn;
-	uint32_t core;
-
-	if (enable != g_context_switch_monitor_enabled) {
-		g_context_switch_monitor_enabled = enable;
-		if (enable) {
-			fn = _spdk_reactor_context_switch_monitor_start;
-		} else {
-			fn = _spdk_reactor_context_switch_monitor_stop;
-		}
-		SPDK_ENV_FOREACH_CORE(core) {
-			reactor = spdk_reactor_get(core);
-			spdk_event_call(spdk_event_allocate(core, fn, reactor, NULL));
-		}
-	}
+	/* This global is being read by multiple threads, so this isn't
+	 * strictly thread safe. However, we're toggling between true and
+	 * false here, and if a thread sees the value update later than it
+	 * should, it's no big deal. */
+	g_context_switch_monitor_enabled = enable;
 }
 
 bool
@@ -234,128 +207,73 @@ spdk_reactor_context_switch_monitor_enabled(void)
 	return g_context_switch_monitor_enabled;
 }
 
-static void
-spdk_reactor_add_tsc_stats(void *arg, int rc, uint64_t now)
-{
-	struct spdk_reactor *reactor = arg;
-	struct spdk_reactor_tsc_stats *tsc_stats = &reactor->tsc_stats;
-
-	if (rc == 0) {
-		/* Poller status idle */
-		tsc_stats->idle_tsc += now - reactor->tsc_last;
-	} else if (rc > 0) {
-		/* Poller status busy */
-		tsc_stats->busy_tsc += now - reactor->tsc_last;
-	} else {
-		/* Poller status unknown */
-		tsc_stats->unknown_tsc += now - reactor->tsc_last;
-	}
-
-	reactor->tsc_last = now;
-}
-
-int
-spdk_reactor_get_tsc_stats(struct spdk_reactor_tsc_stats *tsc_stats, uint32_t core)
-{
-	struct spdk_reactor *reactor;
-
-	if (!spdk_cpuset_get_cpu(g_spdk_app_core_mask, core)) {
-		return -1;
-	}
-
-	reactor = spdk_reactor_get(core);
-	if (!reactor) {
-		SPDK_ERRLOG("Unable to get reactor for core %u\n", core);
-		return -1;
-	}
-	*tsc_stats = reactor->tsc_stats;
-
-	return 0;
-}
-
 static int
 _spdk_reactor_run(void *arg)
 {
 	struct spdk_reactor	*reactor = arg;
-	struct spdk_thread	*thread;
-	uint32_t		event_count;
-	uint64_t		now;
-	uint64_t		sleep_cycles;
-	uint32_t		sleep_us;
-	int			rc = -1;
+	struct spdk_thread	*orig_thread, *thread;
+	uint64_t		last_rusage = 0;
+	struct spdk_lw_thread	*lw_thread, *tmp;
 	char			thread_name[32];
 
 	snprintf(thread_name, sizeof(thread_name), "reactor_%u", reactor->lcore);
-	thread = spdk_allocate_thread(NULL, NULL, NULL, NULL, thread_name);
-	if (!thread) {
+	orig_thread = spdk_thread_create(thread_name);
+	if (!orig_thread) {
 		return -1;
 	}
+
+	lw_thread = (struct spdk_lw_thread *)spdk_thread_get_ctx(orig_thread);
+	if (!lw_thread) {
+		spdk_thread_exit(orig_thread);
+		return -ENOMEM;
+	}
+
+	TAILQ_INSERT_TAIL(&reactor->threads, lw_thread, link);
+
 	SPDK_NOTICELOG("Reactor started on core %u\n", reactor->lcore);
 
-	sleep_cycles = reactor->max_delay_us * spdk_get_ticks_hz() / SPDK_SEC_TO_USEC;
-	if (g_context_switch_monitor_enabled) {
-		_spdk_reactor_context_switch_monitor_start(reactor, NULL);
-	}
-	now = spdk_get_ticks();
-	reactor->tsc_last = now;
-
 	while (1) {
-		bool took_action = false;
+		uint64_t now;
 
-		event_count = _spdk_event_queue_run_batch(reactor);
-		if (event_count > 0) {
-			rc = 1;
-			now = spdk_get_ticks();
-			spdk_reactor_add_tsc_stats(reactor, rc, now);
-			took_action = true;
-		}
+		/* For each loop through the reactor, capture the time. This time
+		 * is used for all threads. */
+		now = spdk_get_ticks();
 
-		rc = spdk_thread_poll(thread, 0);
-		if (rc != 0) {
-			now = spdk_get_ticks();
-			spdk_reactor_add_tsc_stats(reactor, rc, now);
-			took_action = true;
-		}
+		TAILQ_FOREACH_SAFE(lw_thread, &reactor->threads, link, tmp) {
+			thread = spdk_thread_get_from_ctx(lw_thread);
 
-		/* Determine if the thread can sleep */
-		if (sleep_cycles && !took_action) {
-			uint64_t next_run_tick;
+			_spdk_event_queue_run_batch(reactor, thread);
 
-			now = spdk_get_ticks();
-			sleep_us = reactor->max_delay_us;
-			next_run_tick = spdk_thread_next_poller_expiration(thread);
-
-			/* There are timers registered, so don't sleep beyond
-			 * when the next timer should fire */
-			if (next_run_tick > 0 && next_run_tick < (now + sleep_cycles)) {
-				if (next_run_tick <= now) {
-					sleep_us = 0;
-				} else {
-					sleep_us = ((next_run_tick - now) *
-						    SPDK_SEC_TO_USEC) / spdk_get_ticks_hz();
-				}
-			}
-
-			if (sleep_us > 0) {
-				usleep(sleep_us);
-			}
+			spdk_thread_poll(thread, 0, now);
 		}
 
 		if (g_reactor_state != SPDK_REACTOR_STATE_RUNNING) {
 			break;
 		}
+
+		if (g_context_switch_monitor_enabled) {
+			if ((last_rusage + CONTEXT_SWITCH_MONITOR_PERIOD) < now) {
+				get_rusage(reactor);
+				last_rusage = now;
+			}
+		}
 	}
 
-	_spdk_reactor_context_switch_monitor_stop(reactor, NULL);
-	spdk_free_thread();
+	lw_thread = spdk_thread_get_ctx(orig_thread);
+	TAILQ_REMOVE(&reactor->threads, lw_thread, link);
+	assert(TAILQ_EMPTY(&reactor->threads));
+
+	spdk_thread_exit(orig_thread);
+
 	return 0;
 }
 
 static void
-spdk_reactor_construct(struct spdk_reactor *reactor, uint32_t lcore, uint64_t max_delay_us)
+spdk_reactor_construct(struct spdk_reactor *reactor, uint32_t lcore)
 {
 	reactor->lcore = lcore;
-	reactor->max_delay_us = max_delay_us;
+
+	TAILQ_INIT(&reactor->threads);
 
 	reactor->events = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 65536, SPDK_ENV_SOCKET_ID_ANY);
 	assert(reactor->events != NULL);
@@ -426,7 +344,7 @@ spdk_reactors_stop(void *arg1, void *arg2)
 }
 
 int
-spdk_reactors_init(unsigned int max_delay_us)
+spdk_reactors_init(void)
 {
 	int rc;
 	uint32_t i, last_core;
@@ -458,9 +376,11 @@ spdk_reactors_init(unsigned int max_delay_us)
 
 	memset(g_reactors, 0, (last_core + 1) * sizeof(struct spdk_reactor));
 
+	spdk_thread_lib_init(NULL, sizeof(struct spdk_lw_thread));
+
 	SPDK_ENV_FOREACH_CORE(i) {
 		reactor = spdk_reactor_get(i);
-		spdk_reactor_construct(reactor, i, max_delay_us);
+		spdk_reactor_construct(reactor, i);
 	}
 
 	g_reactor_state = SPDK_REACTOR_STATE_INITIALIZED;
@@ -473,6 +393,8 @@ spdk_reactors_fini(void)
 {
 	uint32_t i;
 	struct spdk_reactor *reactor;
+
+	spdk_thread_lib_fini();
 
 	SPDK_ENV_FOREACH_CORE(i) {
 		reactor = spdk_reactor_get(i);

@@ -48,6 +48,12 @@ ifeq ($(CONFIG_CRYPTO),y)
 DIRS-y += crypto
 endif
 
+ifeq ($(CONFIG_OCF), y)
+DIRS-y += ocf
+DIRS-y += ocf/env
+DEPDIRS-ocf := ocf/env
+endif
+
 ifeq ($(OS),Linux)
 DIRS-y += aio
 DIRS-$(CONFIG_ISCSI_INITIATOR) += iscsi
@@ -56,5 +62,6 @@ DIRS-$(CONFIG_PMDK) += pmem
 endif
 
 DIRS-$(CONFIG_RBD) += rbd
+DIRS-$(CONFIG_FTL) += ftl
 
 include $(SPDK_ROOT_DIR)/mk/spdk.lib.mk

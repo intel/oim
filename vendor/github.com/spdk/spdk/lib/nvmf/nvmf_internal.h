@@ -47,6 +47,13 @@
 
 #define SPDK_NVMF_MAX_SGL_ENTRIES	16
 
+/* AIO backend requires block size aligned data buffers,
+ * extra 4KiB aligned data buffer should work for most devices.
+ */
+#define SHIFT_4KB			12u
+#define NVMF_DATA_BUFFER_ALIGNMENT	(1u << SHIFT_4KB)
+#define NVMF_DATA_BUFFER_MASK		(NVMF_DATA_BUFFER_ALIGNMENT - 1LL)
+
 enum spdk_nvmf_subsystem_state {
 	SPDK_NVMF_SUBSYSTEM_INACTIVE = 0,
 	SPDK_NVMF_SUBSYSTEM_ACTIVATING,
@@ -59,7 +66,6 @@ enum spdk_nvmf_subsystem_state {
 
 enum spdk_nvmf_qpair_state {
 	SPDK_NVMF_QPAIR_UNINITIALIZED = 0,
-	SPDK_NVMF_QPAIR_ACTIVATING,
 	SPDK_NVMF_QPAIR_ACTIVE,
 	SPDK_NVMF_QPAIR_DEACTIVATING,
 	SPDK_NVMF_QPAIR_ERROR,
@@ -94,9 +100,16 @@ struct spdk_nvmf_listener {
 	TAILQ_ENTRY(spdk_nvmf_listener)	link;
 };
 
+struct spdk_nvmf_transport_pg_cache_buf {
+	STAILQ_ENTRY(spdk_nvmf_transport_pg_cache_buf) link;
+};
+
 struct spdk_nvmf_transport_poll_group {
-	struct spdk_nvmf_transport			*transport;
-	TAILQ_ENTRY(spdk_nvmf_transport_poll_group)	link;
+	struct spdk_nvmf_transport					*transport;
+	STAILQ_HEAD(, spdk_nvmf_transport_pg_cache_buf)			buf_cache;
+	uint32_t							buf_cache_count;
+	uint32_t							buf_cache_size;
+	TAILQ_ENTRY(spdk_nvmf_transport_poll_group)			link;
 };
 
 struct spdk_nvmf_subsystem_poll_group {
@@ -159,10 +172,13 @@ struct spdk_nvmf_request {
 };
 
 struct spdk_nvmf_ns {
+	uint32_t nsid;
 	struct spdk_nvmf_subsystem *subsystem;
 	struct spdk_bdev *bdev;
 	struct spdk_bdev_desc *desc;
 	struct spdk_nvmf_ns_opts opts;
+	/* reservation notificaton mask */
+	uint32_t mask;
 };
 
 struct spdk_nvmf_qpair {
@@ -220,6 +236,10 @@ struct spdk_nvmf_ctrlr {
 
 	uint16_t changed_ns_list_count;
 	struct spdk_nvme_ns_list changed_ns_list;
+
+	/* Time to trigger keep-alive--poller_time = now_tick + period */
+	uint64_t last_keep_alive_tick;
+	struct spdk_poller			*keep_alive_poller;
 
 	TAILQ_ENTRY(spdk_nvmf_ctrlr)		link;
 };
@@ -287,6 +307,18 @@ bool spdk_nvmf_ctrlr_write_zeroes_supported(struct spdk_nvmf_ctrlr *ctrlr);
 void spdk_nvmf_ctrlr_ns_changed(struct spdk_nvmf_ctrlr *ctrlr, uint32_t nsid);
 
 void spdk_nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *nsdata);
+int spdk_nvmf_bdev_ctrlr_read_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+				  struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int spdk_nvmf_bdev_ctrlr_write_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+				   struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int spdk_nvmf_bdev_ctrlr_write_zeroes_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+		struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int spdk_nvmf_bdev_ctrlr_flush_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+				   struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int spdk_nvmf_bdev_ctrlr_dsm_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+				 struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
+int spdk_nvmf_bdev_ctrlr_nvme_passthru_io(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
+		struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
 
 int spdk_nvmf_subsystem_add_ctrlr(struct spdk_nvmf_subsystem *subsystem,
 				  struct spdk_nvmf_ctrlr *ctrlr);

@@ -51,11 +51,20 @@ struct spdk_io_channel_iter;
 struct spdk_poller;
 
 /**
- * Callback function for a thread.
+ * A function that is called each time a new thread is created.
+ * The implementor of this function should frequently call
+ * spdk_thread_poll() on the thread provided.
+ *
+ * \param thread The new spdk_thread.
+ */
+typedef void (*spdk_new_thread_fn)(struct spdk_thread *thread);
+
+/**
+ * A function that will be called on the target thread.
  *
  * \param ctx Context passed as arg to spdk_thread_pass_msg().
  */
-typedef void (*spdk_thread_fn)(void *ctx);
+typedef void (*spdk_msg_fn)(void *ctx);
 
 /**
  * Function to be called to pass a message to a thread.
@@ -64,7 +73,7 @@ typedef void (*spdk_thread_fn)(void *ctx);
  * \param ctx Context passed to fn.
  * \param thread_ctx Context for the thread.
  */
-typedef void (*spdk_thread_pass_msg)(spdk_thread_fn fn, void *ctx,
+typedef void (*spdk_thread_pass_msg)(spdk_msg_fn fn, void *ctx,
 				     void *thread_ctx);
 
 /**
@@ -166,9 +175,15 @@ struct spdk_io_channel {
 /**
  * Initialize the threading library. Must be called once prior to allocating any threads.
  *
+ * \param new_thread_fn Called each time a new SPDK thread is created. The implementor
+ * is expected to frequently call spdk_thread_poll() on the provided thread.
+ * \param ctx_sz For each thread allocated, an additional region of memory of
+ * size ctx_size will also be allocated, for use by the thread scheduler. A pointer
+ * to this region may be obtained by calling spdk_thread_get_ctx().
+ *
  * \return 0 on success. Negated errno on failure.
  */
-int spdk_thread_lib_init(void);
+int spdk_thread_lib_init(spdk_new_thread_fn new_thread_fn, size_t ctx_sz);
 
 /**
  * Release all resources associated with this library.
@@ -176,37 +191,46 @@ int spdk_thread_lib_init(void);
 void spdk_thread_lib_fini(void);
 
 /**
- * Initializes the calling thread for I/O channel allocation.
+ * Creates a new SPDK thread object.
  *
- * \param msg_fn A function that may be called from any thread and is passed a function
- * pointer (spdk_thread_fn) that must be called on the same thread that spdk_allocate_thread
- * was called from.
- * DEPRECATED. Only used in tests. Pass NULL for this parameter.
- * \param start_poller_fn Function to be called to start a poller for the thread.
- * DEPRECATED. Only used in tests. Pass NULL for this parameter.
- * \param stop_poller_fn Function to be called to stop a poller for the thread.
- * DEPRECATED. Only used in tests. Pass NULL for this parameter.
- * \param thread_ctx Context that will be passed to msg_fn, start_poller_fn, and stop_poller_fn.
- * DEPRECATED. Only used in tests. Pass NULL for this parameter.
  * \param name Human-readable name for the thread; can be retrieved with spdk_thread_get_name().
  * The string is copied, so the pointed-to data only needs to be valid during the
- * spdk_allocate_thread() call. May be NULL to specify no name.
+ * spdk_thread_create() call. May be NULL to specify no name.
  *
  * \return a pointer to the allocated thread on success or NULL on failure..
  */
-struct spdk_thread *spdk_allocate_thread(spdk_thread_pass_msg msg_fn,
-		spdk_start_poller start_poller_fn,
-		spdk_stop_poller stop_poller_fn,
-		void *thread_ctx,
-		const char *name);
+struct spdk_thread *spdk_thread_create(const char *name);
 
 /**
- * Release any resources related to the calling thread for I/O channel allocation.
+ * Release any resources related to the given thread and destroy it. Execution
+ * continues on the current system thread after returning.
  *
- * All I/O channel references related to the calling thread must be released using
+ * \param thread The thread to destroy.
+ *
+ * All I/O channel references associated with the thread must be released using
  * spdk_put_io_channel() prior to calling this function.
  */
-void spdk_free_thread(void);
+void spdk_thread_exit(struct spdk_thread *thread);
+
+/**
+ * Return a pointer to this thread's context.
+ *
+ * \param thread The thread on which to get the context.
+ *
+ * \return a pointer to the per-thread context, or NULL if there is
+ * no per-thread context.
+ */
+void *spdk_thread_get_ctx(struct spdk_thread *thread);
+
+/**
+ * Return the thread object associated with the context handle previously
+ * obtained by calling spdk_thread_get_ctx().
+ *
+ * \param ctx A context previously obtained by calling spdk_thread_get_ctx()
+ *
+ * \return The associated thread.
+ */
+struct spdk_thread *spdk_thread_get_from_ctx(void *ctx);
 
 /**
  * Perform one iteration worth of processing on the thread. This includes
@@ -215,10 +239,12 @@ void spdk_free_thread(void);
  * \param thread The thread to process
  * \param max_msgs The maximum number of messages that will be processed.
  *                 Use 0 to process the default number of messages (8).
+ * \param now The current time, in ticks. Optional. If 0 is passed, this
+ *            function may call spdk_get_ticks() to get the current time.
  *
  * \return 1 if work was done. 0 if no work was done. -1 if unknown.
  */
-int spdk_thread_poll(struct spdk_thread *thread, uint32_t max_msgs);
+int spdk_thread_poll(struct spdk_thread *thread, uint32_t max_msgs, uint64_t now);
 
 /**
  * Return the number of ticks until the next timed poller
@@ -230,6 +256,16 @@ int spdk_thread_poll(struct spdk_thread *thread, uint32_t max_msgs);
  * \return Number of ticks. If no timed pollers, return 0.
  */
 uint64_t spdk_thread_next_poller_expiration(struct spdk_thread *thread);
+
+/**
+ * Returns whether there are any active pollers (pollers for which
+ * period_microseconds equals 0) registered to be run on the thread.
+ *
+ * \param thread The thread to check.
+ *
+ * \return 1 if there is at least one active poller, 0 otherwise.
+ */
+int spdk_thread_has_active_pollers(struct spdk_thread *thread);
 
 /**
  * Get count of allocated threads.
@@ -257,6 +293,21 @@ struct spdk_thread *spdk_get_thread(void);
  */
 const char *spdk_thread_get_name(const struct spdk_thread *thread);
 
+struct spdk_thread_stats {
+	uint64_t busy_tsc;
+	uint64_t idle_tsc;
+	uint64_t unknown_tsc;
+};
+
+/**
+ * Get statistics about the current thread.
+ *
+ * Copy cumulative thread stats values to the provided thread stats structure.
+ *
+ * \param stats User's thread_stats structure.
+ */
+int spdk_thread_get_stats(struct spdk_thread_stats *stats);
+
 /**
  * Send a message to the given thread.
  *
@@ -267,7 +318,7 @@ const char *spdk_thread_get_name(const struct spdk_thread *thread);
  * \param fn This function will be called on the given thread.
  * \param ctx This context will be passed to fn when called.
  */
-void spdk_thread_send_msg(const struct spdk_thread *thread, spdk_thread_fn fn, void *ctx);
+void spdk_thread_send_msg(const struct spdk_thread *thread, spdk_msg_fn fn, void *ctx);
 
 /**
  * Send a message to each thread, serially.
@@ -280,7 +331,7 @@ void spdk_thread_send_msg(const struct spdk_thread *thread, spdk_thread_fn fn, v
  * \param cpl This will be called on the originating thread after `fn` has been
  * called on each thread.
  */
-void spdk_for_each_thread(spdk_thread_fn fn, void *ctx, spdk_thread_fn cpl);
+void spdk_for_each_thread(spdk_msg_fn fn, void *ctx, spdk_msg_fn cpl);
 
 /**
  * Register a poller on the current thread.

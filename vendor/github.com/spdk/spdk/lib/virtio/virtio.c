@@ -535,7 +535,7 @@ virtqueue_req_add_iovs(struct virtqueue *vq, struct iovec *iovs, uint16_t iovcnt
 		if (!vq->vdev->is_hw) {
 			desc->addr  = (uintptr_t)iovs[i].iov_base;
 		} else {
-			desc->addr = spdk_vtophys(iovs[i].iov_base);
+			desc->addr = spdk_vtophys(iovs[i].iov_base, NULL);
 		}
 
 		desc->len = iovs[i].iov_len;
@@ -721,14 +721,12 @@ virtio_dev_backend_ops(struct virtio_dev *dev)
 void
 virtio_dev_dump_json_info(struct virtio_dev *hw, struct spdk_json_write_ctx *w)
 {
-	spdk_json_write_name(w, "virtio");
-	spdk_json_write_object_begin(w);
+	spdk_json_write_named_object_begin(w, "virtio");
 
-	spdk_json_write_name(w, "vq_count");
-	spdk_json_write_uint32(w, hw->max_queues);
+	spdk_json_write_named_uint32(w, "vq_count", hw->max_queues);
 
-	spdk_json_write_name(w, "vq_size");
-	spdk_json_write_uint32(w, virtio_dev_backend_ops(hw)->get_queue_size(hw, 0));
+	spdk_json_write_named_uint32(w, "vq_size",
+				     virtio_dev_backend_ops(hw)->get_queue_size(hw, 0));
 
 	virtio_dev_backend_ops(hw)->dump_json_info(hw, w);
 

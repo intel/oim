@@ -456,7 +456,7 @@ static struct spdk_bdev_module virtio_scsi_if = {
 	.async_fini = true,
 };
 
-SPDK_BDEV_MODULE_REGISTER(&virtio_scsi_if)
+SPDK_BDEV_MODULE_REGISTER(virtio_scsi, &virtio_scsi_if)
 
 static struct virtio_scsi_io_ctx *
 bdev_virtio_init_io_vreq(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
@@ -911,7 +911,7 @@ bdev_virtio_tmf_abort_ioerr_cb(void *ctx)
 static void
 bdev_virtio_tmf_abort(struct spdk_bdev_io *bdev_io, int status)
 {
-	spdk_thread_fn fn;
+	spdk_msg_fn fn;
 
 	if (status == -ENOMEM) {
 		fn = bdev_virtio_tmf_abort_nomem_cb;
@@ -2002,8 +2002,7 @@ bdev_virtio_scsi_dev_list(struct spdk_json_write_ctx *w)
 	TAILQ_FOREACH(svdev, &g_virtio_scsi_devs, tailq) {
 		spdk_json_write_object_begin(w);
 
-		spdk_json_write_name(w, "name");
-		spdk_json_write_string(w, svdev->vdev.name);
+		spdk_json_write_named_string(w, "name", svdev->vdev.name);
 
 		virtio_dev_dump_json_info(&svdev->vdev, w);
 

@@ -42,11 +42,6 @@
 
 SPDK_LOG_REGISTER_COMPONENT("nvmf", SPDK_LOG_NVMF)
 
-DEFINE_STUB(spdk_bdev_module_claim_bdev,
-	    int,
-	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
-	     struct spdk_bdev_module *module), 0);
-
 DEFINE_STUB_V(spdk_bdev_module_release_bdev,
 	      (struct spdk_bdev *bdev));
 
@@ -239,6 +234,7 @@ test_discovery_log(void)
 	snprintf(trid.traddr, sizeof(trid.traddr), "1234");
 	snprintf(trid.trsvcid, sizeof(trid.trsvcid), "5678");
 	SPDK_CU_ASSERT_FATAL(spdk_nvmf_subsystem_add_listener(subsystem, &trid) == 0);
+	subsystem->state = SPDK_NVMF_SUBSYSTEM_ACTIVE;
 
 	/* Get only genctr (first field in the header) */
 	memset(buffer, 0xCC, sizeof(buffer));
@@ -280,6 +276,7 @@ test_discovery_log(void)
 					 offsetof(struct spdk_nvmf_discovery_log_page, entries[0]),
 					 sizeof(*entry));
 	CU_ASSERT(entry->trtype == 42);
+	subsystem->state = SPDK_NVMF_SUBSYSTEM_INACTIVE;
 	spdk_nvmf_subsystem_destroy(subsystem);
 	free(tgt.subsystems);
 	free(tgt.discovery_log_page);

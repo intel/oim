@@ -43,7 +43,7 @@ for ((i = 0; i < 2; i++)); do
 	rpc_addr="/var/tmp/spdk${i}.sock"
 
 	# TODO: run the different iSCSI instances on non-overlapping CPU masks
-	$ISCSI_APP -r $rpc_addr -s 1000 -i $i -m $ISCSI_TEST_CORE_MASK --wait-for-rpc &
+	$ISCSI_APP -r $rpc_addr -i $i -m $ISCSI_TEST_CORE_MASK --wait-for-rpc &
 	pid=$!
 	echo "Process pid: $pid"
 
@@ -87,5 +87,5 @@ trap - SIGINT SIGTERM EXIT
 iscsicleanup
 
 $rpc_py -s $rpc_second_addr kill_instance SIGTERM
-report_test_completion "nightly_iscsi_ip_migration"
+report_test_completion "iscsi_ip_migration"
 timing_exit ip_migration

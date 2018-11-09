@@ -46,6 +46,12 @@ CONFIG_WERROR=n
 # Build with link-time optimization.
 CONFIG_LTO=n
 
+# Generate profile guided optimization data.
+CONFIG_PGO_CAPTURE=n
+
+# Use profile guided optimization data.
+CONFIG_PGO_USE=n
+
 # Build with code coverage instrumentation.
 CONFIG_COVERAGE=n
 
@@ -96,7 +102,7 @@ CONFIG_VIRTIO=y
 CONFIG_PMDK=n
 CONFIG_PMDK_DIR=
 
-# Build with "reduce" (SPDK block compression)
+# Enable the dependencies for building the compress vbdev
 CONFIG_REDUCE=n
 
 # Build with VPP
@@ -118,3 +124,17 @@ CONFIG_VTUNE_DIR=
 
 # Build the dpdk igb_uio driver
 CONFIG_IGB_UIO_DRIVER=n
+
+# Build FTL library
+CONFIG_FTL=n
+
+# Build Intel IPSEC_MB library
+CONFIG_IPSEC_MB=n
+
+# Enable OCF module
+CONFIG_OCF=n
+CONFIG_OCF_PATH=
+CONFIG_CUSTOMOCF=n
+
+# Build ISA-L library
+CONFIG_ISAL=y

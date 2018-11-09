@@ -33,9 +33,10 @@
 
 #include "spdk/stdinc.h"
 
-#include "common/lib/test_env.c"
+#include "common/lib/ut_multithread.c"
 #include "spdk_cunit.h"
 #include "spdk_internal/mock.h"
+#include "spdk_internal/thread.h"
 
 #include "nvmf/subsystem.c"
 
@@ -51,12 +52,6 @@ DEFINE_STUB_V(spdk_bdev_module_release_bdev,
 
 DEFINE_STUB(spdk_bdev_get_block_size, uint32_t,
 	    (const struct spdk_bdev *bdev), 512);
-
-static void
-_subsystem_send_msg(spdk_thread_fn fn, void *ctx, void *thread_ctx)
-{
-	fn(ctx);
-}
 
 static void
 subsystem_ns_remove_cb(struct spdk_nvmf_subsystem *subsystem, void *cb_arg, int status)
@@ -294,7 +289,9 @@ test_spdk_nvmf_subsystem_add_ns(void)
 	CU_ASSERT(subsystem.max_nsid == 5);
 
 	spdk_nvmf_subsystem_remove_ns(&subsystem, 1, subsystem_ns_remove_cb, NULL);
+	poll_threads();
 	spdk_nvmf_subsystem_remove_ns(&subsystem, 5, subsystem_ns_remove_cb, NULL);
+	poll_threads();
 
 	free(subsystem.ns);
 	free(tgt.subsystems);
@@ -469,12 +466,15 @@ int main(int argc, char **argv)
 		return CU_get_error();
 	}
 
-	spdk_allocate_thread(_subsystem_send_msg, NULL, NULL, NULL, "thread0");
+	allocate_threads(1);
+	set_thread(0);
+
 	CU_basic_set_mode(CU_BRM_VERBOSE);
 	CU_basic_run_tests();
 	num_failures = CU_get_number_of_failures();
 	CU_cleanup_registry();
-	spdk_free_thread();
+
+	free_threads();
 
 	return num_failures;
 }

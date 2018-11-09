@@ -70,38 +70,25 @@ struct spdk_reduce_vol_params {
 	uint32_t		chunk_size;
 
 	/**
-	 * Total size in bytes of the compressed volume.  Must be
-	 *  an even multiple of chunk_size.  Must be greater than 0.
+	 * Total size in bytes of the compressed volume.  During
+	 *  initialization, the size is calculated from the size of
+	 *  backing device size, so this must be set to 0 in the
+	 *  structure passed to spdk_reduce_vol_init().  After
+	 *  initialization, or a successful load, this field will
+	 *  contain the total size which will be an even multiple
+	 *  of the chunk size.
 	 */
 	uint64_t		vol_size;
 };
 
-/**
- * Get the required size for the pm file for a compressed volume.
- *
- * \param params Parameters for the compressed volume
- * \return Size of the required pm file (in bytes) needed to create the
- *         compressed volume.  Returns -EINVAL if params is invalid.
- */
-int64_t spdk_reduce_get_pm_file_size(struct spdk_reduce_vol_params *params);
-
-/**
- * Get the required size for the backing device for a compressed volume.
- *
- * \param params Parameters for the compressed volume
- * \return Size of the required backing device (in bytes) needed to create
- *         the compressed volume.  Returns -EINVAL if params is invalid.
- */
-int64_t spdk_reduce_get_backing_device_size(struct spdk_reduce_vol_params *params);
-
 struct spdk_reduce_vol;
 
-typedef void (*spdk_reduce_vol_op_complete)(void *ctx, int ziperrno);
+typedef void (*spdk_reduce_vol_op_complete)(void *ctx, int reduce_errno);
 typedef void (*spdk_reduce_vol_op_with_handle_complete)(void *ctx,
 		struct spdk_reduce_vol *vol,
-		int ziperrno);
+		int reduce_errno);
 
-typedef void (*spdk_reduce_dev_cpl)(void *cb_arg, int ziperrno);
+typedef void (*spdk_reduce_dev_cpl)(void *cb_arg, int reduce_errno);
 
 struct spdk_reduce_vol_cb_args {
 	spdk_reduce_dev_cpl	cb_fn;
@@ -117,8 +104,6 @@ struct spdk_reduce_backing_dev {
 
 	void (*unmap)(struct spdk_reduce_backing_dev *dev,
 		      uint64_t lba, uint32_t lba_count, struct spdk_reduce_vol_cb_args *args);
-
-	void (*close)(struct spdk_reduce_backing_dev *dev);
 
 	uint64_t	blockcnt;
 	uint32_t	blocklen;
@@ -170,5 +155,57 @@ void spdk_reduce_vol_load(struct spdk_reduce_backing_dev *backing_dev,
 void spdk_reduce_vol_unload(struct spdk_reduce_vol *vol,
 			    spdk_reduce_vol_op_complete cb_fn,
 			    void *cb_arg);
+
+/**
+ * Destroy an existing libreduce compressed volume.
+ *
+ * This will zero the metadata region on the backing device and delete the associated
+ * pm metadata file.  If the backing device does not contain a compressed volume, the
+ * cb_fn will be called with error status without modifying the backing device nor
+ * deleting a pm file.
+ *
+ * \param backing_dev Structure describing the backing device containing the compressed volume.
+ * \param cb_fn Callback function to signal completion of the destruction process.
+ * \param cb_arg Argument to pass to the callback function.
+ */
+void spdk_reduce_vol_destroy(struct spdk_reduce_backing_dev *backing_dev,
+			     spdk_reduce_vol_op_complete cb_fn,
+			     void *cb_arg);
+
+/**
+ * Read data from a libreduce compressed volume.
+ *
+ * This function will only read from logical blocks on the comparessed volume that
+ * fall within the same chunk.
+ *
+ * \param vol Volume to read data.
+ * \param iov iovec array describing the data to be read
+ * \param iovcnt Number of elements in the iovec array
+ * \param offset Offset (in logical blocks) to read the data on the compressed volume
+ * \param length Length (in logical blocks) of the data to read
+ * \param cb_fn Callback function to signal completion of the readv operation.
+ * \param cb_arg Argument to pass to the callback function.
+ */
+void spdk_reduce_vol_readv(struct spdk_reduce_vol *vol,
+			   struct iovec *iov, int iovcnt, uint64_t offset, uint64_t length,
+			   spdk_reduce_vol_op_complete cb_fn, void *cb_arg);
+
+/**
+ * Write data to a libreduce compressed volume.
+ *
+ * This function will only write to logical blocks on the comparessed volume that
+ * fall within the same chunk.
+ *
+ * \param vol Volume to write data.
+ * \param iov iovec array describing the data to be written
+ * \param iovcnt Number of elements in the iovec array
+ * \param offset Offset (in logical blocks) to write the data on the compressed volume
+ * \param length Length (in logical blocks) of the data to write
+ * \param cb_fn Callback function to signal completion of the writev operation.
+ * \param cb_arg Argument to pass to the callback function.
+ */
+void spdk_reduce_vol_writev(struct spdk_reduce_vol *vol,
+			    struct iovec *iov, int iovcnt, uint64_t offset, uint64_t length,
+			    spdk_reduce_vol_op_complete cb_fn, void *cb_arg);
 
 #endif /* SPDK_REDUCE_H_ */

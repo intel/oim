@@ -292,6 +292,39 @@ struct spdk_bdev {
 	 */
 	struct spdk_uuid uuid;
 
+	/** Size in bytes of a metadata for the backend */
+	uint32_t md_len;
+
+	/**
+	 * Specify metadata location and set to true if metadata is interleaved
+	 * with block data or false if metadata is separated with block data.
+	 *
+	 * Note that this field is valid only if there is metadata.
+	 */
+	bool md_interleave;
+
+	/**
+	 * DIF type for this bdev.
+	 *
+	 * Note that this field is valid only if there is metadata.
+	 */
+	enum spdk_dif_type dif_type;
+
+	/*
+	 * DIF location.
+	 *
+	 * Set to true if DIF is set in the first 8 bytes of metadata or false
+	 * if DIF is set in the last 8 bytes of metadata.
+	 *
+	 * Note that this field is valid only if DIF is enabled.
+	 */
+	bool dif_is_head_of_md;
+
+	/**
+	 * Specify whether each DIF check type is enabled.
+	 */
+	uint32_t dif_check_flags;
+
 	/**
 	 * Pointer to the bdev module that registered this bdev.
 	 */
@@ -356,6 +389,10 @@ struct spdk_bdev {
 
 		/** accumulated I/O statistics for previously deleted channels of this bdev */
 		struct spdk_bdev_io_stat stat;
+
+		/** histogram enabled on this bdev */
+		bool	histogram_enabled;
+		bool	histogram_in_progress;
 	} internal;
 };
 
@@ -725,6 +762,14 @@ void spdk_bdev_io_complete_scsi_status(struct spdk_bdev_io *bdev_io, enum spdk_s
 struct spdk_thread *spdk_bdev_io_get_thread(struct spdk_bdev_io *bdev_io);
 
 /**
+ * Get the bdev module's I/O channel that the given bdev_io was submitted on.
+ *
+ * \param bdev_io I/O
+ * \return the bdev module's I/O channel that the given bdev_io was submitted on.
+ */
+struct spdk_io_channel *spdk_bdev_io_get_io_channel(struct spdk_bdev_io *bdev_io);
+
+/**
  * Resize for a bdev.
  *
  * Change number of blocks for provided block device.
@@ -967,24 +1012,12 @@ struct spdk_bdev *spdk_bdev_part_get_base_bdev(struct spdk_bdev_part *part);
 uint64_t spdk_bdev_part_get_offset_blocks(struct spdk_bdev_part *part);
 
 /*
- * Macro used to register module for later initialization.
+ *  Macro used to register module for later initialization.
  */
-#define SPDK_BDEV_MODULE_REGISTER(_module)							\
-	__attribute__((constructor)) static void						\
-	SPDK_BDEV_MODULE_REGISTER_FN_NAME(__LINE__)  (void)					\
-	{											\
-	    spdk_bdev_module_list_add(_module);							\
-	}
-
-/*
- * This is helper macro for automatic function generation.
- *
- */
-#define SPDK_BDEV_MODULE_REGISTER_FN_NAME(line) SPDK_BDEV_MODULE_REGISTER_FN_NAME_(line)
-
-/*
- *  Second helper macro for "stringize" trick to work.
- */
-#define SPDK_BDEV_MODULE_REGISTER_FN_NAME_(line) spdk_bdev_module_register_ ## line
+#define SPDK_BDEV_MODULE_REGISTER(name, module) \
+static void __attribute__((constructor)) spdk_bdev_module_register_##name(void) \
+{ \
+	spdk_bdev_module_list_add(module); \
+} \
 
 #endif /* SPDK_BDEV_MODULE_H */

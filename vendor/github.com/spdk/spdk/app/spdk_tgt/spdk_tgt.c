@@ -77,7 +77,7 @@ spdk_tgt_save_pid(const char *pid_path)
 }
 
 
-static void
+static int
 spdk_tgt_parse_arg(int ch, char *arg)
 {
 	switch (ch) {
@@ -89,7 +89,10 @@ spdk_tgt_parse_arg(int ch, char *arg)
 		spdk_vhost_set_socket_path(arg);
 		break;
 #endif
+	default:
+		return -EINVAL;
 	}
+	return 0;
 }
 
 static void

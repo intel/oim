@@ -42,6 +42,8 @@
 #include "spdk/crc16.h"
 #include "spdk/endian.h"
 
+#include "spdk_internal/memory.h"
+
 #define MAX_DEVS 64
 
 #define DATA_PATTERN 0x5A
@@ -146,7 +148,7 @@ static uint32_t dp_guard_check_extended_lba_test(struct spdk_nvme_ns *ns, struct
 		return 0;
 	}
 
-	req->lba = 0x200000;
+	req->lba = VALUE_2MB;
 	req->use_extended_lba = true;
 	req->use_sgl = true;
 	req->buf_size = (sector_size + md_size) * req->lba_count;
@@ -154,10 +156,10 @@ static uint32_t dp_guard_check_extended_lba_test(struct spdk_nvme_ns *ns, struct
 	ns_data_buffer_reset(ns, req, DATA_PATTERN);
 	pi = (struct spdk_nvme_protection_info *)(req->contig + sector_size + md_size - 8);
 	/* big-endian for guard */
-	to_be16(&pi->guard, spdk_crc16_t10dif(req->contig, sector_size));
+	to_be16(&pi->guard, spdk_crc16_t10dif(0, req->contig, sector_size));
 
 	pi = (struct spdk_nvme_protection_info *)(req->contig + (sector_size + md_size) * 2 - 8);
-	to_be16(&pi->guard, spdk_crc16_t10dif(req->contig + sector_size + md_size, sector_size));
+	to_be16(&pi->guard, spdk_crc16_t10dif(0, req->contig + sector_size + md_size, sector_size));
 
 	*io_flags = SPDK_NVME_IO_FLAGS_PRCHK_GUARD;
 
@@ -232,7 +234,7 @@ static uint32_t dp_without_pract_extended_lba_test(struct spdk_nvme_ns *ns, stru
 		return 0;
 	}
 
-	req->lba = 0x200000;
+	req->lba = VALUE_2MB;
 	req->use_extended_lba = true;
 	req->metadata = NULL;
 	pi = (struct spdk_nvme_protection_info *)(req->contig + sector_size + md_size - 8);

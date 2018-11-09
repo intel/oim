@@ -4,6 +4,8 @@
  *   Copyright (c) Intel Corporation.
  *   All rights reserved.
  *
+ *   Copyright (c) 2019 Mellanox Technologies LTD. All rights reserved.
+ *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
  *   are met:
@@ -36,13 +38,13 @@
 #include "spdk/env.h"
 #include "spdk/fd.h"
 #include "spdk/nvme.h"
-#include "spdk/env.h"
 #include "spdk/queue.h"
 #include "spdk/string.h"
 #include "spdk/nvme_intel.h"
 #include "spdk/histogram_data.h"
 #include "spdk/endian.h"
-#include "spdk/crc16.h"
+#include "spdk/dif.h"
+#include "spdk/util.h"
 
 #if HAVE_LIBAIO
 #include <libaio.h>
@@ -50,6 +52,7 @@
 
 struct ctrlr_entry {
 	struct spdk_nvme_ctrlr			*ctrlr;
+	enum spdk_nvme_transport_type		trtype;
 	struct spdk_nvme_intel_rw_latency_page	*latency_page;
 	struct ctrlr_entry			*next;
 	char					name[1024];
@@ -60,8 +63,11 @@ enum entry_type {
 	ENTRY_TYPE_AIO_FILE,
 };
 
+struct ns_fn_table;
+
 struct ns_entry {
 	enum entry_type		type;
+	const struct ns_fn_table	*fn_table;
 
 	union {
 		struct {
@@ -79,11 +85,13 @@ struct ns_entry {
 	uint32_t		io_size_blocks;
 	uint32_t		num_io_requests;
 	uint64_t		size_in_ios;
+	uint32_t		block_size;
+	uint32_t		md_size;
+	bool			md_interleave;
+	bool			pi_loc;
+	enum spdk_nvme_pi_type	pi_type;
 	uint32_t		io_flags;
-	uint16_t		apptag_mask;
-	uint16_t		apptag;
 	char			name[1024];
-	const struct spdk_nvme_ns_data	*nsdata;
 };
 
 static const double g_latency_cutoffs[] = {
@@ -135,12 +143,11 @@ struct ns_worker_ctx {
 
 struct perf_task {
 	struct ns_worker_ctx	*ns_ctx;
-	void			*buf;
+	struct iovec		iov;
+	struct iovec		md_iov;
 	uint64_t		submit_tsc;
-	uint16_t		appmask;
-	uint16_t		apptag;
-	uint64_t		lba;
 	bool			is_read;
+	struct spdk_dif_ctx	dif_ctx;
 #if HAVE_LIBAIO
 	struct iocb		iocb;
 #endif
@@ -150,6 +157,21 @@ struct worker_thread {
 	struct ns_worker_ctx	*ns_ctx;
 	struct worker_thread	*next;
 	unsigned		lcore;
+};
+
+struct ns_fn_table {
+	void	(*setup_payload)(struct perf_task *task, uint8_t pattern);
+
+	int	(*submit_io)(struct perf_task *task, struct ns_worker_ctx *ns_ctx,
+			     struct ns_entry *entry, uint64_t offset_in_ios);
+
+	void	(*check_io)(struct ns_worker_ctx *ns_ctx);
+
+	void	(*verify_io)(struct perf_task *task, struct ns_entry *entry);
+
+	int	(*init_ns_worker_ctx)(struct ns_worker_ctx *ns_ctx);
+
+	void	(*cleanup_ns_worker_ctx)(struct ns_worker_ctx *ns_ctx);
 };
 
 static int g_outstanding_commands;
@@ -184,6 +206,7 @@ static bool g_no_pci;
 static bool g_warn;
 static bool g_header_digest;
 static bool g_data_digest;
+static uint32_t g_keep_alive_timeout_in_ms = 0;
 
 static const char *g_core_mask;
 
@@ -200,12 +223,383 @@ static int g_aio_optind; /* Index of first AIO filename in argv */
 static void
 task_complete(struct perf_task *task);
 
+#if HAVE_LIBAIO
+static void
+aio_setup_payload(struct perf_task *task, uint8_t pattern)
+{
+	task->iov.iov_base = spdk_dma_zmalloc(g_io_size_bytes, g_io_align, NULL);
+	task->iov.iov_len = g_io_size_bytes;
+	if (task->iov.iov_base == NULL) {
+		fprintf(stderr, "spdk_dma_zmalloc() for task->buf failed\n");
+		exit(1);
+	}
+	memset(task->iov.iov_base, pattern, task->iov.iov_len);
+}
+
+static int
+aio_submit(io_context_t aio_ctx, struct iocb *iocb, int fd, enum io_iocb_cmd cmd,
+	   struct iovec *iov, uint64_t offset, void *cb_ctx)
+{
+	iocb->aio_fildes = fd;
+	iocb->aio_reqprio = 0;
+	iocb->aio_lio_opcode = cmd;
+	iocb->u.c.buf = iov->iov_base;
+	iocb->u.c.nbytes = iov->iov_len;
+	iocb->u.c.offset = offset * iov->iov_len;
+	iocb->data = cb_ctx;
+
+	if (io_submit(aio_ctx, 1, &iocb) < 0) {
+		printf("io_submit");
+		return -1;
+	}
+
+	return 0;
+}
+
+static int
+aio_submit_io(struct perf_task *task, struct ns_worker_ctx *ns_ctx,
+	      struct ns_entry *entry, uint64_t offset_in_ios)
+{
+	if (task->is_read) {
+		return aio_submit(ns_ctx->u.aio.ctx, &task->iocb, entry->u.aio.fd, IO_CMD_PREAD,
+				  &task->iov, offset_in_ios, task);
+	} else {
+		return aio_submit(ns_ctx->u.aio.ctx, &task->iocb, entry->u.aio.fd, IO_CMD_PWRITE,
+				  &task->iov, offset_in_ios, task);
+	}
+}
+
+static void
+aio_check_io(struct ns_worker_ctx *ns_ctx)
+{
+	int count, i;
+	struct timespec timeout;
+
+	timeout.tv_sec = 0;
+	timeout.tv_nsec = 0;
+
+	count = io_getevents(ns_ctx->u.aio.ctx, 1, g_queue_depth, ns_ctx->u.aio.events, &timeout);
+	if (count < 0) {
+		fprintf(stderr, "io_getevents error\n");
+		exit(1);
+	}
+
+	for (i = 0; i < count; i++) {
+		task_complete(ns_ctx->u.aio.events[i].data);
+	}
+}
+
+static void
+aio_verify_io(struct perf_task *task, struct ns_entry *entry)
+{
+}
+
+static int
+aio_init_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
+{
+	ns_ctx->u.aio.events = calloc(g_queue_depth, sizeof(struct io_event));
+	if (!ns_ctx->u.aio.events) {
+		return -1;
+	}
+	ns_ctx->u.aio.ctx = 0;
+	if (io_setup(g_queue_depth, &ns_ctx->u.aio.ctx) < 0) {
+		free(ns_ctx->u.aio.events);
+		perror("io_setup");
+		return -1;
+	}
+	return 0;
+}
+
+static void
+aio_cleanup_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
+{
+	io_destroy(ns_ctx->u.aio.ctx);
+	free(ns_ctx->u.aio.events);
+}
+
+static const struct ns_fn_table aio_fn_table = {
+	.setup_payload		= aio_setup_payload,
+	.submit_io		= aio_submit_io,
+	.check_io		= aio_check_io,
+	.verify_io		= aio_verify_io,
+	.init_ns_worker_ctx	= aio_init_ns_worker_ctx,
+	.cleanup_ns_worker_ctx	= aio_cleanup_ns_worker_ctx,
+};
+
+static int
+register_aio_file(const char *path)
+{
+	struct ns_entry *entry;
+
+	int flags, fd;
+	uint64_t size;
+	uint32_t blklen;
+
+	if (g_rw_percentage == 100) {
+		flags = O_RDONLY;
+	} else if (g_rw_percentage == 0) {
+		flags = O_WRONLY;
+	} else {
+		flags = O_RDWR;
+	}
+
+	flags |= O_DIRECT;
+
+	fd = open(path, flags);
+	if (fd < 0) {
+		fprintf(stderr, "Could not open AIO device %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	size = spdk_fd_get_size(fd);
+	if (size == 0) {
+		fprintf(stderr, "Could not determine size of AIO device %s\n", path);
+		close(fd);
+		return -1;
+	}
+
+	blklen = spdk_fd_get_blocklen(fd);
+	if (blklen == 0) {
+		fprintf(stderr, "Could not determine block size of AIO device %s\n", path);
+		close(fd);
+		return -1;
+	}
+
+	/*
+	 * TODO: This should really calculate the LCM of the current g_io_align and blklen.
+	 * For now, it's fairly safe to just assume all block sizes are powers of 2.
+	 */
+	if (g_io_align < blklen) {
+		g_io_align = blklen;
+	}
+
+	entry = malloc(sizeof(struct ns_entry));
+	if (entry == NULL) {
+		close(fd);
+		perror("aio ns_entry malloc");
+		return -1;
+	}
+
+	entry->type = ENTRY_TYPE_AIO_FILE;
+	entry->fn_table = &aio_fn_table;
+	entry->u.aio.fd = fd;
+	entry->size_in_ios = size / g_io_size_bytes;
+	entry->io_size_blocks = g_io_size_bytes / blklen;
+
+	snprintf(entry->name, sizeof(entry->name), "%s", path);
+
+	g_num_namespaces++;
+	entry->next = g_namespaces;
+	g_namespaces = entry;
+
+	return 0;
+}
+
+static int
+register_aio_files(int argc, char **argv)
+{
+	int i;
+
+	/* Treat everything after the options as files for AIO */
+	for (i = g_aio_optind; i < argc; i++) {
+		if (register_aio_file(argv[i]) != 0) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+#endif /* HAVE_LIBAIO */
+
+static void io_complete(void *ctx, const struct spdk_nvme_cpl *cpl);
+
+static void
+nvme_setup_payload(struct perf_task *task, uint8_t pattern)
+{
+	uint32_t max_io_size_bytes, max_io_md_size;
+
+	/* maximum extended lba format size from all active namespace,
+	 * it's same with g_io_size_bytes for namespace without metadata.
+	 */
+	max_io_size_bytes = g_io_size_bytes + g_max_io_md_size * g_max_io_size_blocks;
+	task->iov.iov_base = spdk_dma_zmalloc(max_io_size_bytes, g_io_align, NULL);
+	task->iov.iov_len = max_io_size_bytes;
+	if (task->iov.iov_base == NULL) {
+		fprintf(stderr, "task->buf spdk_dma_zmalloc failed\n");
+		exit(1);
+	}
+	memset(task->iov.iov_base, pattern, task->iov.iov_len);
+
+	max_io_md_size = g_max_io_md_size * g_max_io_size_blocks;
+	if (max_io_md_size != 0) {
+		task->md_iov.iov_base = spdk_dma_zmalloc(max_io_md_size, g_io_align, NULL);
+		task->md_iov.iov_len = max_io_md_size;
+		if (task->md_iov.iov_base == NULL) {
+			fprintf(stderr, "task->md_buf spdk_dma_zmalloc failed\n");
+			spdk_dma_free(task->iov.iov_base);
+			exit(1);
+		}
+	}
+}
+
+static int
+nvme_submit_io(struct perf_task *task, struct ns_worker_ctx *ns_ctx,
+	       struct ns_entry *entry, uint64_t offset_in_ios)
+{
+	uint64_t lba;
+	int rc;
+
+	enum dif_mode {
+		DIF_MODE_NONE = 0,
+		DIF_MODE_DIF = 1,
+		DIF_MODE_DIX = 2,
+	}  mode = DIF_MODE_NONE;
+
+	lba = offset_in_ios * entry->io_size_blocks;
+
+	if (entry->md_size != 0 && !(entry->io_flags & SPDK_NVME_IO_FLAGS_PRACT)) {
+		if (entry->md_interleave) {
+			mode = DIF_MODE_DIF;
+		} else {
+			mode = DIF_MODE_DIX;
+		}
+	}
+
+	if (mode != DIF_MODE_NONE) {
+		rc = spdk_dif_ctx_init(&task->dif_ctx, entry->block_size, entry->md_size,
+				       entry->md_interleave, entry->pi_loc,
+				       (enum spdk_dif_type)entry->pi_type, entry->io_flags,
+				       lba, 0xFFFF, (uint16_t)entry->io_size_blocks);
+		if (rc != 0) {
+			fprintf(stderr, "Initialization of DIF context failed\n");
+			exit(1);
+		}
+	}
+
+	if (task->is_read) {
+		return spdk_nvme_ns_cmd_read_with_md(entry->u.nvme.ns, ns_ctx->u.nvme.qpair,
+						     task->iov.iov_base, task->md_iov.iov_base,
+						     lba,
+						     entry->io_size_blocks, io_complete,
+						     task, entry->io_flags,
+						     task->dif_ctx.apptag_mask, task->dif_ctx.app_tag);
+	} else {
+		switch (mode) {
+		case DIF_MODE_DIF:
+			rc = spdk_dif_generate(&task->iov, 1, entry->io_size_blocks, &task->dif_ctx);
+			if (rc != 0) {
+				fprintf(stderr, "Generation of DIF failed\n");
+				return rc;
+			}
+			break;
+		case DIF_MODE_DIX:
+			rc = spdk_dix_generate(&task->iov, 1, &task->md_iov, entry->io_size_blocks,
+					       &task->dif_ctx);
+			if (rc != 0) {
+				fprintf(stderr, "Generation of DIX failed\n");
+				return rc;
+			}
+			break;
+		default:
+			break;
+		}
+
+		return spdk_nvme_ns_cmd_write_with_md(entry->u.nvme.ns, ns_ctx->u.nvme.qpair,
+						      task->iov.iov_base, task->md_iov.iov_base,
+						      lba,
+						      entry->io_size_blocks, io_complete,
+						      task, entry->io_flags,
+						      task->dif_ctx.apptag_mask, task->dif_ctx.app_tag);
+	}
+}
+
+static void
+nvme_check_io(struct ns_worker_ctx *ns_ctx)
+{
+	int count;
+
+	count = spdk_nvme_qpair_process_completions(ns_ctx->u.nvme.qpair, g_max_completions);
+	if (count < 0) {
+		fprintf(stderr, "NVMe io qpair process completion error\n");
+		exit(1);
+	}
+}
+
+static void
+nvme_verify_io(struct perf_task *task, struct ns_entry *entry)
+{
+	struct spdk_dif_error err_blk = {};
+	int rc;
+
+	if (!task->is_read || entry->md_size == 0 ||
+	    (entry->io_flags & SPDK_NVME_IO_FLAGS_PRACT)) {
+		return;
+	}
+
+	if (entry->md_interleave) {
+		rc = spdk_dif_verify(&task->iov, 1, entry->io_size_blocks, &task->dif_ctx,
+				     &err_blk);
+		if (rc != 0) {
+			fprintf(stderr, "DIF error detected. type=%d, offset=%" PRIu32 "\n",
+				err_blk.err_type, err_blk.err_offset);
+		}
+	} else {
+		rc = spdk_dix_verify(&task->iov, 1, &task->md_iov, entry->io_size_blocks,
+				     &task->dif_ctx, &err_blk);
+		if (rc != 0) {
+			fprintf(stderr, "DIX error detected. type=%d, offset=%" PRIu32 "\n",
+				err_blk.err_type, err_blk.err_offset);
+		}
+	}
+}
+
+/*
+ * TODO: If a controller has multiple namespaces, they could all use the same queue.
+ *  For now, give each namespace/thread combination its own queue.
+ */
+static int
+nvme_init_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
+{
+	struct spdk_nvme_io_qpair_opts opts;
+	struct ns_entry *entry = ns_ctx->entry;
+
+	spdk_nvme_ctrlr_get_default_io_qpair_opts(entry->u.nvme.ctrlr, &opts, sizeof(opts));
+	if (opts.io_queue_requests < entry->num_io_requests) {
+		opts.io_queue_requests = entry->num_io_requests;
+	}
+
+	ns_ctx->u.nvme.qpair = spdk_nvme_ctrlr_alloc_io_qpair(entry->u.nvme.ctrlr, &opts,
+			       sizeof(opts));
+	if (!ns_ctx->u.nvme.qpair) {
+		printf("ERROR: spdk_nvme_ctrlr_alloc_io_qpair failed\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+static void
+nvme_cleanup_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
+{
+	spdk_nvme_ctrlr_free_io_qpair(ns_ctx->u.nvme.qpair);
+}
+
+static const struct ns_fn_table nvme_fn_table = {
+	.setup_payload		= nvme_setup_payload,
+	.submit_io		= nvme_submit_io,
+	.check_io		= nvme_check_io,
+	.verify_io		= nvme_verify_io,
+	.init_ns_worker_ctx	= nvme_init_ns_worker_ctx,
+	.cleanup_ns_worker_ctx	= nvme_cleanup_ns_worker_ctx,
+};
+
 static void
 register_ns(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_ns *ns)
 {
 	struct ns_entry *entry;
 	const struct spdk_nvme_ctrlr_data *cdata;
-	uint32_t max_xfer_size, entries;
+	uint32_t max_xfer_size, entries, sector_size;
+	uint64_t ns_size;
 	struct spdk_nvme_io_qpair_opts opts;
 
 	cdata = spdk_nvme_ctrlr_get_data(ctrlr);
@@ -218,12 +612,14 @@ register_ns(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_ns *ns)
 		return;
 	}
 
-	if (spdk_nvme_ns_get_size(ns) < g_io_size_bytes ||
-	    spdk_nvme_ns_get_sector_size(ns) > g_io_size_bytes) {
+	ns_size = spdk_nvme_ns_get_size(ns);
+	sector_size = spdk_nvme_ns_get_sector_size(ns);
+
+	if (ns_size < g_io_size_bytes || sector_size > g_io_size_bytes) {
 		printf("WARNING: controller %-20.20s (%-20.20s) ns %u has invalid "
 		       "ns size %" PRIu64 " / block size %u for I/O size %u\n",
 		       cdata->mn, cdata->sn, spdk_nvme_ns_get_id(ns),
-		       spdk_nvme_ns_get_size(ns), spdk_nvme_ns_get_sector_size(ns), g_io_size_bytes);
+		       ns_size, spdk_nvme_ns_get_sector_size(ns), g_io_size_bytes);
 		g_warn = true;
 		return;
 	}
@@ -242,6 +638,10 @@ register_ns(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_ns *ns)
 		       "IO requests may be queued at the NVMe driver.\n");
 		g_warn = true;
 	}
+	/* For requests which have children requests, parent request itself
+	 * will also occupy 1 entry.
+	 */
+	entries += 1;
 
 	entry = calloc(1, sizeof(struct ns_entry));
 	if (entry == NULL) {
@@ -250,27 +650,31 @@ register_ns(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_ns *ns)
 	}
 
 	entry->type = ENTRY_TYPE_NVME_NS;
+	entry->fn_table = &nvme_fn_table;
 	entry->u.nvme.ctrlr = ctrlr;
 	entry->u.nvme.ns = ns;
-	entry->num_io_requests = entries;
+	entry->num_io_requests = g_queue_depth * entries;
 
-	entry->size_in_ios = spdk_nvme_ns_get_size(ns) /
-			     g_io_size_bytes;
-	entry->io_size_blocks = g_io_size_bytes / spdk_nvme_ns_get_sector_size(ns);
+	entry->size_in_ios = ns_size / g_io_size_bytes;
+	entry->io_size_blocks = g_io_size_bytes / sector_size;
+
+	entry->block_size = spdk_nvme_ns_get_extended_sector_size(ns);
+	entry->md_size = spdk_nvme_ns_get_md_size(ns);
+	entry->md_interleave = spdk_nvme_ns_supports_extended_lba(ns);
+	entry->pi_loc = spdk_nvme_ns_get_data(ns)->dps.md_start;
+	entry->pi_type = spdk_nvme_ns_get_pi_type(ns);
 
 	if (spdk_nvme_ns_get_flags(ns) & SPDK_NVME_NS_DPS_PI_SUPPORTED) {
 		entry->io_flags = g_metacfg_pract_flag | g_metacfg_prchk_flags;
 	}
 
-	if (g_max_io_md_size < spdk_nvme_ns_get_md_size(ns)) {
-		g_max_io_md_size = spdk_nvme_ns_get_md_size(ns);
+	if (g_max_io_md_size < entry->md_size) {
+		g_max_io_md_size = entry->md_size;
 	}
 
 	if (g_max_io_size_blocks < entry->io_size_blocks) {
 		g_max_io_size_blocks = entry->io_size_blocks;
 	}
-
-	entry->nsdata = spdk_nvme_ns_get_data(ns);
 
 	snprintf(entry->name, 44, "%-20.20s (%-20.20s)", cdata->mn, cdata->sn);
 
@@ -348,6 +752,7 @@ register_ctrlr(struct spdk_nvme_ctrlr *ctrlr, struct trid_entry *trid_entry)
 	snprintf(entry->name, sizeof(entry->name), "%-20.20s (%-20.20s)", cdata->mn, cdata->sn);
 
 	entry->ctrlr = ctrlr;
+	entry->trtype = trid_entry->trid.trtype;
 	entry->next = g_controllers;
 	g_controllers = entry;
 
@@ -377,251 +782,6 @@ register_ctrlr(struct spdk_nvme_ctrlr *ctrlr, struct trid_entry *trid_entry)
 
 }
 
-#if HAVE_LIBAIO
-static int
-register_aio_file(const char *path)
-{
-	struct ns_entry *entry;
-
-	int flags, fd;
-	uint64_t size;
-	uint32_t blklen;
-
-	if (g_rw_percentage == 100) {
-		flags = O_RDONLY;
-	} else if (g_rw_percentage == 0) {
-		flags = O_WRONLY;
-	} else {
-		flags = O_RDWR;
-	}
-
-	flags |= O_DIRECT;
-
-	fd = open(path, flags);
-	if (fd < 0) {
-		fprintf(stderr, "Could not open AIO device %s: %s\n", path, strerror(errno));
-		return -1;
-	}
-
-	size = spdk_fd_get_size(fd);
-	if (size == 0) {
-		fprintf(stderr, "Could not determine size of AIO device %s\n", path);
-		close(fd);
-		return -1;
-	}
-
-	blklen = spdk_fd_get_blocklen(fd);
-	if (blklen == 0) {
-		fprintf(stderr, "Could not determine block size of AIO device %s\n", path);
-		close(fd);
-		return -1;
-	}
-
-	/*
-	 * TODO: This should really calculate the LCM of the current g_io_align and blklen.
-	 * For now, it's fairly safe to just assume all block sizes are powers of 2.
-	 */
-	if (g_io_align < blklen) {
-		g_io_align = blklen;
-	}
-
-	entry = malloc(sizeof(struct ns_entry));
-	if (entry == NULL) {
-		close(fd);
-		perror("aio ns_entry malloc");
-		return -1;
-	}
-
-	entry->type = ENTRY_TYPE_AIO_FILE;
-	entry->u.aio.fd = fd;
-	entry->size_in_ios = size / g_io_size_bytes;
-	entry->io_size_blocks = g_io_size_bytes / blklen;
-
-	snprintf(entry->name, sizeof(entry->name), "%s", path);
-
-	g_num_namespaces++;
-	entry->next = g_namespaces;
-	g_namespaces = entry;
-
-	return 0;
-}
-
-static int
-aio_submit(io_context_t aio_ctx, struct iocb *iocb, int fd, enum io_iocb_cmd cmd, void *buf,
-	   unsigned long nbytes, uint64_t offset, void *cb_ctx)
-{
-	iocb->aio_fildes = fd;
-	iocb->aio_reqprio = 0;
-	iocb->aio_lio_opcode = cmd;
-	iocb->u.c.buf = buf;
-	iocb->u.c.nbytes = nbytes;
-	iocb->u.c.offset = offset;
-	iocb->data = cb_ctx;
-
-	if (io_submit(aio_ctx, 1, &iocb) < 0) {
-		printf("io_submit");
-		return -1;
-	}
-
-	return 0;
-}
-
-static void
-aio_check_io(struct ns_worker_ctx *ns_ctx)
-{
-	int count, i;
-	struct timespec timeout;
-
-	timeout.tv_sec = 0;
-	timeout.tv_nsec = 0;
-
-	count = io_getevents(ns_ctx->u.aio.ctx, 1, g_queue_depth, ns_ctx->u.aio.events, &timeout);
-	if (count < 0) {
-		fprintf(stderr, "io_getevents error\n");
-		exit(1);
-	}
-
-	for (i = 0; i < count; i++) {
-		task_complete(ns_ctx->u.aio.events[i].data);
-	}
-}
-#endif /* HAVE_LIBAIO */
-
-static void
-task_extended_lba_setup_pi(struct ns_entry *entry, struct perf_task *task, uint64_t lba,
-			   uint32_t lba_count, bool is_write)
-{
-	struct spdk_nvme_protection_info *pi;
-	uint32_t i, md_size, sector_size, pi_offset;
-	uint16_t crc16;
-
-	task->appmask = 0;
-	task->apptag = 0;
-
-	if (!spdk_nvme_ns_supports_extended_lba(entry->u.nvme.ns)) {
-		return;
-	}
-
-	if (spdk_nvme_ns_get_pi_type(entry->u.nvme.ns) ==
-	    SPDK_NVME_FMT_NVM_PROTECTION_DISABLE) {
-		return;
-	}
-
-	if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRACT) {
-		return;
-	}
-
-	/* Type3 don't support REFTAG */
-	if (spdk_nvme_ns_get_pi_type(entry->u.nvme.ns) ==
-	    SPDK_NVME_FMT_NVM_PROTECTION_TYPE3) {
-		return;
-	}
-
-	sector_size = spdk_nvme_ns_get_sector_size(entry->u.nvme.ns);
-	md_size = spdk_nvme_ns_get_md_size(entry->u.nvme.ns);
-
-	/* PI locates at the first 8 bytes of metadata,
-	 * doesn't support now
-	 */
-	if (entry->nsdata->dps.md_start) {
-		return;
-	}
-
-	if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_APPTAG) {
-		/* Let's use number of lbas for application tag */
-		task->appmask = 0xffff;
-		task->apptag = lba_count;
-	}
-
-	for (i = 0; i < lba_count; i++) {
-		pi_offset = ((sector_size + md_size) * (i + 1)) - 8;
-		pi = (struct spdk_nvme_protection_info *)(task->buf + pi_offset);
-		memset(pi, 0, sizeof(*pi));
-
-		if (is_write) {
-			if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_GUARD) {
-				/* CRC buffer should not include PI */
-				crc16 = spdk_crc16_t10dif(task->buf + (sector_size + md_size) * i,
-							  sector_size + md_size - 8);
-				to_be16(&pi->guard, crc16);
-			}
-			if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_APPTAG) {
-				/* Let's use number of lbas for application tag */
-				to_be16(&pi->app_tag, lba_count);
-			}
-			if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_REFTAG) {
-				to_be32(&pi->ref_tag, (uint32_t)lba + i);
-			}
-		}
-	}
-}
-
-static void
-task_extended_lba_pi_verify(struct ns_entry *entry, struct perf_task *task,
-			    uint64_t lba, uint32_t lba_count)
-{
-	struct spdk_nvme_protection_info *pi;
-	uint32_t i, md_size, sector_size, pi_offset, ref_tag;
-	uint16_t crc16, guard, app_tag;
-
-	if (spdk_nvme_ns_get_pi_type(entry->u.nvme.ns) ==
-	    SPDK_NVME_FMT_NVM_PROTECTION_DISABLE) {
-		return;
-	}
-
-	sector_size = spdk_nvme_ns_get_sector_size(entry->u.nvme.ns);
-	md_size = spdk_nvme_ns_get_md_size(entry->u.nvme.ns);
-
-	/* PI locates at the first 8 bytes of metadata,
-	 * doesn't support now
-	 */
-	if (entry->nsdata->dps.md_start) {
-		return;
-	}
-
-	for (i = 0; i < lba_count; i++) {
-		pi_offset = ((sector_size + md_size) * (i + 1)) - 8;
-		pi = (struct spdk_nvme_protection_info *)(task->buf + pi_offset);
-
-		if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_GUARD) {
-			/* CRC buffer should not include last 8 bytes of PI */
-			crc16 = spdk_crc16_t10dif(task->buf + (sector_size + md_size) * i,
-						  sector_size + md_size - 8);
-			to_be16(&guard, crc16);
-			if (pi->guard != guard) {
-				fprintf(stdout, "Get Guard Error LBA 0x%16.16"PRIx64","
-					" Preferred 0x%04x but returned with 0x%04x,"
-					" may read the LBA without write it first\n",
-					lba + i, guard, pi->guard);
-			}
-
-		}
-		if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_APPTAG) {
-			/* Previously we used the number of lbas as
-			 * application tag for writes
-			 */
-			to_be16(&app_tag, lba_count);
-			if (pi->app_tag != app_tag) {
-				fprintf(stdout, "Get Application Tag Error LBA 0x%16.16"PRIx64","
-					" Preferred 0x%04x but returned with 0x%04x,"
-					" may read the LBA without write it first\n",
-					lba + i, app_tag, pi->app_tag);
-			}
-		}
-		if (entry->io_flags & SPDK_NVME_IO_FLAGS_PRCHK_REFTAG) {
-			to_be32(&ref_tag, (uint32_t)lba + i);
-			if (pi->ref_tag != ref_tag) {
-				fprintf(stdout, "Get Reference Tag Error LBA 0x%16.16"PRIx64","
-					" Preferred 0x%08x but returned with 0x%08x,"
-					" may read the LBA without write it first\n",
-					lba + i, ref_tag, pi->ref_tag);
-			}
-		}
-	}
-}
-
-static void io_complete(void *ctx, const struct spdk_nvme_cpl *completion);
-
 static __thread unsigned int seed = 0;
 
 static void
@@ -641,49 +801,16 @@ submit_single_io(struct perf_task *task)
 		}
 	}
 
-	task->is_read = false;
 	task->submit_tsc = spdk_get_ticks();
-	task->lba = offset_in_ios * entry->io_size_blocks;
 
 	if ((g_rw_percentage == 100) ||
 	    (g_rw_percentage != 0 && ((rand_r(&seed) % 100) < g_rw_percentage))) {
-#if HAVE_LIBAIO
-		if (entry->type == ENTRY_TYPE_AIO_FILE) {
-			rc = aio_submit(ns_ctx->u.aio.ctx, &task->iocb, entry->u.aio.fd, IO_CMD_PREAD, task->buf,
-					g_io_size_bytes, offset_in_ios * g_io_size_bytes, task);
-		} else
-#endif
-		{
-			task_extended_lba_setup_pi(entry, task, task->lba,
-						   entry->io_size_blocks, false);
-			task->is_read = true;
-
-			rc = spdk_nvme_ns_cmd_read_with_md(entry->u.nvme.ns, ns_ctx->u.nvme.qpair,
-							   task->buf, NULL,
-							   task->lba,
-							   entry->io_size_blocks, io_complete,
-							   task, entry->io_flags,
-							   task->appmask, task->apptag);
-		}
+		task->is_read = true;
 	} else {
-#if HAVE_LIBAIO
-		if (entry->type == ENTRY_TYPE_AIO_FILE) {
-			rc = aio_submit(ns_ctx->u.aio.ctx, &task->iocb, entry->u.aio.fd, IO_CMD_PWRITE, task->buf,
-					g_io_size_bytes, offset_in_ios * g_io_size_bytes, task);
-		} else
-#endif
-		{
-			task_extended_lba_setup_pi(entry, task, task->lba,
-						   entry->io_size_blocks, true);
-
-			rc = spdk_nvme_ns_cmd_write_with_md(entry->u.nvme.ns, ns_ctx->u.nvme.qpair,
-							    task->buf, NULL,
-							    task->lba,
-							    entry->io_size_blocks, io_complete,
-							    task, entry->io_flags,
-							    task->appmask, task->apptag);
-		}
+		task->is_read = false;
 	}
+
+	rc = entry->fn_table->submit_io(task, ns_ctx, entry, offset_in_ios);
 
 	if (rc != 0) {
 		fprintf(stderr, "starting I/O failed\n");
@@ -716,13 +843,7 @@ task_complete(struct perf_task *task)
 	}
 
 	/* add application level verification for end-to-end data protection */
-	if (entry->type == ENTRY_TYPE_NVME_NS) {
-		if (spdk_nvme_ns_supports_extended_lba(entry->u.nvme.ns) &&
-		    task->is_read && !g_metacfg_pract_flag) {
-			task_extended_lba_pi_verify(entry, task, task->lba,
-						    entry->io_size_blocks);
-		}
-	}
+	entry->fn_table->verify_io(task, entry);
 
 	/*
 	 * is_draining indicates when time has expired for the test run
@@ -731,7 +852,8 @@ task_complete(struct perf_task *task)
 	 * the one just completed.
 	 */
 	if (ns_ctx->is_draining) {
-		spdk_dma_free(task->buf);
+		spdk_dma_free(task->iov.iov_base);
+		spdk_dma_free(task->md_iov.iov_base);
 		free(task);
 	} else {
 		submit_single_io(task);
@@ -739,114 +861,64 @@ task_complete(struct perf_task *task)
 }
 
 static void
-io_complete(void *ctx, const struct spdk_nvme_cpl *completion)
+io_complete(void *ctx, const struct spdk_nvme_cpl *cpl)
 {
-	task_complete((struct perf_task *)ctx);
+	struct perf_task *task = ctx;
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		fprintf(stderr, "%s completed with error (sct=%d, sc=%d)\n",
+			task->is_read ? "Read" : "Write",
+			cpl->status.sct, cpl->status.sc);
+	}
+
+	task_complete(task);
 }
 
 static void
 check_io(struct ns_worker_ctx *ns_ctx)
 {
-#if HAVE_LIBAIO
-	if (ns_ctx->entry->type == ENTRY_TYPE_AIO_FILE) {
-		aio_check_io(ns_ctx);
-	} else
-#endif
-	{
-		spdk_nvme_qpair_process_completions(ns_ctx->u.nvme.qpair, g_max_completions);
+	ns_ctx->entry->fn_table->check_io(ns_ctx);
+}
+
+static struct perf_task *
+allocate_task(struct ns_worker_ctx *ns_ctx, int queue_depth)
+{
+	struct perf_task *task;
+
+	task = calloc(1, sizeof(*task));
+	if (task == NULL) {
+		fprintf(stderr, "Out of memory allocating tasks\n");
+		exit(1);
 	}
+
+	ns_ctx->entry->fn_table->setup_payload(task, queue_depth % 8 + 1);
+
+	task->ns_ctx = ns_ctx;
+
+	return task;
 }
 
 static void
 submit_io(struct ns_worker_ctx *ns_ctx, int queue_depth)
 {
 	struct perf_task *task;
-	uint32_t max_io_size_bytes;
 
 	while (queue_depth-- > 0) {
-		task = calloc(1, sizeof(*task));
-		if (task == NULL) {
-			fprintf(stderr, "Out of memory allocating tasks\n");
-			exit(1);
-		}
-
-		/* maximum extended lba format size from all active
-		 * namespace, it's same with g_io_size_bytes for
-		 * namespace without metadata
-		 */
-		max_io_size_bytes = g_io_size_bytes + g_max_io_md_size * g_max_io_size_blocks;
-		task->buf = spdk_dma_zmalloc(max_io_size_bytes, g_io_align, NULL);
-		if (task->buf == NULL) {
-			fprintf(stderr, "task->buf spdk_dma_zmalloc failed\n");
-			exit(1);
-		}
-		memset(task->buf, queue_depth % 8 + 1, max_io_size_bytes);
-
-		task->ns_ctx = ns_ctx;
-
+		task = allocate_task(ns_ctx, queue_depth);
 		submit_single_io(task);
-	}
-}
-
-static void
-drain_io(struct ns_worker_ctx *ns_ctx)
-{
-	ns_ctx->is_draining = true;
-	while (ns_ctx->current_queue_depth > 0) {
-		check_io(ns_ctx);
 	}
 }
 
 static int
 init_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
 {
-	if (ns_ctx->entry->type == ENTRY_TYPE_AIO_FILE) {
-#ifdef HAVE_LIBAIO
-		ns_ctx->u.aio.events = calloc(g_queue_depth, sizeof(struct io_event));
-		if (!ns_ctx->u.aio.events) {
-			return -1;
-		}
-		ns_ctx->u.aio.ctx = 0;
-		if (io_setup(g_queue_depth, &ns_ctx->u.aio.ctx) < 0) {
-			free(ns_ctx->u.aio.events);
-			perror("io_setup");
-			return -1;
-		}
-#endif
-	} else {
-		/*
-		 * TODO: If a controller has multiple namespaces, they could all use the same queue.
-		 *  For now, give each namespace/thread combination its own queue.
-		 */
-		struct spdk_nvme_io_qpair_opts opts;
-
-		spdk_nvme_ctrlr_get_default_io_qpair_opts(ns_ctx->entry->u.nvme.ctrlr, &opts, sizeof(opts));
-		if (opts.io_queue_requests < ns_ctx->entry->num_io_requests) {
-			opts.io_queue_requests = ns_ctx->entry->num_io_requests;
-		}
-
-		ns_ctx->u.nvme.qpair = spdk_nvme_ctrlr_alloc_io_qpair(ns_ctx->entry->u.nvme.ctrlr, &opts,
-				       sizeof(opts));
-		if (!ns_ctx->u.nvme.qpair) {
-			printf("ERROR: spdk_nvme_ctrlr_alloc_io_qpair failed\n");
-			return -1;
-		}
-	}
-
-	return 0;
+	return ns_ctx->entry->fn_table->init_ns_worker_ctx(ns_ctx);
 }
 
 static void
 cleanup_ns_worker_ctx(struct ns_worker_ctx *ns_ctx)
 {
-	if (ns_ctx->entry->type == ENTRY_TYPE_AIO_FILE) {
-#ifdef HAVE_LIBAIO
-		io_destroy(ns_ctx->u.aio.ctx);
-		free(ns_ctx->u.aio.events);
-#endif
-	} else {
-		spdk_nvme_ctrlr_free_io_qpair(ns_ctx->u.nvme.qpair);
-	}
+	ns_ctx->entry->fn_table->cleanup_ns_worker_ctx(ns_ctx);
 }
 
 static int
@@ -855,6 +927,7 @@ work_fn(void *arg)
 	uint64_t tsc_end;
 	struct worker_thread *worker = (struct worker_thread *)arg;
 	struct ns_worker_ctx *ns_ctx = NULL;
+	uint32_t unfinished_ns_ctx;
 
 	printf("Starting thread on core %u\n", worker->lcore);
 
@@ -894,12 +967,27 @@ work_fn(void *arg)
 		}
 	}
 
-	ns_ctx = worker->ns_ctx;
-	while (ns_ctx != NULL) {
-		drain_io(ns_ctx);
-		cleanup_ns_worker_ctx(ns_ctx);
-		ns_ctx = ns_ctx->next;
-	}
+	/* drain the io of each ns_ctx in round robin to make the fairness */
+	do {
+		unfinished_ns_ctx = 0;
+		ns_ctx = worker->ns_ctx;
+		while (ns_ctx != NULL) {
+			/* first time will enter into this if case */
+			if (!ns_ctx->is_draining) {
+				ns_ctx->is_draining = true;
+			}
+
+			if (ns_ctx->current_queue_depth > 0) {
+				check_io(ns_ctx);
+				if (ns_ctx->current_queue_depth == 0) {
+					cleanup_ns_worker_ctx(ns_ctx);
+				} else {
+					unfinished_ns_ctx++;
+				}
+			}
+			ns_ctx = ns_ctx->next;
+		}
+	} while (unfinished_ns_ctx > 0);
 
 	return 0;
 }
@@ -921,7 +1009,7 @@ static void usage(char *program_name)
 	printf("\t[-l enable latency tracking via ssd (if supported), default: disabled]\n");
 	printf("\t[-t time in seconds]\n");
 	printf("\t[-c core mask for I/O submission/completion.]\n");
-	printf("\t\t(default: 1)]\n");
+	printf("\t\t(default: 1)\n");
 	printf("\t[-D disable submission queue in controller memory buffer, default: enabled]\n");
 	printf("\t[-H enable header digest for TCP transport, default: disabled]\n");
 	printf("\t[-I enable data digest for TCP transport, default: disabled]\n");
@@ -941,6 +1029,7 @@ static void usage(char *program_name)
 	printf("\t  PRCHK      Control of Protection Information Checking (PRCHK=GUARD|REFTAG|APPTAG)\n");
 	printf("\t Example: -e 'PRACT=0,PRCHK=GUARD|REFTAG|APPTAG'\n");
 	printf("\t          -e 'PRACT=1,PRCHK=GUARD'\n");
+	printf("\t[-k keep alive timeout period in millisecond]\n");
 	printf("\t[-s DPDK huge memory size in MB.]\n");
 	printf("\t[-m max completions per poll]\n");
 	printf("\t\t(default: 0 - unlimited)\n");
@@ -1197,7 +1286,6 @@ add_trid(const char *trid_str)
 	}
 
 	trid = &trid_entry->trid;
-	memset(trid, 0, sizeof(*trid));
 	trid->trtype = SPDK_NVME_TRANSPORT_PCIE;
 	snprintf(trid->subnqn, sizeof(trid->subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
 
@@ -1225,7 +1313,7 @@ add_trid(const char *trid_str)
 		memcpy(nsid_str, ns, len);
 		nsid_str[len] = '\0';
 
-		nsid = atoi(nsid_str);
+		nsid = spdk_strtol(nsid_str, 10);
 		if (nsid <= 0 || nsid > 65535) {
 			fprintf(stderr, "NVMe namespace IDs must be less than 65536 and greater than 0\n");
 			free(trid_entry);
@@ -1239,29 +1327,90 @@ add_trid(const char *trid_str)
 	return 0;
 }
 
-static int
-parse_metadata(const char *metacfg_str)
+static size_t
+parse_next_key(const char **str, char *key, char *val, size_t key_buf_size,
+	       size_t val_buf_size)
 {
 	const char *sep;
+	const char *separator = ", \t\n";
+	size_t key_len, val_len;
 
-	if (strstr(metacfg_str, "PRACT=1") != NULL) {
-		g_metacfg_pract_flag = SPDK_NVME_IO_FLAGS_PRACT;
-	}
+	*str += strspn(*str, separator);
 
-	sep = strchr(metacfg_str, ',');
+	sep = strchr(*str, '=');
 	if (!sep) {
+		fprintf(stderr, "Key without '=' separator\n");
 		return 0;
 	}
 
-	if (strstr(sep, "PRCHK=") != NULL) {
-		if (strstr(sep, "GUARD") != NULL) {
-			g_metacfg_prchk_flags = SPDK_NVME_IO_FLAGS_PRCHK_GUARD;
+	key_len = sep - *str;
+	if (key_len >= key_buf_size) {
+		fprintf(stderr, "Key length %zu is greater than maximum allowed %zu\n",
+			key_len, key_buf_size - 1);
+		return 0;
+	}
+
+	memcpy(key, *str, key_len);
+	key[key_len] = '\0';
+
+	*str += key_len + 1;	/* Skip key */
+	val_len = strcspn(*str, separator);
+	if (val_len == 0) {
+		fprintf(stderr, "Key without value\n");
+		return 0;
+	}
+
+	if (val_len >= val_buf_size) {
+		fprintf(stderr, "Value length %zu is greater than maximum allowed %zu\n",
+			val_len, val_buf_size - 1);
+		return 0;
+	}
+
+	memcpy(val, *str, val_len);
+	val[val_len] = '\0';
+
+	*str += val_len;
+
+	return val_len;
+}
+
+static int
+parse_metadata(const char *metacfg_str)
+{
+	const char *str;
+	size_t val_len;
+	char key[32];
+	char val[1024];
+
+	if (metacfg_str == NULL) {
+		return -EINVAL;
+	}
+
+	str = metacfg_str;
+
+	while (*str != '\0') {
+		val_len = parse_next_key(&str, key, val, sizeof(key), sizeof(val));
+		if (val_len == 0) {
+			fprintf(stderr, "Failed to parse metadata\n");
+			return -EINVAL;
 		}
-		if (strstr(sep, "REFTAG") != NULL) {
-			g_metacfg_prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_REFTAG;
-		}
-		if (strstr(sep, "APPTAG") != NULL) {
-			g_metacfg_prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_APPTAG;
+
+		if (strcmp(key, "PRACT") == 0) {
+			if (*val == '1') {
+				g_metacfg_prchk_flags = SPDK_NVME_IO_FLAGS_PRACT;
+			}
+		} else if (strcmp(key, "PRCHK") == 0) {
+			if (strstr(val, "GUARD") != NULL) {
+				g_metacfg_prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_GUARD;
+			}
+			if (strstr(val, "REFTAG") != NULL) {
+				g_metacfg_prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_REFTAG;
+			}
+			if (strstr(val, "APPTAG") != NULL) {
+				g_metacfg_prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_APPTAG;
+			}
+		} else {
+			fprintf(stderr, "Unknown key '%s'\n", key);
 		}
 	}
 
@@ -1274,6 +1423,7 @@ parse_args(int argc, char **argv)
 	const char *workload_type;
 	int op;
 	bool mix_specified = false;
+	long int val;
 
 	/* default value */
 	g_queue_depth = 0;
@@ -1284,8 +1434,49 @@ parse_args(int argc, char **argv)
 	g_core_mask = NULL;
 	g_max_completions = 0;
 
-	while ((op = getopt(argc, argv, "c:e:i:lm:o:q:r:s:t:w:DHILM:")) != -1) {
+	while ((op = getopt(argc, argv, "c:e:i:lm:o:q:r:k:s:t:w:DHILM:")) != -1) {
 		switch (op) {
+		case 'i':
+		case 'm':
+		case 'o':
+		case 'q':
+		case 'k':
+		case 's':
+		case 't':
+		case 'M':
+			val = spdk_strtol(optarg, 10);
+			if (val < 0) {
+				fprintf(stderr, "Converting a string to integer failed\n");
+				return val;
+			}
+			switch (op) {
+			case 'i':
+				g_shm_id = val;
+				break;
+			case 'm':
+				g_max_completions = val;
+				break;
+			case 'o':
+				g_io_size_bytes = val;
+				break;
+			case 'q':
+				g_queue_depth = val;
+				break;
+			case 'k':
+				g_keep_alive_timeout_in_ms = val;
+				break;
+			case 's':
+				g_dpdk_mem = val;
+				break;
+			case 't':
+				g_time_in_sec = val;
+				break;
+			case 'M':
+				g_rw_percentage = val;
+				mix_specified = true;
+				break;
+			}
+			break;
 		case 'c':
 			g_core_mask = optarg;
 			break;
@@ -1295,32 +1486,14 @@ parse_args(int argc, char **argv)
 				return 1;
 			}
 			break;
-		case 'i':
-			g_shm_id = atoi(optarg);
-			break;
 		case 'l':
 			g_latency_ssd_tracking_enable = true;
-			break;
-		case 'm':
-			g_max_completions = atoi(optarg);
-			break;
-		case 'o':
-			g_io_size_bytes = atoi(optarg);
-			break;
-		case 'q':
-			g_queue_depth = atoi(optarg);
 			break;
 		case 'r':
 			if (add_trid(optarg)) {
 				usage(argv[0]);
 				return 1;
 			}
-			break;
-		case 's':
-			g_dpdk_mem = atoi(optarg);
-			break;
-		case 't':
-			g_time_in_sec = atoi(optarg);
 			break;
 		case 'w':
 			workload_type = optarg;
@@ -1336,10 +1509,6 @@ parse_args(int argc, char **argv)
 			break;
 		case 'L':
 			g_latency_sw_tracking_level++;
-			break;
-		case 'M':
-			g_rw_percentage = atoi(optarg);
-			mix_specified = true;
 			break;
 		default:
 			usage(argv[0]);
@@ -1508,6 +1677,8 @@ probe_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 	/* Set the header and data_digest */
 	opts->header_digest = g_header_digest;
 	opts->data_digest = g_data_digest;
+	opts->keep_alive_timeout_ms = spdk_max(opts->keep_alive_timeout_ms,
+					       g_keep_alive_timeout_in_ms);
 
 	return true;
 }
@@ -1583,23 +1754,6 @@ unregister_controllers(void)
 }
 
 static int
-register_aio_files(int argc, char **argv)
-{
-#if HAVE_LIBAIO
-	int i;
-
-	/* Treat everything after the options as files for AIO */
-	for (i = g_aio_optind; i < argc; i++) {
-		if (register_aio_file(argv[i]) != 0) {
-			return 1;
-		}
-	}
-#endif /* HAVE_LIBAIO */
-
-	return 0;
-}
-
-static int
 associate_workers_with_ns(void)
 {
 	struct ns_entry		*entry = g_namespaces;
@@ -1614,11 +1768,10 @@ associate_workers_with_ns(void)
 			break;
 		}
 
-		ns_ctx = malloc(sizeof(struct ns_worker_ctx));
+		ns_ctx = calloc(1, sizeof(struct ns_worker_ctx));
 		if (!ns_ctx) {
 			return -1;
 		}
-		memset(ns_ctx, 0, sizeof(*ns_ctx));
 
 		printf("Associating %s with lcore %d\n", entry->name, worker->lcore);
 		ns_ctx->min_tsc = UINT64_MAX;
@@ -1642,12 +1795,41 @@ associate_workers_with_ns(void)
 	return 0;
 }
 
+static void *
+nvme_poll_ctrlrs(void *arg)
+{
+	struct ctrlr_entry *entry;
+	int oldstate;
+
+	spdk_unaffinitize_thread();
+
+	while (true) {
+		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
+
+		entry = g_controllers;
+		while (entry) {
+			if (entry->trtype != SPDK_NVME_TRANSPORT_PCIE) {
+				spdk_nvme_ctrlr_process_admin_completions(entry->ctrlr);
+			}
+			entry = entry->next;
+		}
+
+		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
+
+		/* This is a pthread cancellation point and cannot be removed. */
+		sleep(1);
+	}
+
+	return NULL;
+}
+
 int main(int argc, char **argv)
 {
 	int rc;
 	struct worker_thread *worker, *master_worker;
 	unsigned master_core;
 	struct spdk_env_opts opts;
+	pthread_t thread_id = 0;
 
 	rc = parse_args(argc, argv);
 	if (rc != 0) {
@@ -1680,10 +1862,12 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
+#if HAVE_LIBAIO
 	if (register_aio_files(argc, argv) != 0) {
 		rc = -1;
 		goto cleanup;
 	}
+#endif
 
 	if (register_controllers() != 0) {
 		rc = -1;
@@ -1696,7 +1880,13 @@ int main(int argc, char **argv)
 
 	if (g_num_namespaces == 0) {
 		fprintf(stderr, "No valid NVMe controllers or AIO devices found\n");
-		return 0;
+		goto cleanup;
+	}
+
+	rc = pthread_create(&thread_id, NULL, &nvme_poll_ctrlrs, NULL);
+	if (rc != 0) {
+		fprintf(stderr, "Unable to spawn a thread to poll admin queues.\n");
+		goto cleanup;
 	}
 
 	if (associate_workers_with_ns() != 0) {
@@ -1728,6 +1918,9 @@ int main(int argc, char **argv)
 	print_stats();
 
 cleanup:
+	if (thread_id && pthread_cancel(thread_id) == 0) {
+		pthread_join(thread_id, NULL);
+	}
 	unregister_trids();
 	unregister_namespaces();
 	unregister_controllers();

@@ -35,6 +35,7 @@
 
 #include "spdk_cunit.h"
 #include "spdk_internal/mock.h"
+#include "spdk_internal/thread.h"
 
 #include "common/lib/test_env.c"
 #include "nvmf/ctrlr.c"
@@ -50,6 +51,7 @@
 #define UT_IO_UNIT_SIZE 1024
 #define UT_MAX_AQ_DEPTH 64
 #define UT_SQ_HEAD_MAX 128
+#define UT_NUM_SHARED_BUFFERS 128
 
 SPDK_LOG_REGISTER_COMPONENT("nvmf", SPDK_LOG_NVMF)
 SPDK_LOG_REGISTER_COMPONENT("nvme", SPDK_LOG_NVME)
@@ -115,15 +117,46 @@ DEFINE_STUB(spdk_nvmf_ctrlr_write_zeroes_supported,
 	    (struct spdk_nvmf_ctrlr *ctrlr),
 	    false);
 
-DEFINE_STUB(spdk_nvmf_request_complete,
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_read_cmd,
 	    int,
-	    (struct spdk_nvmf_request *req),
-	    -1);
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
 
-DEFINE_STUB(spdk_nvmf_request_free,
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_write_cmd,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
+
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_write_zeroes_cmd,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
+
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_flush_cmd,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
+
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_dsm_cmd,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
+
+DEFINE_STUB(spdk_nvmf_bdev_ctrlr_nvme_passthru_io,
+	    int,
+	    (struct spdk_bdev *bdev, struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+	     struct spdk_nvmf_request *req),
+	    0);
+
+DEFINE_STUB(spdk_nvmf_transport_req_complete,
 	    int,
 	    (struct spdk_nvmf_request *req),
-	    -1);
+	    0);
 
 struct spdk_trace_histories *g_trace_histories;
 
@@ -190,11 +223,6 @@ spdk_trace_add_register_fn(struct spdk_trace_register_fn *reg_fn)
 {
 }
 
-void
-spdk_nvmf_request_exec(struct spdk_nvmf_request *req)
-{
-}
-
 static void
 test_nvmf_tcp_create(void)
 {
@@ -203,8 +231,9 @@ test_nvmf_tcp_create(void)
 	struct spdk_nvmf_tcp_transport *ttransport;
 	struct spdk_nvmf_transport_opts opts;
 
-	thread = spdk_allocate_thread(NULL, NULL, NULL, NULL, NULL);
+	thread = spdk_thread_create(NULL);
 	SPDK_CU_ASSERT_FATAL(thread != NULL);
+	spdk_set_thread(thread);
 
 	/* case 1 */
 	memset(&opts, 0, sizeof(opts));
@@ -214,18 +243,19 @@ test_nvmf_tcp_create(void)
 	opts.max_io_size = UT_MAX_IO_SIZE;
 	opts.io_unit_size = UT_IO_UNIT_SIZE;
 	opts.max_aq_depth = UT_MAX_AQ_DEPTH;
+	opts.num_shared_buffers = UT_NUM_SHARED_BUFFERS;
 	/* expect success */
 	transport = spdk_nvmf_tcp_create(&opts);
 	CU_ASSERT_PTR_NOT_NULL(transport);
 	ttransport = SPDK_CONTAINEROF(transport, struct spdk_nvmf_tcp_transport, transport);
 	SPDK_CU_ASSERT_FATAL(ttransport != NULL);
-	CU_ASSERT(ttransport->max_queue_depth == UT_MAX_QUEUE_DEPTH);
-	CU_ASSERT(ttransport->max_io_size == UT_MAX_IO_SIZE);
-	CU_ASSERT(ttransport->in_capsule_data_size == UT_IN_CAPSULE_DATA_SIZE);
-	CU_ASSERT(ttransport->io_unit_size == UT_IO_UNIT_SIZE);
+	transport->opts = opts;
+	CU_ASSERT(transport->opts.max_queue_depth == UT_MAX_QUEUE_DEPTH);
+	CU_ASSERT(transport->opts.max_io_size == UT_MAX_IO_SIZE);
+	CU_ASSERT(transport->opts.in_capsule_data_size == UT_IN_CAPSULE_DATA_SIZE);
+	CU_ASSERT(transport->opts.io_unit_size == UT_IO_UNIT_SIZE);
 	/* destroy transport */
-	spdk_mempool_free(ttransport->data_buf_pool);
-	spdk_io_device_unregister(ttransport, NULL);
+	spdk_mempool_free(ttransport->transport.data_buf_pool);
 	free(ttransport);
 
 	/* case 2 */
@@ -236,17 +266,19 @@ test_nvmf_tcp_create(void)
 	opts.max_io_size = UT_MAX_IO_SIZE;
 	opts.io_unit_size = UT_MAX_IO_SIZE + 1;
 	opts.max_aq_depth = UT_MAX_AQ_DEPTH;
+	opts.num_shared_buffers = UT_NUM_SHARED_BUFFERS;
 	/* expect success */
 	transport = spdk_nvmf_tcp_create(&opts);
+	CU_ASSERT_PTR_NOT_NULL(transport);
 	ttransport = SPDK_CONTAINEROF(transport, struct spdk_nvmf_tcp_transport, transport);
 	SPDK_CU_ASSERT_FATAL(ttransport != NULL);
-	CU_ASSERT(ttransport->max_queue_depth == UT_MAX_QUEUE_DEPTH);
-	CU_ASSERT(ttransport->max_io_size == UT_MAX_IO_SIZE);
-	CU_ASSERT(ttransport->in_capsule_data_size == UT_IN_CAPSULE_DATA_SIZE);
-	CU_ASSERT(ttransport->io_unit_size == UT_MAX_IO_SIZE);
+	transport->opts = opts;
+	CU_ASSERT(transport->opts.max_queue_depth == UT_MAX_QUEUE_DEPTH);
+	CU_ASSERT(transport->opts.max_io_size == UT_MAX_IO_SIZE);
+	CU_ASSERT(transport->opts.in_capsule_data_size == UT_IN_CAPSULE_DATA_SIZE);
+	CU_ASSERT(transport->opts.io_unit_size == UT_MAX_IO_SIZE);
 	/* destroy transport */
-	spdk_mempool_free(ttransport->data_buf_pool);
-	spdk_io_device_unregister(ttransport, NULL);
+	spdk_mempool_free(ttransport->transport.data_buf_pool);
 	free(ttransport);
 
 	/* case 3 */
@@ -261,7 +293,7 @@ test_nvmf_tcp_create(void)
 	transport = spdk_nvmf_tcp_create(&opts);
 	CU_ASSERT_PTR_NULL(transport);
 
-	spdk_free_thread();
+	spdk_thread_exit(thread);
 }
 
 static void
@@ -271,8 +303,9 @@ test_nvmf_tcp_destroy(void)
 	struct spdk_nvmf_transport *transport;
 	struct spdk_nvmf_transport_opts opts;
 
-	thread = spdk_allocate_thread(NULL, NULL, NULL, NULL, NULL);
+	thread = spdk_thread_create(NULL);
 	SPDK_CU_ASSERT_FATAL(thread != NULL);
+	spdk_set_thread(thread);
 
 	/* case 1 */
 	memset(&opts, 0, sizeof(opts));
@@ -282,30 +315,52 @@ test_nvmf_tcp_destroy(void)
 	opts.max_io_size = UT_MAX_IO_SIZE;
 	opts.io_unit_size = UT_IO_UNIT_SIZE;
 	opts.max_aq_depth = UT_MAX_AQ_DEPTH;
+	opts.num_shared_buffers = UT_NUM_SHARED_BUFFERS;
 	transport = spdk_nvmf_tcp_create(&opts);
 	CU_ASSERT_PTR_NOT_NULL(transport);
+	transport->opts = opts;
 	/* destroy transport */
 	CU_ASSERT(spdk_nvmf_tcp_destroy(transport) == 0);
 
-	spdk_free_thread();
+	spdk_thread_exit(thread);
 }
 
 static void
 test_nvmf_tcp_poll_group_create(void)
 {
-	struct spdk_nvmf_tcp_transport ttransport;
+	struct spdk_nvmf_transport *transport;
 	struct spdk_nvmf_transport_poll_group *group;
+	struct spdk_thread *thread;
+	struct spdk_nvmf_transport_opts opts;
 
-	memset(&ttransport, 0, sizeof(ttransport));
-	group = spdk_nvmf_tcp_poll_group_create(&ttransport.transport);
-	CU_ASSERT_PTR_NOT_NULL(group);
+	thread = spdk_thread_create(NULL);
+	SPDK_CU_ASSERT_FATAL(thread != NULL);
+	spdk_set_thread(thread);
+
+	memset(&opts, 0, sizeof(opts));
+	opts.max_queue_depth = UT_MAX_QUEUE_DEPTH;
+	opts.max_qpairs_per_ctrlr = UT_MAX_QPAIRS_PER_CTRLR;
+	opts.in_capsule_data_size = UT_IN_CAPSULE_DATA_SIZE;
+	opts.max_io_size = UT_MAX_IO_SIZE;
+	opts.io_unit_size = UT_IO_UNIT_SIZE;
+	opts.max_aq_depth = UT_MAX_AQ_DEPTH;
+	opts.num_shared_buffers = UT_NUM_SHARED_BUFFERS;
+	transport = spdk_nvmf_tcp_create(&opts);
+	CU_ASSERT_PTR_NOT_NULL(transport);
+	transport->opts = opts;
+	group = spdk_nvmf_tcp_poll_group_create(transport);
+	SPDK_CU_ASSERT_FATAL(group);
+	group->transport = transport;
 	spdk_nvmf_tcp_poll_group_destroy(group);
+	spdk_nvmf_tcp_destroy(transport);
+
+	spdk_thread_exit(thread);
 }
 
 static void
 test_nvmf_tcp_qpair_is_idle(void)
 {
-	struct nvme_tcp_qpair tqpair;
+	struct spdk_nvmf_tcp_qpair tqpair;
 
 	memset(&tqpair, 0, sizeof(tqpair));
 

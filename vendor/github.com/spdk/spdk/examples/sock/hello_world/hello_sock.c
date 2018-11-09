@@ -91,21 +91,29 @@ hello_sock_usage(void)
 /*
  * This function is called to parse the parameters that are specific to this application
  */
-static void hello_sock_parse_arg(int ch, char *arg)
+static int hello_sock_parse_arg(int ch, char *arg)
 {
 	switch (ch) {
 	case 'H':
 		g_host = arg;
 		break;
 	case 'P':
-		g_port = atoi(arg);
+		g_port = spdk_strtol(arg, 10);
+		if (g_port < 0) {
+			fprintf(stderr, "Invalid port ID\n");
+			return g_port;
+		}
 		break;
 	case 'S':
 		g_is_server = 1;
 		break;
 	case 'V':
 		g_verbose = true;
+		break;
+	default:
+		return -EINVAL;
 	}
+	return 0;
 }
 
 static void
@@ -135,8 +143,10 @@ hello_sock_quit(struct hello_context_t *ctx, int rc)
 {
 	ctx->rc = rc;
 	spdk_poller_unregister(&ctx->poller_out);
-	ctx->time_out = spdk_poller_register(hello_sock_close_timeout_poll, ctx,
-					     CLOSE_TIMEOUT_US);
+	if (!ctx->time_out) {
+		ctx->time_out = spdk_poller_register(hello_sock_close_timeout_poll, ctx,
+						     CLOSE_TIMEOUT_US);
+	}
 	return 0;
 }
 

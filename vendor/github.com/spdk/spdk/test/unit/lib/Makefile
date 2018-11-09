@@ -40,6 +40,7 @@ DIRS-$(CONFIG_REDUCE) += reduce
 ifeq ($(OS),Linux)
 DIRS-$(CONFIG_VHOST) += vhost
 endif
+DIRS-$(CONFIG_FTL) += ftl
 
 .PHONY: all clean $(DIRS-y)
 

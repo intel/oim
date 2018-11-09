@@ -55,11 +55,10 @@ timing_exit start_nvmf_tgt
 
 modprobe -v nvme-rdma
 
-touch $testdir/bdevperf.conf
-echo "[Nvme]" > $testdir/bdevperf.conf
-
-lvol_stores=()
-lvol_bdevs=()
+lvol_stores=
+lvol_bdevs=
+# Create the first LVS from a Raid-0 bdev, which is created from two malloc bdevs
+# Create remaining LVSs from a malloc bdev, respectively
 for i in `seq 1 $SUBSYS_NR`; do
 	if [ $i -eq 1 ]; then
 		# construct RAID bdev and put its name in $bdev
@@ -72,7 +71,7 @@ for i in `seq 1 $SUBSYS_NR`; do
 		bdev="$($rpc_py construct_malloc_bdev $MALLOC_BDEV_SIZE $MALLOC_BLOCK_SIZE)"
 	fi
 	ls_guid="$($rpc_py construct_lvol_store $bdev lvs_$i -c 524288)"
-	lvol_stores+=("$ls_guid")
+	lvol_stores+="lvs_$i "
 
 	# 1 NVMe-OF subsystem per malloc bdev / lvol store / 10 lvol bdevs
 	ns_bdevs=""
@@ -80,7 +79,7 @@ for i in `seq 1 $SUBSYS_NR`; do
 	# Create lvol bdevs on each lvol store
 	for j in `seq 1 $LVOL_BDEVS_NR`; do
 		lb_name="$($rpc_py construct_lvol_bdev -u $ls_guid lbd_$j $LVOL_BDEV_SIZE)"
-		lvol_bdevs+=("$lb_name")
+		lvol_bdevs+="$lb_name "
 		ns_bdevs+="$lb_name "
 	done
 
@@ -89,17 +88,32 @@ for i in `seq 1 $SUBSYS_NR`; do
 		$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode$i $bdev
 	done
 	$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode$i -t rdma -a $NVMF_FIRST_TARGET_IP -s $NVMF_PORT
-
-	echo "  TransportID \"trtype:RDMA adrfam:IPv4 subnqn:nqn.2016-06.io.spdk:cnode$i traddr:$NVMF_FIRST_TARGET_IP trsvcid:$NVMF_PORT\" Nvme$i" >> $testdir/bdevperf.conf
 done
 
-$rootdir/test/bdev/bdevperf/bdevperf -c $testdir/bdevperf.conf -q 64 -o 65536 -w verify -t 10
-rm -rf $testdir/bdevperf.conf
+for i in `seq 1 $SUBSYS_NR`; do
+	k=$[$i-1]
+	nvme connect -t rdma -n "nqn.2016-06.io.spdk:cnode${i}" -a "$NVMF_FIRST_TARGET_IP" -s "$NVMF_PORT"
+
+	for j in `seq 1 $LVOL_BDEVS_NR`; do
+		waitforblk "nvme${k}n${j}"
+	done
+done
+
+$testdir/../fio/nvmf_fio.py 262144 64 randwrite 10 verify
 
 sync
+disconnect_nvmf
 
 for i in `seq 1 $SUBSYS_NR`; do
     $rpc_py delete_nvmf_subsystem nqn.2016-06.io.spdk:cnode$i
+done
+
+for lb_name in $lvol_bdevs; do
+	 $rpc_py destroy_lvol_bdev "$lb_name"
+done
+
+for lvs in $lvol_stores; do
+         $rpc_py destroy_lvol_store -l $lvs
 done
 
 rm -f ./local-job*

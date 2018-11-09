@@ -164,7 +164,7 @@ spdk_vpp_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *
 		      char *caddr, int clen, uint16_t *cport)
 {
 	struct spdk_vpp_sock *sock = __vpp_sock(_sock);
-	struct sockaddr sa;
+	struct sockaddr_storage sa;
 	socklen_t salen;
 	int rc;
 
@@ -173,14 +173,14 @@ spdk_vpp_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *
 
 	memset(&sa, 0, sizeof(sa));
 	salen = sizeof(sa);
-	rc = getsockname_vpp(sock->fd, &sa, &salen);
+	rc = getsockname_vpp(sock->fd, (struct sockaddr *)&sa, &salen);
 	if (rc != 0) {
 		errno = -rc;
 		SPDK_ERRLOG("getsockname_vpp() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
-	rc = get_addr_str(&sa, saddr, slen);
+	rc = get_addr_str((struct sockaddr *)&sa, saddr, slen);
 	if (rc != 0) {
 		/* Errno already set by get_addr_str() */
 		SPDK_ERRLOG("get_addr_str() failed (errno=%d)\n", errno);
@@ -197,14 +197,14 @@ spdk_vpp_sock_getaddr(struct spdk_sock *_sock, char *saddr, int slen, uint16_t *
 
 	memset(&sa, 0, sizeof(sa));
 	salen = sizeof(sa);
-	rc = getpeername_vpp(sock->fd, &sa, &salen);
+	rc = getpeername_vpp(sock->fd, (struct sockaddr *)&sa, &salen);
 	if (rc != 0) {
 		errno = -rc;
 		SPDK_ERRLOG("getpeername_vpp() failed (errno=%d)\n", errno);
 		return -1;
 	}
 
-	rc = get_addr_str(&sa, caddr, clen);
+	rc = get_addr_str((struct sockaddr *)&sa, caddr, clen);
 	if (rc != 0) {
 		/* Errno already set by get_addr_str() */
 		SPDK_ERRLOG("get_addr_str() failed (errno=%d)\n", errno);
@@ -624,7 +624,7 @@ static struct spdk_net_impl g_vpp_net_impl = {
 
 SPDK_NET_IMPL_REGISTER(vpp, &g_vpp_net_impl);
 
-static int
+static void
 spdk_vpp_net_framework_init(void)
 {
 	int rc;
@@ -633,7 +633,8 @@ spdk_vpp_net_framework_init(void)
 	app_name = spdk_sprintf_alloc("SPDK_%d", getpid());
 	if (app_name == NULL) {
 		SPDK_ERRLOG("Cannot alloc memory for SPDK app name\n");
-		return -ENOMEM;
+		spdk_net_framework_init_next(-ENOMEM);
+		return;
 	}
 
 	rc = vppcom_app_create(app_name);
@@ -643,7 +644,7 @@ spdk_vpp_net_framework_init(void)
 
 	free(app_name);
 
-	return 0;
+	spdk_net_framework_init_next(0);
 }
 
 static void
@@ -652,6 +653,8 @@ spdk_vpp_net_framework_fini(void)
 	if (g_vpp_initialized) {
 		vppcom_app_destroy();
 	}
+
+	spdk_net_framework_fini_next();
 }
 
 static struct spdk_net_framework g_vpp_net_framework = {

@@ -165,6 +165,10 @@ struct rpc_construct_nvme {
 	char *trsvcid;
 	char *subnqn;
 	char *hostnqn;
+	char *hostaddr;
+	char *hostsvcid;
+	bool prchk_reftag;
+	bool prchk_guard;
 };
 
 static void
@@ -177,6 +181,8 @@ free_rpc_construct_nvme(struct rpc_construct_nvme *req)
 	free(req->trsvcid);
 	free(req->subnqn);
 	free(req->hostnqn);
+	free(req->hostaddr);
+	free(req->hostsvcid);
 }
 
 static const struct spdk_json_object_decoder rpc_construct_nvme_decoders[] = {
@@ -187,7 +193,12 @@ static const struct spdk_json_object_decoder rpc_construct_nvme_decoders[] = {
 	{"adrfam", offsetof(struct rpc_construct_nvme, adrfam), spdk_json_decode_string, true},
 	{"trsvcid", offsetof(struct rpc_construct_nvme, trsvcid), spdk_json_decode_string, true},
 	{"subnqn", offsetof(struct rpc_construct_nvme, subnqn), spdk_json_decode_string, true},
-	{"hostnqn", offsetof(struct rpc_construct_nvme, hostnqn), spdk_json_decode_string, true}
+	{"hostnqn", offsetof(struct rpc_construct_nvme, hostnqn), spdk_json_decode_string, true},
+	{"hostaddr", offsetof(struct rpc_construct_nvme, hostaddr), spdk_json_decode_string, true},
+	{"hostsvcid", offsetof(struct rpc_construct_nvme, hostsvcid), spdk_json_decode_string, true},
+
+	{"prchk_reftag", offsetof(struct rpc_construct_nvme, prchk_reftag), spdk_json_decode_bool, true},
+	{"prchk_guard", offsetof(struct rpc_construct_nvme, prchk_guard), spdk_json_decode_bool, true}
 };
 
 #define NVME_MAX_BDEVS_PER_RPC 128
@@ -199,9 +210,11 @@ spdk_rpc_construct_nvme_bdev(struct spdk_jsonrpc_request *request,
 	struct rpc_construct_nvme req = {};
 	struct spdk_json_write_ctx *w;
 	struct spdk_nvme_transport_id trid = {};
+	struct spdk_nvme_host_id hostid = {};
 	const char *names[NVME_MAX_BDEVS_PER_RPC];
 	size_t count;
 	size_t i;
+	uint32_t prchk_flags = 0;
 	int rc;
 
 	if (spdk_json_decode_object(params, rpc_construct_nvme_decoders,
@@ -240,8 +253,25 @@ spdk_rpc_construct_nvme_bdev(struct spdk_jsonrpc_request *request,
 		snprintf(trid.subnqn, sizeof(trid.subnqn), "%s", req.subnqn);
 	}
 
+	if (req.hostaddr) {
+		snprintf(hostid.hostaddr, sizeof(hostid.hostaddr), "%s", req.hostaddr);
+	}
+
+	if (req.hostsvcid) {
+		snprintf(hostid.hostsvcid, sizeof(hostid.hostsvcid), "%s", req.hostsvcid);
+	}
+
+	if (req.prchk_reftag) {
+		prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_REFTAG;
+	}
+
+	if (req.prchk_guard) {
+		prchk_flags |= SPDK_NVME_IO_FLAGS_PRCHK_GUARD;
+	}
+
 	count = NVME_MAX_BDEVS_PER_RPC;
-	if (spdk_bdev_nvme_create(&trid, req.name, names, &count, req.hostnqn)) {
+	if (spdk_bdev_nvme_create(&trid, &hostid, req.name, names, &count, req.hostnqn,
+				  prchk_flags)) {
 		goto invalid;
 	}
 

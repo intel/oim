@@ -652,9 +652,6 @@ spdk_nvmf_poll_group_add(struct spdk_nvmf_poll_group *group,
 
 	TAILQ_INIT(&qpair->outstanding);
 	qpair->group = group;
-	spdk_nvmf_qpair_set_state(qpair, SPDK_NVMF_QPAIR_ACTIVATING);
-
-	TAILQ_INSERT_TAIL(&group->qpairs, qpair, link);
 
 	TAILQ_FOREACH(tgroup, &group->tgroups, link) {
 		if (tgroup->transport == qpair->transport) {
@@ -663,10 +660,10 @@ spdk_nvmf_poll_group_add(struct spdk_nvmf_poll_group *group,
 		}
 	}
 
+	/* We add the qpair to the group only it is succesfully added into the tgroup */
 	if (rc == 0) {
+		TAILQ_INSERT_TAIL(&group->qpairs, qpair, link);
 		spdk_nvmf_qpair_set_state(qpair, SPDK_NVMF_QPAIR_ACTIVE);
-	} else {
-		spdk_nvmf_qpair_set_state(qpair, SPDK_NVMF_QPAIR_ERROR);
 	}
 
 	return rc;
@@ -708,6 +705,8 @@ _spdk_nvmf_qpair_destroy(void *ctx, int status)
 	struct spdk_nvmf_qpair *qpair = qpair_ctx->qpair;
 	struct spdk_nvmf_ctrlr *ctrlr = qpair->ctrlr;
 	struct spdk_nvmf_transport_poll_group *tgroup;
+	struct spdk_nvmf_request *req, *tmp;
+	struct spdk_nvmf_subsystem_poll_group *sgroup;
 	int rc;
 
 	assert(qpair->state == SPDK_NVMF_QPAIR_DEACTIVATING);
@@ -726,8 +725,19 @@ _spdk_nvmf_qpair_destroy(void *ctx, int status)
 		}
 	}
 
+	if (ctrlr) {
+		sgroup = &qpair->group->sgroups[ctrlr->subsys->id];
+		TAILQ_FOREACH_SAFE(req, &sgroup->queued, link, tmp) {
+			if (req->qpair == qpair) {
+				TAILQ_REMOVE(&sgroup->queued, req, link);
+				if (spdk_nvmf_transport_req_free(req)) {
+					SPDK_ERRLOG("Transport request free error!\n");
+				}
+			}
+		}
+	}
+
 	TAILQ_REMOVE(&qpair->group->qpairs, qpair, link);
-	qpair->group = NULL;
 
 	spdk_nvmf_transport_qpair_fini(qpair);
 
@@ -1022,7 +1032,7 @@ _nvmf_subsystem_disconnect_next_qpair(void *ctx)
 	subsystem = qpair_ctx->subsystem;
 
 	TAILQ_FOREACH(qpair, &group->qpairs, link) {
-		if (qpair->ctrlr->subsys == subsystem) {
+		if ((qpair->ctrlr != NULL) && (qpair->ctrlr->subsys == subsystem)) {
 			break;
 		}
 	}
@@ -1063,7 +1073,7 @@ spdk_nvmf_poll_group_remove_subsystem(struct spdk_nvmf_poll_group *group,
 	sgroup->state = SPDK_NVMF_SUBSYSTEM_INACTIVE;
 
 	TAILQ_FOREACH(qpair, &group->qpairs, link) {
-		if (qpair->ctrlr->subsys == subsystem) {
+		if ((qpair->ctrlr != NULL) && (qpair->ctrlr->subsys == subsystem)) {
 			break;
 		}
 	}

@@ -78,8 +78,22 @@ ifneq (, $(wildcard $(DPDK_ABS_DIR)/lib/librte_bus_pci.*))
 DPDK_LIB_LIST += rte_bus_pci
 endif
 
+# There are some complex dependencies when using crypto, reduce or both so
+# here we add the feature specific ones and set a flag to add the common
+# ones after that.
+DPDK_FRAMEWORK=n
 ifeq ($(CONFIG_CRYPTO),y)
-DPDK_LIB_LIST += rte_cryptodev rte_reorder rte_bus_vdev rte_pmd_aesni_mb rte_pmd_qat rte_mbuf
+DPDK_FRAMEWORK=y
+DPDK_LIB_LIST += rte_pmd_aesni_mb rte_pmd_qat rte_reorder
+endif
+
+ifeq ($(CONFIG_REDUCE),y)
+DPDK_FRAMEWORK=y
+DPDK_LIB_LIST += rte_pmd_isal_comp
+endif
+
+ifeq ($(DPDK_FRAMEWORK),y)
+DPDK_LIB_LIST += rte_cryptodev rte_compressdev rte_bus_vdev
 endif
 
 ifneq (, $(wildcard $(DPDK_ABS_DIR)/lib/librte_kvargs.*))
@@ -95,8 +109,12 @@ ENV_DPDK_FILE = $(call spdk_lib_list_to_static_libs,env_dpdk)
 ENV_LIBS = $(ENV_DPDK_FILE) $(DPDK_LIB)
 ENV_LINKER_ARGS = $(ENV_DPDK_FILE) -Wl,--whole-archive $(DPDK_LIB) -Wl,--no-whole-archive
 
-ifeq ($(CONFIG_CRYPTO),y)
-ENV_LINKER_ARGS += -lIPSec_MB
+ifeq ($(CONFIG_IPSEC_MB),y)
+ENV_LINKER_ARGS += -lIPSec_MB -L$(IPSEC_MB_DIR)
+endif
+
+ifeq ($(CONFIG_REDUCE),y)
+ENV_LINKER_ARGS += -lisal -L$(ISAL_DIR)/.libs
 endif
 
 ifneq (,$(wildcard $(DPDK_INC_DIR)/rte_config.h))

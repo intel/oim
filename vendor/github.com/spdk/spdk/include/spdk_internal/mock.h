@@ -62,6 +62,10 @@
 	ut_ ## fn ## _mocked = false; \
 	ut_ ## fn = NULL;
 
+/* for proving to *certain* static analysis tools that we didn't reset the mock function. */
+#define MOCK_CLEARED_ASSERT(fn) \
+	SPDK_CU_ASSERT_FATAL(ut_ ## fn ## _mocked == false)
+
 /* for declaring function protoypes for wrappers */
 #define DECLARE_WRAPPER(fn, ret, args) \
 	extern bool ut_ ## fn ## _mocked; \
@@ -111,7 +115,5 @@ DECLARE_WRAPPER(pthread_mutex_init, int,
 
 DECLARE_WRAPPER(pthread_mutexattr_init, int,
 		(pthread_mutexattr_t *attr));
-
-DECLARE_WRAPPER(pthread_self, pthread_t, (void));
 
 #endif /* SPDK_INTERNAL_MOCK_H */

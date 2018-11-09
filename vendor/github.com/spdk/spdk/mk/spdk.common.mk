@@ -81,6 +81,9 @@ endif
 ifeq ($(TARGET_MACHINE),x86_64)
 COMMON_CFLAGS += -march=native
 endif
+ifeq ($(TARGET_MACHINE),aarch64)
+COMMON_CFLAGS += -march=armv8-a+crc
+endif
 
 ifeq ($(CONFIG_WERROR), y)
 COMMON_CFLAGS += -Werror
@@ -89,6 +92,16 @@ endif
 ifeq ($(CONFIG_LTO),y)
 COMMON_CFLAGS += -flto
 LDFLAGS += -flto
+endif
+
+ifeq ($(CONFIG_PGO_CAPTURE),y)
+COMMON_CFLAGS += -fprofile-generate=$(SPDK_ROOT_DIR)/build/pgo
+LDFLAGS += -fprofile-generate=$(SPDK_ROOT_DIR)/build/pgo
+endif
+
+ifeq ($(CONFIG_PGO_USE),y)
+COMMON_CFLAGS += -fprofile-use=$(SPDK_ROOT_DIR)/build/pgo
+LDFLAGS += -fprofile-use=$(SPDK_ROOT_DIR)/build/pgo
 endif
 
 COMMON_CFLAGS += -Wformat -Wformat-security
@@ -112,9 +125,16 @@ LDFLAGS += -Wl,-z,relro,-z,now
 # This is the default in most environments, but it doesn't hurt to set it explicitly.
 LDFLAGS += -Wl,-z,noexecstack
 
+# Specify the linker to use
+LDFLAGS += -fuse-ld=$(LD_TYPE)
+
 ifeq ($(OS),FreeBSD)
 SYS_LIBS += -L/usr/local/lib
 COMMON_CFLAGS += -I/usr/local/include
+# Default to lld on FreeBSD
+ifeq ($(origin LD),default)
+LD = ld.lld
+endif
 endif
 
 # Attach only if PMDK lib specified with configure
@@ -130,6 +150,14 @@ endif
 
 ifeq ($(CONFIG_RDMA),y)
 SYS_LIBS += -libverbs -lrdmacm
+endif
+
+IPSEC_MB_DIR=$(SPDK_ROOT_DIR)/intel-ipsec-mb
+
+ISAL_DIR=$(SPDK_ROOT_DIR)/isa-l
+ifeq ($(CONFIG_ISAL), y)
+SYS_LIBS += -L$(ISAL_DIR)/.libs -lisal
+COMMON_CFLAGS += -I$(ISAL_DIR)/..
 endif
 
 #Attach only if FreeBSD and RDMA is specified with configure

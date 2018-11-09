@@ -34,87 +34,124 @@
 #include "spdk/stdinc.h"
 
 #include "spdk/env.h"
+#include "spdk/util.h"
 
-static int
-vtophys_negative_test(void)
+#include "CUnit/Basic.h"
+
+static void
+vtophys_malloc_test(void)
 {
 	void *p = NULL;
 	int i;
 	unsigned int size = 1;
-	int rc = 0;
+	uint64_t paddr;
 
+	/* Verify vtophys doesn't work on regular malloc memory */
 	for (i = 0; i < 31; i++) {
 		p = malloc(size);
 		if (p == NULL) {
 			continue;
 		}
 
-		if (spdk_vtophys(p) != SPDK_VTOPHYS_ERROR) {
-			rc = -1;
-			printf("Err: VA=%p is mapped to a huge_page,\n", p);
-			free(p);
-			break;
-		}
+		paddr = spdk_vtophys(p, NULL);
+		CU_ASSERT(paddr == SPDK_VTOPHYS_ERROR);
 
 		free(p);
 		size = size << 1;
 	}
 
 	/* Test addresses that are not in the valid x86-64 usermode range */
-
-	if (spdk_vtophys((void *)0x0000800000000000ULL) != SPDK_VTOPHYS_ERROR) {
-		rc = -1;
-		printf("Err: kernel-mode address incorrectly allowed\n");
-	}
-
-	if (!rc) {
-		printf("vtophys_negative_test passed\n");
-	} else {
-		printf("vtophys_negative_test failed\n");
-	}
-
-	return rc;
+	paddr = spdk_vtophys((void *)0x0000800000000000ULL, NULL);
+	CU_ASSERT(paddr == SPDK_VTOPHYS_ERROR)
 }
 
-static int
-vtophys_positive_test(void)
+static void
+vtophys_spdk_malloc_test(void)
 {
-	void *p = NULL;
+	void *buf = NULL, *p = NULL;
+	size_t buf_align = 512;
 	int i;
 	unsigned int size = 1;
-	int rc = 0;
+	uint64_t paddr, tmpsize;
 
+	/* Test vtophys on memory allocated through SPDK */
 	for (i = 0; i < 31; i++) {
-		p = spdk_dma_zmalloc(size, 512, NULL);
-		if (p == NULL) {
+		buf = spdk_dma_zmalloc(size, buf_align, NULL);
+		if (buf == NULL) {
 			continue;
 		}
 
-		if (spdk_vtophys(p) == SPDK_VTOPHYS_ERROR) {
-			rc = -1;
-			printf("Err: VA=%p is not mapped to a huge_page,\n", p);
-			spdk_dma_free(p);
-			break;
+		/* test vtophys translation with no length parameter */
+		paddr = spdk_vtophys(buf, NULL);
+		CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+
+		/* translate the entire buffer; it's not necessarily contiguous */
+		p = buf;
+		tmpsize = size;
+		while (p < buf + size) {
+			paddr = spdk_vtophys(p, &tmpsize);
+			CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+			CU_ASSERT(tmpsize >= spdk_min(size, buf_align));
+			p += tmpsize;
+			tmpsize = buf + size - p;
+		}
+		CU_ASSERT(tmpsize == 0);
+
+		/* translate a valid vaddr, but with length 0 */
+		p = buf;
+		tmpsize = 0;
+		paddr = spdk_vtophys(p, &tmpsize);
+		CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+		CU_ASSERT(tmpsize == 0);
+
+		/* translate the first half of the buffer */
+		p = buf;
+		tmpsize = size / 2;
+		while (p < buf + size / 2) {
+			paddr = spdk_vtophys(p, &tmpsize);
+			CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+			CU_ASSERT(tmpsize >= spdk_min(size / 2, buf_align));
+			p += tmpsize;
+			tmpsize = buf + size / 2 - p;
+		}
+		CU_ASSERT(tmpsize == 0);
+
+		/* translate the second half of the buffer */
+		p = buf + size / 2;
+		tmpsize = size / 2;
+		while (p < buf + size) {
+			paddr = spdk_vtophys(p, &tmpsize);
+			CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+			CU_ASSERT(tmpsize >= spdk_min(size / 2, buf_align));
+			p += tmpsize;
+			tmpsize = buf + size - p;
+		}
+		CU_ASSERT(tmpsize == 0);
+
+		/* translate a region that's not entirely registered */
+		p = buf;
+		tmpsize = UINT64_MAX;
+		while (p < buf + size) {
+			paddr = spdk_vtophys(p, &tmpsize);
+			CU_ASSERT(paddr != SPDK_VTOPHYS_ERROR);
+			CU_ASSERT(tmpsize >= buf_align);
+			p += tmpsize;
+			/* verify our region is really contiguous */
+			CU_ASSERT(paddr + tmpsize - 1 == spdk_vtophys(p - 1, &tmpsize));
+			tmpsize = UINT64_MAX;
 		}
 
-		spdk_dma_free(p);
+		spdk_dma_free(buf);
 		size = size << 1;
 	}
-
-	if (!rc) {
-		printf("vtophys_positive_test passed\n");
-	} else {
-		printf("vtophys_positive_test failed\n");
-	}
-
-	return rc;
 }
 
 int
 main(int argc, char **argv)
 {
-	int			rc;
-	struct spdk_env_opts	opts;
+	struct spdk_env_opts opts;
+	CU_pSuite suite = NULL;
+	unsigned num_failures;
 
 	spdk_env_opts_init(&opts);
 	opts.name = "vtophys";
@@ -124,11 +161,27 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	rc = vtophys_negative_test();
-	if (rc < 0) {
-		return rc;
+	if (CU_initialize_registry() != CUE_SUCCESS) {
+		return CU_get_error();
 	}
 
-	rc = vtophys_positive_test();
-	return rc;
+	suite = CU_add_suite("components_suite", NULL, NULL);
+	if (suite == NULL) {
+		CU_cleanup_registry();
+		return CU_get_error();
+	}
+
+	if (
+		CU_add_test(suite, "vtophys_malloc_test", vtophys_malloc_test) == NULL ||
+		CU_add_test(suite, "vtophys_spdk_malloc_test", vtophys_spdk_malloc_test) == NULL
+	) {
+		CU_cleanup_registry();
+		return CU_get_error();
+	}
+
+	CU_basic_set_mode(CU_BRM_VERBOSE);
+	CU_basic_run_tests();
+	num_failures = CU_get_number_of_failures();
+	CU_cleanup_registry();
+	return num_failures;
 }

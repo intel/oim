@@ -39,6 +39,7 @@
 #include <rte_eal_memconfig.h>
 
 #include "spdk_internal/assert.h"
+#include "spdk_internal/memory.h"
 
 #include "spdk/assert.h"
 #include "spdk/likely.h"
@@ -56,8 +57,6 @@
 
 #define MAP_256TB_IDX(vfn_2mb)	((vfn_2mb) >> (SHIFT_1GB - SHIFT_2MB))
 #define MAP_1GB_IDX(vfn_2mb)	((vfn_2mb) & ((1ULL << (SHIFT_1GB - SHIFT_2MB)) - 1))
-
-#define _2MB_OFFSET(ptr)	(((uintptr_t)(ptr)) &  (VALUE_2MB - 1))
 
 /* Page is registered */
 #define REG_MAP_REGISTERED	(1ULL << 62)
@@ -591,14 +590,9 @@ spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t 
 	uint64_t idx_256tb;
 	uint64_t idx_1gb;
 	uint64_t vfn_2mb;
-	uint64_t total_size = 0;
 	uint64_t cur_size;
 	uint64_t prev_translation;
-
-	if (size != NULL) {
-		total_size = *size;
-		*size = 0;
-	}
+	uint64_t orig_translation;
 
 	if (spdk_unlikely(vaddr & ~MASK_256TB)) {
 		DEBUG_PRINT("invalid usermode virtual address %p\n", (void *)vaddr);
@@ -615,18 +609,18 @@ spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t 
 	}
 
 	cur_size = VALUE_2MB - _2MB_OFFSET(vaddr);
-	if (size != NULL) {
-		*size = cur_size;
-	}
-
 	map_2mb = &map_1gb->map[idx_1gb];
 	if (size == NULL || map->ops.are_contiguous == NULL ||
 	    map_2mb->translation_2mb == map->default_translation) {
+		if (size != NULL) {
+			*size = spdk_min(*size, cur_size);
+		}
 		return map_2mb->translation_2mb;
 	}
 
-	prev_translation = map_2mb->translation_2mb;;
-	while (cur_size < total_size) {
+	orig_translation = map_2mb->translation_2mb;
+	prev_translation = orig_translation;
+	while (cur_size < *size) {
 		vfn_2mb++;
 		idx_256tb = MAP_256TB_IDX(vfn_2mb);
 		idx_1gb = MAP_1GB_IDX(vfn_2mb);
@@ -645,8 +639,8 @@ spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t 
 		prev_translation = map_2mb->translation_2mb;
 	}
 
-	*size = cur_size;
-	return prev_translation;
+	*size = spdk_min(*size, cur_size);
+	return orig_translation;
 }
 
 #if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0)

@@ -68,7 +68,7 @@ static struct spdk_bdev_module passthru_if = {
 	.config_json = vbdev_passthru_config_json
 };
 
-SPDK_BDEV_MODULE_REGISTER(&passthru_if)
+SPDK_BDEV_MODULE_REGISTER(passthru, &passthru_if)
 
 /* List of pt_bdev names and their base bdevs via configuration file.
  * Used so we can parse the conf once at init and use this list in examine().
@@ -598,7 +598,7 @@ vbdev_passthru_register(struct spdk_bdev *bdev)
 
 		spdk_io_device_register(pt_node, pt_bdev_ch_create_cb, pt_bdev_ch_destroy_cb,
 					sizeof(struct pt_io_channel),
-					name->bdev_name);
+					name->vbdev_name);
 		SPDK_NOTICELOG("io_device created at: 0x%p\n", pt_node);
 
 		rc = spdk_bdev_open(bdev, true, vbdev_passthru_base_bdev_hotremove_cb,
@@ -662,6 +662,7 @@ create_passthru_disk(const char *bdev_name, const char *vbdev_name)
 		/* This is not an error, we tracked the name above and it still
 		 * may show up later.
 		 */
+		SPDK_NOTICELOG("vbdev creation deferred pending base bdev arrival\n");
 		return 0;
 	}
 
@@ -669,7 +670,7 @@ create_passthru_disk(const char *bdev_name, const char *vbdev_name)
 }
 
 void
-delete_passthru_disk(struct spdk_bdev *bdev, spdk_delete_passthru_complete cb_fn, void *cb_arg)
+delete_passthru_disk(struct spdk_bdev *bdev, spdk_bdev_unregister_cb cb_fn, void *cb_arg)
 {
 	struct bdev_names *name;
 

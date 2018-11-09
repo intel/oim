@@ -89,6 +89,7 @@ typedef void (*spdk_sighandler_t)(int signal);
 struct spdk_app_opts {
 	const char *name;
 	const char *config_file;
+	const char *json_config_file;
 	const char *rpc_addr; /* Can be UNIX domain socket path or IP address + TCP port */
 	const char *reactor_mask;
 	const char *tpoint_group_mask;
@@ -111,7 +112,9 @@ struct spdk_app_opts {
 	struct spdk_pci_addr	*pci_blacklist;
 	struct spdk_pci_addr	*pci_whitelist;
 
-	/* The maximum latency allowed when passing an event
+	/* DEPRECATED. No longer has any effect.
+	 *
+	 * The maximum latency allowed when passing an event
 	 * from one core to another. A value of 0
 	 * means all cores continually poll. This is
 	 * specified in microseconds.
@@ -125,12 +128,6 @@ struct spdk_app_opts {
 
 	/* Number of trace entries allocated for each core */
 	uint64_t		num_entries;
-};
-
-struct spdk_reactor_tsc_stats {
-	uint64_t busy_tsc;
-	uint64_t idle_tsc;
-	uint64_t unknown_tsc;
 };
 
 /**
@@ -246,7 +243,7 @@ typedef enum spdk_app_parse_args_rvals spdk_app_parse_args_rvals_t;
  */
 spdk_app_parse_args_rvals_t spdk_app_parse_args(int argc, char **argv,
 		struct spdk_app_opts *opts, const char *getopt_str,
-		struct option *app_long_opts, void (*parse)(int ch, char *arg),
+		struct option *app_long_opts, int (*parse)(int ch, char *arg),
 		void (*usage)(void));
 
 /**
@@ -289,15 +286,6 @@ void spdk_reactor_enable_context_switch_monitor(bool enabled);
  * \return true if enabled or false otherwise.
  */
 bool spdk_reactor_context_switch_monitor_enabled(void);
-
-/**
- * Get tsc stats from a given reactor
- * Copy cumulative reactor tsc values to user's tsc_stats structure.
- *
- * \param tsc_stats User's tsc_stats structure.
- * \param core_id Get tsc data on this Reactor core id.
- */
-int spdk_reactor_get_tsc_stats(struct spdk_reactor_tsc_stats *tsc_stats, uint32_t core_id);
 
 #ifdef __cplusplus
 }

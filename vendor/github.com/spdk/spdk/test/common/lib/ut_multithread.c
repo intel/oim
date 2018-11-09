@@ -34,6 +34,7 @@
 #include "spdk_cunit.h"
 #include "spdk/thread.h"
 #include "spdk_internal/mock.h"
+#include "spdk_internal/thread.h"
 
 #include "common/lib/test_env.c"
 
@@ -45,7 +46,7 @@ void poll_threads(void);
 bool poll_thread(uintptr_t thread_id);
 
 struct ut_msg {
-	spdk_thread_fn		fn;
+	spdk_msg_fn		fn;
 	void			*ctx;
 	TAILQ_ENTRY(ut_msg)	link;
 };
@@ -59,17 +60,18 @@ struct ut_thread *g_ut_threads;
 
 #define INVALID_THREAD 0x1000
 
-static uintptr_t g_thread_id = INVALID_THREAD;
+static uint64_t g_thread_id = INVALID_THREAD;
 
 static void
 set_thread(uintptr_t thread_id)
 {
 	g_thread_id = thread_id;
 	if (thread_id == INVALID_THREAD) {
-		MOCK_CLEAR(pthread_self);
+		spdk_set_thread(NULL);
 	} else {
-		MOCK_SET(pthread_self, (pthread_t)thread_id);
+		spdk_set_thread(g_ut_threads[thread_id].thread);
 	}
+
 }
 
 int
@@ -81,12 +83,12 @@ allocate_threads(int num_threads)
 	g_ut_num_threads = num_threads;
 
 	g_ut_threads = calloc(num_threads, sizeof(*g_ut_threads));
-	SPDK_CU_ASSERT_FATAL(g_ut_threads != NULL);
+	assert(g_ut_threads != NULL);
 
 	for (i = 0; i < g_ut_num_threads; i++) {
 		set_thread(i);
-		thread = spdk_allocate_thread(NULL, NULL, NULL, NULL, NULL);
-		SPDK_CU_ASSERT_FATAL(thread != NULL);
+		thread = spdk_thread_create(NULL);
+		assert(thread != NULL);
 		g_ut_threads[i].thread = thread;
 	}
 
@@ -101,7 +103,8 @@ free_threads(void)
 
 	for (i = 0; i < g_ut_num_threads; i++) {
 		set_thread(i);
-		spdk_free_thread();
+		spdk_thread_exit(g_ut_threads[i].thread);
+		g_ut_threads[i].thread = NULL;
 	}
 
 	g_ut_num_threads = 0;
@@ -116,13 +119,13 @@ poll_thread(uintptr_t thread_id)
 	struct ut_thread *thread = &g_ut_threads[thread_id];
 	uintptr_t original_thread_id;
 
-	CU_ASSERT(thread_id != (uintptr_t)INVALID_THREAD);
-	CU_ASSERT(thread_id < g_ut_num_threads);
+	assert(thread_id != (uintptr_t)INVALID_THREAD);
+	assert(thread_id < g_ut_num_threads);
 
 	original_thread_id = g_thread_id;
-	set_thread(thread_id);
+	set_thread(INVALID_THREAD);
 
-	while (spdk_thread_poll(thread->thread, 0) > 0) {
+	while (spdk_thread_poll(thread->thread, 0, 0) > 0) {
 		busy = true;
 	}
 

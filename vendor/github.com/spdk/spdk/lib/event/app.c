@@ -44,6 +44,8 @@
 #include "spdk/rpc.h"
 #include "spdk/util.h"
 
+#include "json_config.h"
+
 #define SPDK_APP_DEFAULT_LOG_LEVEL		SPDK_LOG_NOTICE
 #define SPDK_APP_DEFAULT_LOG_PRINT_LEVEL	SPDK_LOG_INFO
 #define SPDK_APP_DEFAULT_BACKTRACE_LOG_LEVEL	SPDK_LOG_ERROR
@@ -119,6 +121,10 @@ static const struct option g_cmdline_options[] = {
 	{"huge-dir",			no_argument,		NULL, HUGE_DIR_OPT_IDX},
 #define NUM_TRACE_ENTRIES_OPT_IDX	260
 	{"num-trace-entries",		required_argument,	NULL, NUM_TRACE_ENTRIES_OPT_IDX},
+#define MAX_REACTOR_DELAY_OPT_IDX	261
+	{"max-delay",			required_argument,	NULL, MAX_REACTOR_DELAY_OPT_IDX},
+#define JSON_CONFIG_OPT_IDX		262
+	{"json",			required_argument,	NULL, JSON_CONFIG_OPT_IDX},
 };
 
 /* Global section */
@@ -273,7 +279,6 @@ spdk_app_opts_init(struct spdk_app_opts *opts)
 	opts->master_core = SPDK_APP_DPDK_DEFAULT_MASTER_CORE;
 	opts->mem_channel = SPDK_APP_DPDK_DEFAULT_MEM_CHANNEL;
 	opts->reactor_mask = NULL;
-	opts->max_delay_us = 0;
 	opts->print_level = SPDK_APP_DEFAULT_LOG_PRINT_LEVEL;
 	opts->rpc_addr = SPDK_DEFAULT_RPC_ADDR;
 	opts->num_entries = SPDK_APP_DEFAULT_NUM_TRACE_ENTRIES;
@@ -353,6 +358,15 @@ spdk_app_start_rpc(void *arg1, void *arg2)
 	if (!g_delay_subsystem_init) {
 		spdk_app_start_application();
 	}
+}
+
+static void
+_spdk_app_json_config_load(void *_app_opts, void *_event_done)
+{
+	struct spdk_app_opts *app_opts = _app_opts;
+	struct spdk_event *event_done = _event_done;
+
+	spdk_app_json_config_load(app_opts, event_done);
 }
 
 static struct spdk_conf *
@@ -554,7 +568,7 @@ spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
 {
 	struct spdk_conf	*config = NULL;
 	int			rc;
-	struct spdk_event	*rpc_start_event;
+	struct spdk_event	*rpc_start_event, *config_load_event;
 	char			*tty;
 
 	if (!opts) {
@@ -609,15 +623,13 @@ spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
 	spdk_log_open();
 	SPDK_NOTICELOG("Total cores available: %d\n", spdk_env_get_core_count());
 
-	spdk_thread_lib_init();
-
 	/*
 	 * If mask not specified on command line or in configuration file,
 	 *  reactor_mask will be 0x1 which will enable core 0 to run one
 	 *  reactor.
 	 */
-	if ((rc = spdk_reactors_init(opts->max_delay_us)) != 0) {
-		SPDK_ERRLOG("Invalid reactor mask.\n");
+	if ((rc = spdk_reactors_init()) != 0) {
+		SPDK_ERRLOG("Reactor Initilization failed: rc = %d\n", rc);
 		goto app_start_log_close_err;
 	}
 
@@ -648,10 +660,17 @@ spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
 	rpc_start_event = spdk_event_allocate(g_init_lcore, spdk_app_start_rpc,
 					      (void *)opts->rpc_addr, NULL);
 
-	if (!g_delay_subsystem_init) {
-		spdk_subsystem_init(rpc_start_event);
+	if (opts->json_config_file) {
+		g_delay_subsystem_init = false;
+		config_load_event = spdk_event_allocate(g_init_lcore, _spdk_app_json_config_load,
+							opts, rpc_start_event);
+		spdk_event_call(config_load_event);
 	} else {
-		spdk_event_call(rpc_start_event);
+		if (!g_delay_subsystem_init) {
+			spdk_subsystem_init(rpc_start_event);
+		} else {
+			spdk_event_call(rpc_start_event);
+		}
 	}
 
 	/* This blocks until spdk_app_stop is called */
@@ -676,7 +695,6 @@ spdk_app_fini(void)
 	spdk_reactors_fini();
 	spdk_conf_free(g_spdk_app.config);
 	spdk_log_close();
-	spdk_thread_lib_fini();
 }
 
 static void
@@ -711,6 +729,8 @@ usage(void (*app_usage)(void))
 	printf("options:\n");
 	printf(" -c, --config <config>     config file (default %s)\n",
 	       g_default_opts.config_file != NULL ? g_default_opts.config_file : "none");
+	printf("     --json <config>       JSON config file (default %s)\n",
+	       g_default_opts.json_config_file != NULL ? g_default_opts.json_config_file : "none");
 	printf(" -d, --limit-coredump      do not set max coredump size to RLIM_INFINITY\n");
 	printf(" -g, --single-file-segments\n");
 	printf("                           force creating just one hugetlbfs file\n");
@@ -732,13 +752,14 @@ usage(void (*app_usage)(void))
 	printf("     --silence-noticelog   disable notice level logging to stderr\n");
 	printf(" -u, --no-pci              disable PCI access\n");
 	printf("     --wait-for-rpc        wait for RPCs to initialize subsystems\n");
+	printf("     --max-delay <num>     maximum reactor delay (in microseconds)\n");
 	printf(" -B, --pci-blacklist <bdf>\n");
 	printf("                           pci addr to blacklist (can be used more than once)\n");
 	printf(" -R, --huge-unlink         unlink huge files after initialization\n");
 	printf(" -W, --pci-whitelist <bdf>\n");
 	printf("                           pci addr to whitelist (-B and -W cannot be used at the same time)\n");
 	printf("      --huge-dir <path>    use a specific hugetlbfs mount to reserve memory from\n");
-	printf("      --num-trace-entries <num>   number of trace entries for each core (default %d)\n",
+	printf("      --num-trace-entries <num>   number of trace entries for each core, must be power of 2. (default %d)\n",
 	       SPDK_APP_DEFAULT_NUM_TRACE_ENTRIES);
 	spdk_log_usage(stdout, "-L");
 	spdk_trace_mask_usage(stdout, "-e");
@@ -750,18 +771,25 @@ usage(void (*app_usage)(void))
 spdk_app_parse_args_rvals_t
 spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 		    const char *app_getopt_str, struct option *app_long_opts,
-		    void (*app_parse)(int ch, char *arg),
+		    int (*app_parse)(int ch, char *arg),
 		    void (*app_usage)(void))
 {
 	int ch, rc, opt_idx, global_long_opts_len, app_long_opts_len;
 	struct option *cmdline_options;
 	char *cmdline_short_opts = NULL;
 	enum spdk_app_parse_args_rvals retval = SPDK_APP_PARSE_ARGS_FAIL;
+	long int tmp;
 
 	memcpy(&g_default_opts, opts, sizeof(g_default_opts));
 
-	if (opts->config_file && access(opts->config_file, F_OK) != 0) {
+	if (opts->config_file && access(opts->config_file, R_OK) != 0) {
+		SPDK_WARNLOG("Can't read legacy configuration file '%s'\n", opts->config_file);
 		opts->config_file = NULL;
+	}
+
+	if (opts->json_config_file && access(opts->json_config_file, R_OK) != 0) {
+		SPDK_WARNLOG("Can't read JSON configuration file '%s'\n", opts->json_config_file);
+		opts->json_config_file = NULL;
 	}
 
 	if (app_long_opts == NULL) {
@@ -808,6 +836,9 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 		case CONFIG_FILE_OPT_IDX:
 			opts->config_file = optarg;
 			break;
+		case JSON_CONFIG_OPT_IDX:
+			opts->json_config_file = optarg;
+			break;
 		case LIMIT_COREDUMP_OPT_IDX:
 			opts->enable_coredump = false;
 			break;
@@ -822,25 +853,28 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			retval = SPDK_APP_PARSE_ARGS_HELP;
 			goto out;
 		case SHM_ID_OPT_IDX:
-			if (optarg == NULL) {
+			opts->shm_id = spdk_strtol(optarg, 0);
+			if (opts->shm_id < 0) {
+				fprintf(stderr, "Invalid shared memory ID %s\n", optarg);
 				goto out;
 			}
-			opts->shm_id = atoi(optarg);
 			break;
 		case CPUMASK_OPT_IDX:
 			opts->reactor_mask = optarg;
 			break;
 		case MEM_CHANNELS_OPT_IDX:
-			if (optarg == NULL) {
+			opts->mem_channel = spdk_strtol(optarg, 0);
+			if (opts->mem_channel < 0) {
+				fprintf(stderr, "Invalid memory channel %s\n", optarg);
 				goto out;
 			}
-			opts->mem_channel = atoi(optarg);
 			break;
 		case MASTER_CORE_OPT_IDX:
-			if (optarg == NULL) {
+			opts->master_core = spdk_strtol(optarg, 0);
+			if (opts->master_core < 0) {
+				fprintf(stderr, "Invalid master core %s\n", optarg);
 				goto out;
 			}
-			opts->master_core = atoi(optarg);
 			break;
 		case SILENCE_NOTICELOG_OPT_IDX:
 			opts->print_level = SPDK_LOG_WARN;
@@ -936,12 +970,22 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			opts->hugedir = optarg;
 			break;
 		case NUM_TRACE_ENTRIES_OPT_IDX:
-			opts->num_entries = strtoull(optarg, NULL, 0);
-			if (opts->num_entries == ULLONG_MAX || opts->num_entries == 0) {
-				fprintf(stderr, "Invalid num_entries %s\n", optarg);
+			tmp = spdk_strtoll(optarg, 0);
+			if (tmp <= 0) {
+				fprintf(stderr, "Invalid num-trace-entries %s\n", optarg);
 				usage(app_usage);
 				goto out;
 			}
+			opts->num_entries = (uint64_t)tmp;
+			if (opts->num_entries & (opts->num_entries - 1)) {
+				fprintf(stderr, "num-trace-entries must be power of 2\n");
+				usage(app_usage);
+				goto out;
+			}
+			break;
+		case MAX_REACTOR_DELAY_OPT_IDX:
+			fprintf(stderr,
+				"Deprecation warning: The maximum allowed latency parameter is no longer supported.\n");
 			break;
 		case '?':
 			/*
@@ -952,8 +996,22 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			usage(app_usage);
 			goto out;
 		default:
-			app_parse(ch, optarg);
+			rc = app_parse(ch, optarg);
+			if (rc) {
+				fprintf(stderr, "Parsing application specific arguments failed: %d\n", rc);
+				goto out;
+			}
 		}
+	}
+
+	if (opts->config_file && opts->json_config_file) {
+		fprintf(stderr, "ERROR: Legacy config and JSON config can't be used together.\n");
+		goto out;
+	}
+
+	if (opts->json_config_file && opts->delay_subsystem_init) {
+		fprintf(stderr, "ERROR: JSON configuration file can't be used together with --wait-for-rpc.\n");
+		goto out;
 	}
 
 	/* TBD: Replace warning by failure when RPCs for startup are prepared. */

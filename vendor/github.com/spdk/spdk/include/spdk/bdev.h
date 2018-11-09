@@ -44,6 +44,8 @@
 #include "spdk/nvme_spec.h"
 #include "spdk/json.h"
 #include "spdk/queue.h"
+#include "spdk/histogram_data.h"
+#include "spdk/dif.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -111,6 +113,10 @@ enum spdk_bdev_qos_rate_limit_type {
 	SPDK_BDEV_QOS_RW_IOPS_RATE_LIMIT = 0,
 	/** Byte per second rate limit for both read and write */
 	SPDK_BDEV_QOS_RW_BPS_RATE_LIMIT,
+	/** Byte per second rate limit for read only */
+	SPDK_BDEV_QOS_R_BPS_RATE_LIMIT,
+	/** Byte per second rate limit for write only */
+	SPDK_BDEV_QOS_W_BPS_RATE_LIMIT,
 	/** Keep last */
 	SPDK_BDEV_QOS_NUM_RATE_LIMIT_TYPES
 };
@@ -133,8 +139,11 @@ struct spdk_bdev_io_stat {
 	uint64_t num_read_ops;
 	uint64_t bytes_written;
 	uint64_t num_write_ops;
+	uint64_t bytes_unmapped;
+	uint64_t num_unmap_ops;
 	uint64_t read_latency_ticks;
 	uint64_t write_latency_ticks;
+	uint64_t unmap_latency_ticks;
 	uint64_t ticks_rate;
 };
 
@@ -396,6 +405,55 @@ bool spdk_bdev_has_write_cache(const struct spdk_bdev *bdev);
  * the nil UUID (all bytes zero).
  */
 const struct spdk_uuid *spdk_bdev_get_uuid(const struct spdk_bdev *bdev);
+
+/**
+ * Get block device metadata size.
+ *
+ * \param bdev Block device to query.
+ * \return Size of metadata for this bdev in bytes.
+ */
+uint32_t spdk_bdev_get_md_size(const struct spdk_bdev *bdev);
+
+/**
+ * Query whether metadata is interleaved with block data or separated
+ * with block data.
+ *
+ * \param bdev Block device to query.
+ * \return true if metadata is interleaved with block data or false
+ * if metadata is separated with block data.
+ *
+ * Note this function is valid only if there is metadata.
+ */
+bool spdk_bdev_is_md_interleaved(const struct spdk_bdev *bdev);
+
+/**
+ * Get DIF type of the block device.
+ *
+ * \param bdev Block device to query.
+ * \return DIF type of the block device.
+ */
+enum spdk_dif_type spdk_bdev_get_dif_type(const struct spdk_bdev *bdev);
+
+/**
+ * Check whether DIF is set in the first 8 bytes or the last 8 bytes of metadata.
+ *
+ * \param bdev Block device to query.
+ * \return true if DIF is set in the first 8 bytes of metadata, or false
+ * if DIF is set in the last 8 bytes of metadata.
+ *
+ * Note that this function is valid only if DIF type is not SPDK_DIF_DISABLE.
+ */
+bool spdk_bdev_is_dif_head_of_md(const struct spdk_bdev *bdev);
+
+/**
+ * Check whether the DIF check type is enabled.
+ *
+ * \param bdev Block device to query.
+ * \param check_type The specific DIF check type.
+ * \return true if enabled, false otherwise.
+ */
+bool spdk_bdev_is_dif_check_enabled(const struct spdk_bdev *bdev,
+				    enum spdk_dif_check_type check_type);
 
 /**
  * Get the most recently measured queue depth from a bdev.
@@ -1074,6 +1132,34 @@ void spdk_bdev_io_get_scsi_status(const struct spdk_bdev_io *bdev_io,
  * \param iovcntp Pointer to be filled with number of iovec entries.
  */
 void spdk_bdev_io_get_iovec(struct spdk_bdev_io *bdev_io, struct iovec **iovp, int *iovcntp);
+
+typedef void (*spdk_bdev_histogram_status_cb)(void *cb_arg, int status);
+typedef void (*spdk_bdev_histogram_data_cb)(void *cb_arg, int status,
+		struct spdk_histogram_data *histogram);
+
+/**
+ * Enable or disable collecting histogram data on a bdev.
+ *
+ * \param bdev Block device.
+ * \param cb_fn Callback function to be called when histograms are enabled.
+ * \param cb_arg Argument to pass to cb_fn.
+ * \param enable Enable/disable flag
+ */
+void spdk_bdev_histogram_enable(struct spdk_bdev *bdev, spdk_bdev_histogram_status_cb cb_fn,
+				void *cb_arg, bool enable);
+
+/**
+ * Get aggregated histogram data from a bdev. Callback provides merged histogram
+ * for specified bdev.
+ *
+ * \param bdev Block device.
+ * \param histogram Histogram for aggregated data
+ * \param cb_fn Callback function to be called with data collected on bdev.
+ * \param cb_arg Argument to pass to cb_fn.
+ */
+void spdk_bdev_histogram_get(struct spdk_bdev *bdev, struct spdk_histogram_data *histogram,
+			     spdk_bdev_histogram_data_cb cb_fn,
+			     void *cb_arg);
 
 #ifdef __cplusplus
 }

@@ -41,23 +41,6 @@
 
 pid_t g_spdk_nvme_pid;
 
-DEFINE_STUB(spdk_mem_register, int, (void *vaddr, size_t len), 0);
-DEFINE_STUB(spdk_mem_unregister, int, (void *vaddr, size_t len), 0);
-
-DEFINE_STUB(spdk_nvme_ctrlr_get_process,
-	    struct spdk_nvme_ctrlr_process *,
-	    (struct spdk_nvme_ctrlr *ctrlr, pid_t pid),
-	    NULL);
-
-DEFINE_STUB(spdk_nvme_ctrlr_get_current_process,
-	    struct spdk_nvme_ctrlr_process *,
-	    (struct spdk_nvme_ctrlr *ctrlr),
-	    NULL);
-
-DEFINE_STUB(spdk_nvme_wait_for_completion, int,
-	    (struct spdk_nvme_qpair *qpair,
-	     struct nvme_completion_poll_status *status), 0);
-
 struct spdk_log_flag SPDK_LOG_NVME = {
 	.name = "nvme",
 	.enabled = false,
@@ -214,8 +197,8 @@ nvme_ctrlr_proc_get_devhandle(struct spdk_nvme_ctrlr *ctrlr)
 }
 
 int
-nvme_ctrlr_probe(const struct spdk_nvme_transport_id *trid, void *devhandle,
-		 spdk_nvme_probe_cb probe_cb, void *cb_ctx)
+nvme_ctrlr_probe(const struct spdk_nvme_transport_id *trid,
+		 struct spdk_nvme_probe_ctx *probe_ctx, void *devhandle)
 {
 	abort();
 }

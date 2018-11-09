@@ -35,6 +35,7 @@
 
 #include "spdk/env.h"
 #include "spdk/event.h"
+#include "spdk/string.h"
 #include "spdk/thread.h"
 
 static int g_time_in_sec;
@@ -91,7 +92,6 @@ static void
 usage(const char *program_name)
 {
 	printf("%s options\n", program_name);
-	printf("\t[-d Allowed delay when passing messages between cores in microseconds]\n");
 	printf("\t[-q Queue depth (default: 1)]\n");
 	printf("\t[-t time in seconds]\n");
 }
@@ -102,24 +102,30 @@ main(int argc, char **argv)
 	struct spdk_app_opts opts;
 	int op;
 	int rc;
+	long int val;
 
 	spdk_app_opts_init(&opts);
 	opts.name = "reactor_perf";
-	opts.max_delay_us = 1000;
 
 	g_time_in_sec = 0;
 	g_queue_depth = 1;
 
-	while ((op = getopt(argc, argv, "d:q:t:")) != -1) {
+	while ((op = getopt(argc, argv, "q:t:")) != -1) {
+		if (op == '?') {
+			usage(argv[0]);
+			exit(1);
+		}
+		val = spdk_strtol(optarg, 10);
+		if (val < 0) {
+			fprintf(stderr, "Converting a string to integer failed\n");
+			exit(1);
+		}
 		switch (op) {
-		case 'd':
-			opts.max_delay_us = atoi(optarg);
-			break;
 		case 'q':
-			g_queue_depth = atoi(optarg);
+			g_queue_depth = val;
 			break;
 		case 't':
-			g_time_in_sec = atoi(optarg);
+			g_time_in_sec = val;
 			break;
 		default:
 			usage(argv[0]);

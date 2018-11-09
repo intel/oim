@@ -40,14 +40,13 @@
 #include "common/lib/test_env.c"
 
 static struct spdk_reduce_vol *g_vol;
-static int g_ziperrno;
+static int g_reduce_errno;
 static char *g_volatile_pm_buf;
 static size_t g_volatile_pm_buf_len;
 static char *g_persistent_pm_buf;
 static size_t g_persistent_pm_buf_len;
-static bool g_backing_dev_closed;
 static char *g_backing_dev_buf;
-static const char *g_path;
+static char g_path[REDUCE_PATH_MAX];
 
 #define TEST_MD_PATH "/tmp"
 
@@ -76,30 +75,13 @@ static void
 get_pm_file_size(void)
 {
 	struct spdk_reduce_vol_params params;
-	int64_t pm_size, expected_pm_size;
+	uint64_t pm_size, expected_pm_size;
 
-	params.vol_size = 0;
-	params.chunk_size = 0;
-	params.backing_io_unit_size = 0;
-	CU_ASSERT(spdk_reduce_get_pm_file_size(&params) == -EINVAL);
-
-	/*
-	 * Select a valid backing_io_unit_size.  This should still fail since
-	 *  vol_size and chunk_size are still 0.
-	 */
 	params.backing_io_unit_size = 4096;
-	CU_ASSERT(spdk_reduce_get_pm_file_size(&params) == -EINVAL);
-
-	/*
-	 * Select a valid chunk_size.  This should still fail since val_size
-	 *  is still 0.
-	 */
 	params.chunk_size = 4096 * 4;
-	CU_ASSERT(spdk_reduce_get_pm_file_size(&params) == -EINVAL);
-
-	/* Select a valid vol_size.  This should return a proper pm_size. */
 	params.vol_size = 4096 * 4 * 100;
-	pm_size = spdk_reduce_get_pm_file_size(&params);
+
+	pm_size = _get_pm_file_size(&params);
 	expected_pm_size = sizeof(struct spdk_reduce_vol_superblock);
 	/* 100 chunks in logical map * 8 bytes per chunk */
 	expected_pm_size += 100 * sizeof(uint64_t);
@@ -116,43 +98,13 @@ get_pm_file_size(void)
 }
 
 static void
-get_backing_device_size(void)
+get_vol_size(void)
 {
-	struct spdk_reduce_vol_params params;
-	int64_t backing_size, expected_backing_size;
+	uint64_t chunk_size, backing_dev_size;
 
-	params.vol_size = 0;
-	params.chunk_size = 0;
-	params.backing_io_unit_size = 0;
-	params.logical_block_size = 512;
-	CU_ASSERT(spdk_reduce_get_backing_device_size(&params) == -EINVAL);
-
-	/*
-	 * Select a valid backing_io_unit_size.  This should still fail since
-	 *  vol_size and chunk_size are still 0.
-	 */
-	params.backing_io_unit_size = 4096;
-	CU_ASSERT(spdk_reduce_get_backing_device_size(&params) == -EINVAL);
-
-	/*
-	 * Select a valid chunk_size.  This should still fail since val_size
-	 *  is still 0.
-	 */
-	params.chunk_size = 4096 * 4;
-	CU_ASSERT(spdk_reduce_get_backing_device_size(&params) == -EINVAL);
-
-	/* Select a valid vol_size.  This should return a proper backing device size. */
-	params.vol_size = 4096 * 4 * 100;
-	backing_size = spdk_reduce_get_backing_device_size(&params);
-	expected_backing_size = params.vol_size;
-	/* reduce allocates some extra chunks too for in-flight writes when logical map
-	 * is full.  REDUCE_EXTRA_CHUNKS is a private #ifdef in reduce.c.  Backing device
-	 * must have space allocated for these extra chunks.
-	 */
-	expected_backing_size += REDUCE_NUM_EXTRA_CHUNKS * params.chunk_size;
-	/* Account for superblock as well. */
-	expected_backing_size += sizeof(struct spdk_reduce_vol_superblock);
-	CU_ASSERT(backing_size == expected_backing_size);
+	chunk_size = 16 * 1024;
+	backing_dev_size = 16 * 1024 * 1000;
+	CU_ASSERT(_get_vol_size(chunk_size, backing_dev_size) < backing_dev_size);
 }
 
 void *
@@ -160,7 +112,7 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 	      size_t *mapped_lenp, int *is_pmemp)
 {
 	CU_ASSERT(g_volatile_pm_buf == NULL);
-	g_path = path;
+	snprintf(g_path, sizeof(g_path), "%s", path);
 	*is_pmemp = 1;
 
 	if (g_persistent_pm_buf == NULL) {
@@ -172,6 +124,7 @@ pmem_map_file(const char *path, size_t len, int flags, mode_t mode,
 	*mapped_lenp = g_persistent_pm_buf_len;
 	g_volatile_pm_buf = calloc(1, g_persistent_pm_buf_len);
 	SPDK_CU_ASSERT_FATAL(g_volatile_pm_buf != NULL);
+	memcpy(g_volatile_pm_buf, g_persistent_pm_buf, g_persistent_pm_buf_len);
 	g_volatile_pm_buf_len = g_persistent_pm_buf_len;
 
 	return g_volatile_pm_buf;
@@ -198,24 +151,37 @@ persistent_pm_buf_destroy(void)
 	g_persistent_pm_buf_len = 0;
 }
 
-static void
-init_cb(void *cb_arg, struct spdk_reduce_vol *vol, int ziperrno)
+int __wrap_unlink(const char *path);
+
+int
+__wrap_unlink(const char *path)
 {
-	g_vol = vol;
-	g_ziperrno = ziperrno;
+	if (strcmp(g_path, path) != 0) {
+		return ENOENT;
+	}
+
+	persistent_pm_buf_destroy();
+	return 0;
 }
 
 static void
-load_cb(void *cb_arg, struct spdk_reduce_vol *vol, int ziperrno)
+init_cb(void *cb_arg, struct spdk_reduce_vol *vol, int reduce_errno)
 {
 	g_vol = vol;
-	g_ziperrno = ziperrno;
+	g_reduce_errno = reduce_errno;
 }
 
 static void
-unload_cb(void *cb_arg, int ziperrno)
+load_cb(void *cb_arg, struct spdk_reduce_vol *vol, int reduce_errno)
 {
-	g_ziperrno = ziperrno;
+	g_vol = vol;
+	g_reduce_errno = reduce_errno;
+}
+
+static void
+unload_cb(void *cb_arg, int reduce_errno)
+{
+	g_reduce_errno = reduce_errno;
 }
 
 static void
@@ -225,28 +191,32 @@ init_failure(void)
 	struct spdk_reduce_backing_dev backing_dev = {};
 
 	backing_dev.blocklen = 512;
+	/* This blockcnt is too small for a reduce vol - there needs to be
+	 *  enough space for at least REDUCE_NUM_EXTRA_CHUNKS + 1 chunks.
+	 */
+	backing_dev.blockcnt = 20;
 
-	params.vol_size = 1024 * 1024; /* 1MB */
+	params.vol_size = 0;
 	params.chunk_size = 16 * 1024;
 	params.backing_io_unit_size = backing_dev.blocklen;
 	params.logical_block_size = 512;
 
-	/* backing_dev and pm_file have an invalid size.  This should fail. */
+	/* backing_dev has an invalid size.  This should fail. */
 	g_vol = NULL;
-	g_ziperrno = 0;
+	g_reduce_errno = 0;
 	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
-	CU_ASSERT(g_ziperrno == -EINVAL);
+	CU_ASSERT(g_reduce_errno == -EINVAL);
 	SPDK_CU_ASSERT_FATAL(g_vol == NULL);
 
 	/* backing_dev now has valid size, but backing_dev still has null
 	 *  function pointers.  This should fail.
 	 */
-	backing_dev.blockcnt = spdk_reduce_get_backing_device_size(&params) / backing_dev.blocklen;
+	backing_dev.blockcnt = 20000;
 
 	g_vol = NULL;
-	g_ziperrno = 0;
+	g_reduce_errno = 0;
 	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
-	CU_ASSERT(g_ziperrno == -EINVAL);
+	CU_ASSERT(g_reduce_errno == -EINVAL);
 	SPDK_CU_ASSERT_FATAL(g_vol == NULL);
 }
 
@@ -292,12 +262,6 @@ backing_dev_unmap(struct spdk_reduce_backing_dev *backing_dev,
 }
 
 static void
-backing_dev_close(struct spdk_reduce_backing_dev *backing_dev)
-{
-	g_backing_dev_closed = true;
-}
-
-static void
 backing_dev_destroy(struct spdk_reduce_backing_dev *backing_dev)
 {
 	/* We don't free this during backing_dev_close so that we can test init/unload/load
@@ -308,17 +272,17 @@ backing_dev_destroy(struct spdk_reduce_backing_dev *backing_dev)
 }
 
 static void
-backing_dev_init(struct spdk_reduce_backing_dev *backing_dev, struct spdk_reduce_vol_params *params)
+backing_dev_init(struct spdk_reduce_backing_dev *backing_dev, struct spdk_reduce_vol_params *params,
+		 uint32_t backing_blocklen)
 {
 	int64_t size;
 
-	size = spdk_reduce_get_backing_device_size(params);
-	backing_dev->blocklen = params->backing_io_unit_size;
+	size = 4 * 1024 * 1024;
+	backing_dev->blocklen = backing_blocklen;
 	backing_dev->blockcnt = size / backing_dev->blocklen;
 	backing_dev->readv = backing_dev_readv;
 	backing_dev->writev = backing_dev_writev;
 	backing_dev->unmap = backing_dev_unmap;
-	backing_dev->close = backing_dev_close;
 
 	g_backing_dev_buf = calloc(1, size);
 	SPDK_CU_ASSERT_FATAL(g_backing_dev_buf != NULL);
@@ -333,17 +297,16 @@ init_md(void)
 	struct spdk_uuid uuid;
 	uint64_t *entry;
 
-	params.vol_size = 1024 * 1024; /* 1MB */
 	params.chunk_size = 16 * 1024;
 	params.backing_io_unit_size = 512;
 	params.logical_block_size = 512;
 
-	backing_dev_init(&backing_dev, &params);
+	backing_dev_init(&backing_dev, &params, 512);
 
 	g_vol = NULL;
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
 	/* Confirm that reduce persisted the params to metadata. */
 	CU_ASSERT(memcmp(g_persistent_pm_buf, SPDK_REDUCE_SIGNATURE, 8) == 0);
@@ -367,12 +330,50 @@ init_md(void)
 	CU_ASSERT(spdk_uuid_parse(&uuid, &g_path[strlen(TEST_MD_PATH) + 1]) == 0);
 	CU_ASSERT(spdk_uuid_compare(&uuid, spdk_reduce_vol_get_uuid(g_vol)) == 0);
 
-	g_ziperrno = -1;
-	g_backing_dev_closed = false;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
-	CU_ASSERT(g_backing_dev_closed == true);
+	CU_ASSERT(g_reduce_errno == 0);
 	CU_ASSERT(g_volatile_pm_buf == NULL);
+
+	persistent_pm_buf_destroy();
+	backing_dev_destroy(&backing_dev);
+}
+
+static void
+_init_backing_dev(uint32_t backing_blocklen)
+{
+	struct spdk_reduce_vol_params params = {};
+	struct spdk_reduce_vol_params *persistent_params;
+	struct spdk_reduce_backing_dev backing_dev = {};
+
+	params.chunk_size = 16 * 1024;
+	params.backing_io_unit_size = 512;
+	params.logical_block_size = 512;
+	spdk_uuid_generate(&params.uuid);
+
+	backing_dev_init(&backing_dev, &params, backing_blocklen);
+
+	g_vol = NULL;
+	memset(g_path, 0, sizeof(g_path));
+	g_reduce_errno = -1;
+	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+	CU_ASSERT(strncmp(TEST_MD_PATH, g_path, strlen(TEST_MD_PATH)) == 0);
+	/* Confirm that libreduce persisted the params to the backing device. */
+	CU_ASSERT(memcmp(g_backing_dev_buf, SPDK_REDUCE_SIGNATURE, 8) == 0);
+	persistent_params = (struct spdk_reduce_vol_params *)(g_backing_dev_buf + 8);
+	CU_ASSERT(memcmp(persistent_params, &params, sizeof(params)) == 0);
+	/* Confirm that the path to the persistent memory metadata file was persisted to
+	 *  the backing device.
+	 */
+	CU_ASSERT(strncmp(g_path,
+			  g_backing_dev_buf + REDUCE_BACKING_DEV_PATH_OFFSET,
+			  REDUCE_PATH_MAX) == 0);
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
 
 	persistent_pm_buf_destroy();
 	backing_dev_destroy(&backing_dev);
@@ -381,42 +382,50 @@ init_md(void)
 static void
 init_backing_dev(void)
 {
-	struct spdk_reduce_vol_params params = {};
-	struct spdk_reduce_vol_params *persistent_params;
-	struct spdk_reduce_backing_dev backing_dev = {};
+	_init_backing_dev(512);
+	_init_backing_dev(4096);
+}
 
-	params.vol_size = 1024 * 1024; /* 1MB */
+static void
+_load(uint32_t backing_blocklen)
+{
+	struct spdk_reduce_vol_params params = {};
+	struct spdk_reduce_backing_dev backing_dev = {};
+	char pmem_file_path[REDUCE_PATH_MAX];
+
 	params.chunk_size = 16 * 1024;
 	params.backing_io_unit_size = 512;
 	params.logical_block_size = 512;
 	spdk_uuid_generate(&params.uuid);
 
-	backing_dev_init(&backing_dev, &params);
+	backing_dev_init(&backing_dev, &params, backing_blocklen);
 
 	g_vol = NULL;
-	g_path = NULL;
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
-	SPDK_CU_ASSERT_FATAL(g_path != NULL);
-	/* Confirm that libreduce persisted the params to the backing device. */
-	CU_ASSERT(memcmp(g_backing_dev_buf, SPDK_REDUCE_SIGNATURE, 8) == 0);
-	persistent_params = (struct spdk_reduce_vol_params *)(g_backing_dev_buf + 8);
-	CU_ASSERT(memcmp(persistent_params, &params, sizeof(params)) == 0);
-	CU_ASSERT(backing_dev.close != NULL);
-	/* Confirm that the path to the persistent memory metadata file was persisted to
-	 *  the backing device.
-	 */
-	CU_ASSERT(strncmp(g_path,
-			  g_backing_dev_buf + REDUCE_BACKING_DEV_PATH_OFFSET,
-			  REDUCE_PATH_MAX) == 0);
+	CU_ASSERT(strncmp(TEST_MD_PATH, g_path, strlen(TEST_MD_PATH)) == 0);
+	memcpy(pmem_file_path, g_path, sizeof(pmem_file_path));
 
-	g_ziperrno = -1;
-	g_backing_dev_closed = false;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
-	CU_ASSERT(g_backing_dev_closed == true);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	g_vol = NULL;
+	memset(g_path, 0, sizeof(g_path));
+	g_reduce_errno = -1;
+	spdk_reduce_vol_load(&backing_dev, load_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+	CU_ASSERT(strncmp(g_path, pmem_file_path, sizeof(pmem_file_path)) == 0);
+	CU_ASSERT(g_vol->params.vol_size == params.vol_size);
+	CU_ASSERT(g_vol->params.chunk_size == params.chunk_size);
+	CU_ASSERT(g_vol->params.backing_io_unit_size == params.backing_io_unit_size);
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
 
 	persistent_pm_buf_destroy();
 	backing_dev_destroy(&backing_dev);
@@ -425,47 +434,298 @@ init_backing_dev(void)
 static void
 load(void)
 {
+	_load(512);
+	_load(4096);
+}
+
+static uint64_t
+_vol_get_chunk_map_index(struct spdk_reduce_vol *vol, uint64_t offset)
+{
+	uint64_t logical_map_index = offset / vol->logical_blocks_per_chunk;
+
+	return vol->pm_logical_map[logical_map_index];
+}
+
+static uint64_t *
+_vol_get_chunk_map(struct spdk_reduce_vol *vol, uint64_t chunk_map_index)
+{
+	return &vol->pm_chunk_maps[chunk_map_index * vol->backing_io_units_per_chunk];
+}
+
+static void
+write_cb(void *arg, int reduce_errno)
+{
+	g_reduce_errno = reduce_errno;
+}
+
+static void
+read_cb(void *arg, int reduce_errno)
+{
+	g_reduce_errno = reduce_errno;
+}
+
+static void
+_write_maps(uint32_t backing_blocklen)
+{
 	struct spdk_reduce_vol_params params = {};
 	struct spdk_reduce_backing_dev backing_dev = {};
-	char pmem_file_path[REDUCE_PATH_MAX];
+	struct iovec iov;
+	char buf[16 * 1024]; /* chunk size */
+	uint32_t i;
+	uint64_t old_chunk0_map_index, new_chunk0_map_index;
+	uint64_t *old_chunk0_map, *new_chunk0_map;
 
-	params.vol_size = 1024 * 1024; /* 1MB */
+	params.chunk_size = 16 * 1024;
+	params.backing_io_unit_size = 4096;
+	params.logical_block_size = 512;
+	spdk_uuid_generate(&params.uuid);
+
+	backing_dev_init(&backing_dev, &params, backing_blocklen);
+
+	g_vol = NULL;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+
+	for (i = 0; i < g_vol->params.vol_size / g_vol->params.chunk_size; i++) {
+		CU_ASSERT(_vol_get_chunk_map_index(g_vol, i) == REDUCE_EMPTY_MAP_ENTRY);
+	}
+
+	iov.iov_base = buf;
+	iov.iov_len = params.logical_block_size;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, 0, 1, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	old_chunk0_map_index = _vol_get_chunk_map_index(g_vol, 0);
+	CU_ASSERT(old_chunk0_map_index != REDUCE_EMPTY_MAP_ENTRY);
+	CU_ASSERT(spdk_bit_array_get(g_vol->allocated_chunk_maps, old_chunk0_map_index) == true);
+
+	old_chunk0_map = _vol_get_chunk_map(g_vol, old_chunk0_map_index);
+	for (i = 0; i < g_vol->backing_io_units_per_chunk; i++) {
+		CU_ASSERT(old_chunk0_map[i] != REDUCE_EMPTY_MAP_ENTRY);
+		CU_ASSERT(spdk_bit_array_get(g_vol->allocated_backing_io_units, old_chunk0_map[i]) == true);
+	}
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, 0, 1, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	new_chunk0_map_index = _vol_get_chunk_map_index(g_vol, 0);
+	CU_ASSERT(new_chunk0_map_index != REDUCE_EMPTY_MAP_ENTRY);
+	CU_ASSERT(new_chunk0_map_index != old_chunk0_map_index);
+	CU_ASSERT(spdk_bit_array_get(g_vol->allocated_chunk_maps, new_chunk0_map_index) == true);
+	CU_ASSERT(spdk_bit_array_get(g_vol->allocated_chunk_maps, old_chunk0_map_index) == false);
+
+	for (i = 0; i < g_vol->backing_io_units_per_chunk; i++) {
+		CU_ASSERT(spdk_bit_array_get(g_vol->allocated_backing_io_units, old_chunk0_map[i]) == false);
+	}
+
+	new_chunk0_map = _vol_get_chunk_map(g_vol, new_chunk0_map_index);
+	for (i = 0; i < g_vol->backing_io_units_per_chunk; i++) {
+		CU_ASSERT(new_chunk0_map[i] != REDUCE_EMPTY_MAP_ENTRY);
+		CU_ASSERT(spdk_bit_array_get(g_vol->allocated_backing_io_units, new_chunk0_map[i]) == true);
+	}
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	g_vol = NULL;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_load(&backing_dev, load_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+	CU_ASSERT(g_vol->params.vol_size == params.vol_size);
+	CU_ASSERT(g_vol->params.chunk_size == params.chunk_size);
+	CU_ASSERT(g_vol->params.backing_io_unit_size == params.backing_io_unit_size);
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	persistent_pm_buf_destroy();
+	backing_dev_destroy(&backing_dev);
+}
+
+static void
+write_maps(void)
+{
+	_write_maps(512);
+	_write_maps(4096);
+}
+
+static void
+_read_write(uint32_t backing_blocklen)
+{
+	struct spdk_reduce_vol_params params = {};
+	struct spdk_reduce_backing_dev backing_dev = {};
+	struct iovec iov;
+	char buf[16 * 1024]; /* chunk size */
+	char compare_buf[16 * 1024];
+	uint32_t i;
+
+	params.chunk_size = 16 * 1024;
+	params.backing_io_unit_size = 4096;
+	params.logical_block_size = 512;
+	spdk_uuid_generate(&params.uuid);
+
+	backing_dev_init(&backing_dev, &params, backing_blocklen);
+
+	g_vol = NULL;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+
+	/* Write 0xAA to 2 512-byte logical blocks, starting at LBA 2. */
+	memset(buf, 0xAA, 2 * params.logical_block_size);
+	iov.iov_base = buf;
+	iov.iov_len = 2 * params.logical_block_size;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, 2, 2, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	memset(compare_buf, 0xAA, sizeof(compare_buf));
+	for (i = 0; i < params.chunk_size / params.logical_block_size; i++) {
+		memset(buf, 0xFF, params.logical_block_size);
+		iov.iov_base = buf;
+		iov.iov_len = params.logical_block_size;
+		g_reduce_errno = -1;
+		spdk_reduce_vol_readv(g_vol, &iov, 1, i, 1, read_cb, NULL);
+		CU_ASSERT(g_reduce_errno == 0);
+
+		switch (i) {
+		case 2:
+		case 3:
+			CU_ASSERT(memcmp(buf, compare_buf, params.logical_block_size) == 0);
+			break;
+		default:
+			CU_ASSERT(spdk_mem_all_zero(buf, params.logical_block_size));
+			break;
+		}
+	}
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	g_vol = NULL;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_load(&backing_dev, load_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+	CU_ASSERT(g_vol->params.vol_size == params.vol_size);
+	CU_ASSERT(g_vol->params.chunk_size == params.chunk_size);
+	CU_ASSERT(g_vol->params.backing_io_unit_size == params.backing_io_unit_size);
+
+	g_reduce_errno = -1;
+
+	/* Write 0xBB to 2 512-byte logical blocks, starting at LBA 37.
+	 * This is writing into the second chunk of the volume.  This also
+	 * enables implicitly checking that we reloaded the bit arrays
+	 * correctly - making sure we don't use the first chunk map again
+	 * for this new write - the first chunk map was already used by the
+	 * write from before we unloaded and reloaded.
+	 */
+	memset(buf, 0xBB, 2 * params.logical_block_size);
+	iov.iov_base = buf;
+	iov.iov_len = 2 * params.logical_block_size;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, 37, 2, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	for (i = 0; i < 2 * params.chunk_size / params.logical_block_size; i++) {
+		memset(buf, 0xFF, params.logical_block_size);
+		iov.iov_base = buf;
+		iov.iov_len = params.logical_block_size;
+		g_reduce_errno = -1;
+		spdk_reduce_vol_readv(g_vol, &iov, 1, i, 1, read_cb, NULL);
+		CU_ASSERT(g_reduce_errno == 0);
+
+		switch (i) {
+		case 2:
+		case 3:
+			memset(compare_buf, 0xAA, sizeof(compare_buf));
+			CU_ASSERT(memcmp(buf, compare_buf, params.logical_block_size) == 0);
+			break;
+		case 37:
+		case 38:
+			memset(compare_buf, 0xBB, sizeof(compare_buf));
+			CU_ASSERT(memcmp(buf, compare_buf, params.logical_block_size) == 0);
+			break;
+		default:
+			CU_ASSERT(spdk_mem_all_zero(buf, params.logical_block_size));
+			break;
+		}
+	}
+
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	persistent_pm_buf_destroy();
+	backing_dev_destroy(&backing_dev);
+}
+
+static void
+read_write(void)
+{
+	_read_write(512);
+	_read_write(4096);
+}
+
+static void
+destroy_cb(void *ctx, int reduce_errno)
+{
+	g_reduce_errno = reduce_errno;
+}
+
+static void
+destroy(void)
+{
+	struct spdk_reduce_vol_params params = {};
+	struct spdk_reduce_backing_dev backing_dev = {};
+
 	params.chunk_size = 16 * 1024;
 	params.backing_io_unit_size = 512;
 	params.logical_block_size = 512;
 	spdk_uuid_generate(&params.uuid);
 
-	backing_dev_init(&backing_dev, &params);
+	backing_dev_init(&backing_dev, &params, 512);
 
 	g_vol = NULL;
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_init(&params, &backing_dev, TEST_MD_PATH, init_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
-	SPDK_CU_ASSERT_FATAL(g_path != NULL);
-	memcpy(pmem_file_path, g_path, sizeof(pmem_file_path));
 
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 
 	g_vol = NULL;
-	g_path = NULL;
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_load(&backing_dev, load_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
-	SPDK_CU_ASSERT_FATAL(g_path != NULL);
-	CU_ASSERT(strncmp(g_path, pmem_file_path, sizeof(pmem_file_path)) == 0);
-	CU_ASSERT(g_vol->params.vol_size == params.vol_size);
-	CU_ASSERT(g_vol->params.chunk_size == params.chunk_size);
-	CU_ASSERT(g_vol->params.backing_io_unit_size == params.backing_io_unit_size);
 
-	g_ziperrno = -1;
+	g_reduce_errno = -1;
 	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
-	CU_ASSERT(g_ziperrno == 0);
+	CU_ASSERT(g_reduce_errno == 0);
 
-	persistent_pm_buf_destroy();
+	g_reduce_errno = -1;
+	MOCK_CLEAR(spdk_dma_zmalloc);
+	MOCK_CLEAR(spdk_malloc);
+	MOCK_CLEAR(spdk_zmalloc);
+	spdk_reduce_vol_destroy(&backing_dev, destroy_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+
+	g_reduce_errno = 0;
+	spdk_reduce_vol_load(&backing_dev, load_cb, NULL);
+	CU_ASSERT(g_reduce_errno == -EILSEQ);
+
 	backing_dev_destroy(&backing_dev);
 }
 
@@ -487,11 +747,14 @@ main(int argc, char **argv)
 
 	if (
 		CU_add_test(suite, "get_pm_file_size", get_pm_file_size) == NULL ||
-		CU_add_test(suite, "get_backing_device_size", get_backing_device_size) == NULL ||
+		CU_add_test(suite, "get_vol_size", get_vol_size) == NULL ||
 		CU_add_test(suite, "init_failure", init_failure) == NULL ||
 		CU_add_test(suite, "init_md", init_md) == NULL ||
 		CU_add_test(suite, "init_backing_dev", init_backing_dev) == NULL ||
-		CU_add_test(suite, "load", load) == NULL
+		CU_add_test(suite, "load", load) == NULL ||
+		CU_add_test(suite, "write_maps", write_maps) == NULL ||
+		CU_add_test(suite, "read_write", read_write) == NULL ||
+		CU_add_test(suite, "destroy", destroy) == NULL
 	) {
 		CU_cleanup_registry();
 		return CU_get_error();

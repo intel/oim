@@ -40,6 +40,8 @@ var initialized = false
 // setupProviderConfig validates and sets up cloudConfig based on framework.TestContext.Provider.
 func setupProviderConfig(data *[]byte) error {
 	switch framework.TestContext.Provider {
+	case "skeleton": // The default.
+		fallthrough
 	case "":
 		if *data == nil {
 			if err := spdk.Init(spdk.WithVHostSCSI()); err != nil {
@@ -64,6 +66,7 @@ func setupProviderConfig(data *[]byte) error {
 			if err := qemu.SimpleInit(); err != nil {
 				return err
 			}
+			log.L().Info("using SPDK with path %s", string(*data))
 			if err := spdk.Init(spdk.WithSPDKSocket(string(*data))); err != nil {
 				return err
 			}
