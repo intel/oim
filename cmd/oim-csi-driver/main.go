@@ -16,11 +16,6 @@ import (
 	"github.com/intel/oim/pkg/oim-csi-driver"
 )
 
-func init() {
-	// TODO: get rid of glog
-	flag.Set("logtostderr", "true")
-}
-
 var (
 	endpoint           = flag.String("endpoint", "unix:///tmp/csi.sock", "CSI endpoint")
 	driverName         = flag.String("drivername", "oim-csi-driver", "name of the driver")

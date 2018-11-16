@@ -90,7 +90,6 @@ var _ = Describe("OIM CSI driver", func() {
 		p, _, err := qemu.VM.ForwardPort(log.L(),
 			localSock, csiSock,
 			driverPath,
-			"--v=5", // TODO: remove glog
 			"--log.level=DEBUG",
 			"--endpoint", csiEndpoint,
 			"--nodeid=host-0",

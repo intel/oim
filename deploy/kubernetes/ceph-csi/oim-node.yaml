@@ -36,7 +36,6 @@ spec:
             - --controller-id=$(KUBE_NODE_NAME)
             - --ca=/ca/ca.crt
             - --key=/ca/host.$(KUBE_NODE_NAME).key
-            - --v=5
             - --drivername=oim-rbd
             - --emulate=ceph-csi
           env:

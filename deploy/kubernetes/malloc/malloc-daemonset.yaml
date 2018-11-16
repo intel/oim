@@ -30,7 +30,6 @@ spec:
       containers:
       - name: oim-csi-driver
         args:
-        - --v=5 # TODO: get rid of glog
         - --drivername=oim-malloc # This is the name under which the CSI driver gets referenced in the StorageClass and elsewhere.
         - --endpoint=$(CSI_ENDPOINT)
         - --nodeid=$(KUBE_NODE_NAME)

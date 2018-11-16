@@ -24,9 +24,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"gopkg.in/fsnotify/fsnotify.v1"
-	"k8s.io/kubernetes/pkg/util/mount"
 
 	"github.com/intel/oim/pkg/log"
+	"github.com/intel/oim/pkg/mount"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
