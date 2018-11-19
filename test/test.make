@@ -323,6 +323,9 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 			echo $$! >_work/clear-kvm.$$i.pid; \
 		fi; \
 	done
+	while ! _work/ssh-clear-kvm true 2>/dev/null; do \
+		sleep 1; \
+	done
 	_work/kube-clear-kvm
 	cat _work/ca/secret.yaml | _work/ssh-clear-kvm kubectl create -f -
 	for i in malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
