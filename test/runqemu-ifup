@@ -1,7 +1,9 @@
 #!/bin/bash -e
 #
 # QEMU network interface configuration script for OIM. This utility needs to
-# be run as normal user and depends on sudo.
+# be run as normal user and depends on sudo. For the sake of simplicity
+# it is based on pairwise routing between host and each guest via a tap
+# device, with the host acting as router for each guest.
 #
 # Copyright (c) 2006-2011 Linux Foundation
 # Copyright (c) 2018 Intel Corporation
@@ -34,11 +36,9 @@ for i in $(seq 0 $(($1 - 1))); do
     sudo ip tuntap add $TAP mode tap user `whoami`
     sudo ip link set $TAP up
     sleep 0.5s
-    # TODO: add to switch ip link set $1 master $switch
 
     n=$(( $i * 2 + 1 ))
     sudo ip addr add 192.168.7.$n/32 broadcast 192.168.7.255 dev $TAP
-    sudo ip link set dev $TAP up
 
     dest=$(( $i * 2 + 2 ))
     sudo ip route add to 192.168.7.$dest dev $TAP
