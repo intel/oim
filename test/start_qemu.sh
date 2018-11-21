@@ -57,6 +57,8 @@ fi
 # Same MAC address as the one used in setup-clear-kvm.sh.
 mac=DE:AD:BE:EF:01:0$VMN
 
+. $(dirname $0)/../test/test-config.sh
+
 # We must exec here to ensure that our caller can kill qemu by killing its child process.
 # The source of entropy for the guest is intentionally the non-blocking /dev/urandom.
 # This is sufficient for guests that don't do anything important and avoids draining
@@ -74,7 +76,7 @@ exec qemu-system-x86_64 \
     -device virtio-blk-pci,drive=disk,bootindex=0 \
     -drive file="$DATA_IMAGE",if=none,aio=threads,id=data,format=raw \
     -device virtio-blk-pci,drive=data \
-    -netdev tap,ifname=oimtap$VMN,script=no,downscript=no,id=mynet0 \
+    -netdev tap,ifname=${TEST_PREFIX}tap$VMN,script=no,downscript=no,id=mynet0 \
     -device virtio-net-pci,netdev=mynet0,mac=$mac \
     -debugcon "file:$IMAGE.debug.log" -global isa-debugcon.iobase=0x402 \
     "$@"
