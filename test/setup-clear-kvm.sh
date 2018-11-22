@@ -154,6 +154,14 @@ setup_clear_img () (
     # will refuse to pull images from it.
     _work/ssh-clear-kvm.$imagenum "mkdir -p /etc/docker && echo '{ \"insecure-registries\":[\"${TEST_IP_ADDR}.1:5000\"] }' >/etc/docker/daemon.json"
 
+    # flannel + CRI-O + Kata Containers needs a crio.conf change (https://clearlinux.org/documentation/clear-linux/tutorials/kubernetes):
+    #    If you are using CRI-O and flannel and you want to use Kata Containers, edit the /etc/crio/crio.conf file to add:
+    #    [crio.runtime]
+    #    manage_network_ns_lifecycle = true
+    #
+    # We don't use Kata Containers, so that particular change is not made to /etc/crio/crio.conf
+    # at this time.
+
     # Reconfiguration done, start daemons.
     _work/ssh-clear-kvm.$imagenum 'systemctl daemon-reload && systemctl restart docker kubelet && systemctl enable docker kubelet'
 
@@ -218,7 +226,9 @@ done 2>/dev/null
 # We use Docker (not default),
 # but have to suppress a version check:
 # [ERROR SystemVerification]: unsupported docker version: 18.06.1
-_work/ssh-clear-kvm.0 '$PROXY_ENV kubeadm init --ignore-preflight-errors=SystemVerification' | tee _work/clear-kvm-kubeadm.0.log
+#
+# --pod-network-cidr 10.244.0.0/16 is needed for flannel (https://clearlinux.org/documentation/clear-linux/tutorials/kubernetes)
+_work/ssh-clear-kvm.0 '$PROXY_ENV kubeadm init --ignore-preflight-errors=SystemVerification' --pod-network-cidr 10.244.0.0/16 | tee _work/clear-kvm-kubeadm.0.log
 _work/ssh-clear-kvm.0 'mkdir -p .kube'
 _work/ssh-clear-kvm.0 'cp -i /etc/kubernetes/admin.conf .kube/config'
 
@@ -252,6 +262,9 @@ ${TEST_CONFIGURE_POST_MASTER}
 for i in $(seq 1 $LAST_NODE); do
     _work/ssh-clear-kvm.$i $(grep "kubeadm join.*token" _work/clear-kvm-kubeadm.0.log) --ignore-preflight-errors=SystemVerification
 done
+
+# From https://kubernetes.io/docs/setup/independent/create-cluster-kubeadm/#pod-network
+_work/ssh-clear-kvm $PROXY_ENV kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
 
 # Run additional commands specified in config.
 ${TEST_CONFIGURE_POST_ALL}
