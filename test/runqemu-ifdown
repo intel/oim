@@ -28,12 +28,16 @@ fi
 
 . $(dirname $0)/test-config.sh
 
+BR=${TEST_PREFIX}br0
+
 for TAP in $(ip tuntap show | sed -e 's/:.*//' | grep ^${TEST_PREFIX}tap); do
     sudo ip link del $TAP
 
     i=$(echo $TAP | sed "s/${TEST_PREFIX}tap//")
     n=$(( $i * 2 + 1 ))
     dest=$(( $i * 2 + 2 ))
-    sudo iptables -D POSTROUTING -t nat -j MASQUERADE -s ${TEST_IP_ADDR}.$n/32
     sudo iptables -D POSTROUTING -t nat -j MASQUERADE -s ${TEST_IP_ADDR}.$dest/32
 done
+
+sudo iptables -D POSTROUTING -t nat -j MASQUERADE -s ${TEST_IP_ADDR}.1/32
+sudo ip link del $BR

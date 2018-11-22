@@ -293,7 +293,8 @@ This configures four tap devices for use by the current user. At the
 moment, the test setup is hard-coded to use:
 
 - `oimtap0/1/2/3`
-- 192.168.7.1/3/5/7 for the build host side of the tap interfaces
+- `oimbr0`
+- 192.168.7.1 for the build host side of the bridge interfaces
 - 192.168.7.2/4/6/8 for the virtual machines
 - 8.8.8.8 as DNS server for the virtual machine
 

@@ -111,7 +111,7 @@ setup_clear_img () (
     # Set up the static network configuration. The MAC address must match the one
     # in start_qemu.sh.
     echo "mkdir -p /etc/systemd/network" >&${COPROC[1]}
-    for i in "[Match]" "MACAddress=DE:AD:BE:EF:01:0$i" "[Network]" "Address=$ipaddr/24" "Gateway=${TEST_IP_ADDR}.$(($imagenum * 2 + 1))" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
+    for i in "[Match]" "MACAddress=DE:AD:BE:EF:01:0$i" "[Network]" "Address=$ipaddr/24" "Gateway=${TEST_IP_ADDR}.1" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
     echo "systemctl restart systemd-networkd" >&${COPROC[1]}
 
     # Install Kubernetes and additional bundles.
@@ -215,7 +215,7 @@ done 2>/dev/null
 # TODO: it is possible to set up each node in parallel, see
 # https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-init/#automating-kubeadm
 
-# We use Docker (the default),
+# We use Docker (not default),
 # but have to suppress a version check:
 # [ERROR SystemVerification]: unsupported docker version: 18.06.1
 _work/ssh-clear-kvm.0 '$PROXY_ENV kubeadm init --ignore-preflight-errors=SystemVerification' | tee _work/clear-kvm-kubeadm.0.log
