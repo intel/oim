@@ -57,4 +57,4 @@ for name in ${NAMES:-${DEFAULT_NAMES}}; do
             ;;
     esac
 done
-echo "  ca.crt: $(base64 -w 0 ${DEPOT_PATH}/ca.crt)" >>${DEPOT_PATH}/secret.yaml
+echo "  ca.crt: $(base64 -w 0 ${DEPOT_PATH}/$(echo ${CA} | tr ' ' '_').crt)" >>${DEPOT_PATH}/secret.yaml
