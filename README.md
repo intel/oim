@@ -296,7 +296,8 @@ moment, the test setup is hard-coded to use:
 - `oimbr0`
 - 192.168.7.1 for the build host side of the bridge interfaces
 - 192.168.7.2/4/6/8 for the virtual machines
-- 8.8.8.8 as DNS server for the virtual machine
+- the same DNS server for the virtual machines as on the development
+  host
 
 To undo the configuration changes made by `test/runqemu-ifup` when
 the tap device is no longer needed, run:

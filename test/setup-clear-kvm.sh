@@ -109,9 +109,10 @@ setup_clear_img () (
     chmod u+x _work/ssh-clear-kvm.$imagenum
 
     # Set up the static network configuration. The MAC address must match the one
-    # in start_qemu.sh.
+    # in start_qemu.sh. DNS configuration is taken from /etc/resolv.conf.
     echo "mkdir -p /etc/systemd/network" >&${COPROC[1]}
-    for i in "[Match]" "MACAddress=DE:AD:BE:EF:01:0$i" "[Network]" "Address=$ipaddr/24" "Gateway=${TEST_IP_ADDR}.1" "DNS=8.8.8.8"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
+    for i in "[Match]" "MACAddress=DE:AD:BE:EF:01:0$i" "[Network]" "Address=$ipaddr/24" "Gateway=${TEST_IP_ADDR}.1"; do echo "echo '$i' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
+    for addr in $(grep '^ *nameserver ' /etc/resolv.conf  | sed -e 's/nameserver//' -e "s/127.0.0.1/${TEST_IP_ADDR}.1/"); do echo "echo 'DNS=$addr' >>/etc/systemd/network/20-wired.network" >&${COPROC[1]}; done
     echo "systemctl restart systemd-networkd" >&${COPROC[1]}
 
     # Install Kubernetes and additional bundles.
