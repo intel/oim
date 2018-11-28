@@ -1,6 +1,13 @@
 # This file is meant to be sourced into various scripts in this directory and provides
 # some common settings.
 
+# The container runtime that is meant to be used inside Clear Linux.
+# Possible values are "docker" and "crio".
+#
+# Docker is the default because:
+# - survives killing the VMs while cri-o doesn't (https://github.com/kubernetes-sigs/cri-o/issues/1742#issuecomment-442384980)
+TEST_CRI=docker
+
 # Prefix for network devices etc.
 TEST_PREFIX=oim
 
@@ -20,6 +27,13 @@ TEST_CONFIGURE_POST_MASTER=do_configure_post_master
 
 # Called after Kubernetes has been configured and started.
 TEST_CONFIGURE_POST_ALL=do_configure_post_all
+
+# allow overriding the configuration in additional file(s)
+if [ -d test/test-config.d ]; then
+    for i in $(ls test/test-config.d/*.sh | sort); do
+        . $i
+    done
+fi
 
 do_enable_lvm () {
     imagenum=$1
