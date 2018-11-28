@@ -159,7 +159,9 @@ setup_clear_img () (
     # Due to stateless /etc is empty but /etc/hosts is needed by k8s pods.
     # It also expects that the local host name can be resolved. Let's use a nicer one
     # instead of the normal default (clear-<long hex string>).
-    _work/ssh-clear-kvm.$imagenum "hostnamectl set-hostname $hostname" && _work/ssh-clear-kvm.$imagenum "echo 127.0.0.1 localhost $hostname >>/etc/hosts"
+    _work/ssh-clear-kvm.$imagenum "hostnamectl set-hostname $hostname"
+    _work/ssh-clear-kvm.$imagenum "echo 127.0.0.1 localhost >>/etc/hosts"
+    _work/ssh-clear-kvm.$imagenum "echo $ipaddr $hostname >>/etc/hosts"
 
     # br_netfilter must be loaded explicitly on the Clear Linux KVM kernel (and only there),
     # otherwise the required /proc/sys/net/bridge/bridge-nf-call-iptables isn't there.
