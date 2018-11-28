@@ -4,7 +4,7 @@
 # - starts a QEMU virtual machine connected to SPDK's virtio-scsi controller
 # - starts a Kubernetes cluster
 # - deploys the OIM driver
-start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-clear-kvm _work/ca/.ca-stamp
+start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-clear-kvm _work/ca/.ca-stamp _work/vhost
 	if ! [ -e _work/oim-registry.pid ] || ! kill -0 $$(cat _work/oim-registry.pid) 2>/dev/null; then \
 		truncate -s 0 _work/oim-registry.log && \
 		( _output/oim-registry -endpoint tcp://192.168.7.1:0 -ca _work/ca/ca.crt -key _work/ca/component.registry.key -log.level DEBUG >>_work/oim-registry.log 2>&1 & echo $$! >_work/oim-registry.pid ) && \
