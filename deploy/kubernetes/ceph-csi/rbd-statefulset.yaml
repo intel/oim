@@ -49,7 +49,7 @@ spec:
             - mountPath: /rootfs
               name: host-rootfs
         - name: provisioner
-          image: quay.io/k8scsi/csi-provisioner:v0.4.0
+          image: quay.io/k8scsi/csi-provisioner:v0.4.1
           args:
             - "--provisioner=oim-rbd"
             - "--csi-address=$(ADDRESS)"
@@ -62,7 +62,7 @@ spec:
             - name: socket-dir
               mountPath: /var/lib/kubelet/plugins/oim-rbd-cluster
         - name: attacher
-          image: quay.io/k8scsi/csi-attacher:v0.4.0
+          image: quay.io/k8scsi/csi-attacher:v0.4.1
           args:
             - "--v=5"
             - "--csi-address=$(ADDRESS)"
