@@ -14,6 +14,12 @@ TEST_PREFIX=oim
 # IPv4 base address.
 TEST_IP_ADDR=192.168.7
 
+# IP addresses of DNS servers to use inside the VMs, separated by spaces.
+# The default is to use the ones specified in /etc/resolv.conf, but those
+# might not be reachable from inside the VMs (like for example, 127.0.0.53
+# from systemd-network).
+TEST_DNS_SERVERS=
+
 # Additional Clear Linux bundles.
 # storage-utils is needed because of https://github.com/clearlinux/distribution/issues/217
 TEST_CLEAR_LINUX_BUNDLES="storage-cluster storage-utils"
