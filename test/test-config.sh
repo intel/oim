@@ -36,7 +36,7 @@ TEST_CONFIGURE_POST_ALL=do_configure_post_all
 
 # allow overriding the configuration in additional file(s)
 if [ -d test/test-config.d ]; then
-    for i in $(ls test/test-config.d/*.sh | sort); do
+    for i in $(ls test/test-config.d/*.sh 2>/dev/null | sort); do
         . $i
     done
 fi
