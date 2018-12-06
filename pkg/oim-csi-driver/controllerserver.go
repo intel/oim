@@ -25,16 +25,7 @@ const (
 	maxStorageCapacity = tib
 )
 
-type controllerServer struct {
-	*DefaultControllerServer
-	od *oimDriver
-}
-
-func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	if err := cs.Driver.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
-		return nil, err
-	}
-
+func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetName()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Name missing in request")
@@ -43,16 +34,16 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Error(codes.InvalidArgument, "Volume Capabilities missing in request")
 	}
 
-	if cs.od.vhostEndpoint != "" {
-		return cs.createVolumeSPDK(ctx, req)
+	if od.vhostEndpoint != "" {
+		return od.createVolumeSPDK(ctx, req)
 	} else {
-		return cs.createVolumeOIM(ctx, req)
+		return od.createVolumeOIM(ctx, req)
 	}
 }
 
-func (cs *controllerServer) createVolumeSPDK(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
+func (od *oimDriver) createVolumeSPDK(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Connect to SPDK.
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	client, err := spdk.New(od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -116,7 +107,7 @@ func (cs *controllerServer) createVolumeSPDK(ctx context.Context, req *csi.Creat
 	}, nil
 }
 
-func (cs *controllerServer) createVolumeOIM(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
+func (od *oimDriver) createVolumeOIM(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	// Check for maximum available capacity
 	capacity := int64(req.GetCapacityRange().GetRequiredBytes())
 	if capacity >= maxStorageCapacity {
@@ -128,7 +119,7 @@ func (cs *controllerServer) createVolumeOIM(ctx context.Context, req *csi.Create
 		capacity = mib
 	}
 
-	if err := cs.provisionOIM(ctx, req.GetName(), capacity); err != nil {
+	if err := od.provisionOIM(ctx, req.GetName(), capacity); err != nil {
 		return nil, err
 	}
 
@@ -142,26 +133,22 @@ func (cs *controllerServer) createVolumeOIM(ctx context.Context, req *csi.Create
 	}, nil
 }
 
-func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+func (od *oimDriver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
 
-	if err := cs.Driver.ValidateControllerServiceRequest(csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
-		return nil, err
-	}
-
-	if cs.od.vhostEndpoint != "" {
-		return cs.deleteVolumeSPDK(ctx, req)
+	if od.vhostEndpoint != "" {
+		return od.deleteVolumeSPDK(ctx, req)
 	} else {
-		return cs.deleteVolumeOIM(ctx, req)
+		return od.deleteVolumeOIM(ctx, req)
 	}
 }
 
-func (cs *controllerServer) deleteVolumeSPDK(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+func (od *oimDriver) deleteVolumeSPDK(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Connect to SPDK.
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	client, err := spdk.New(od.vhostEndpoint)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -176,23 +163,23 @@ func (cs *controllerServer) deleteVolumeSPDK(ctx context.Context, req *csi.Delet
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
-func (cs *controllerServer) deleteVolumeOIM(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	if err := cs.provisionOIM(ctx, req.GetVolumeId(), 0); err != nil {
+func (od *oimDriver) deleteVolumeOIM(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+	if err := od.provisionOIM(ctx, req.GetVolumeId(), 0); err != nil {
 		return nil, err
 	}
 	return &csi.DeleteVolumeResponse{}, nil
 
 }
 
-func (cs *controllerServer) provisionOIM(ctx context.Context, bdevName string, size int64) error {
+func (od *oimDriver) provisionOIM(ctx context.Context, bdevName string, size int64) error {
 	// Connect to OIM controller through OIM registry.
-	conn, err := cs.od.DialRegistry(ctx)
+	conn, err := od.DialRegistry(ctx)
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	defer conn.Close()
 	controllerClient := oim.NewControllerClient(conn)
-	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", cs.od.oimControllerID)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
 	_, err = controllerClient.ProvisionMallocBDev(ctx, &oim.ProvisionMallocBDevRequest{
 		BdevName: bdevName,
 		Size_:    size,
@@ -200,7 +187,15 @@ func (cs *controllerServer) provisionOIM(ctx context.Context, bdevName string, s
 	return err
 }
 
-func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
+func (od *oimDriver) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (od *oimDriver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (od *oimDriver) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
 
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
@@ -212,10 +207,10 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 
 	// Check that volume exists.
 	var err error
-	if cs.od.vhostEndpoint != "" {
-		err = cs.checkVolumeExistsSPDK(ctx, req.GetVolumeId())
+	if od.vhostEndpoint != "" {
+		err = od.checkVolumeExistsSPDK(ctx, req.GetVolumeId())
 	} else {
-		err = cs.checkVolumeExistsOIM(ctx, req.GetVolumeId())
+		err = od.checkVolumeExistsOIM(ctx, req.GetVolumeId())
 	}
 	if err != nil {
 		return nil, err
@@ -229,9 +224,9 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 	return &csi.ValidateVolumeCapabilitiesResponse{Supported: true, Message: ""}, nil
 }
 
-func (cs *controllerServer) checkVolumeExistsSPDK(ctx context.Context, volumeID string) error {
+func (od *oimDriver) checkVolumeExistsSPDK(ctx context.Context, volumeID string) error {
 	// Connect to SPDK.
-	client, err := spdk.New(cs.od.vhostEndpoint)
+	client, err := spdk.New(od.vhostEndpoint)
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 	}
@@ -246,17 +241,45 @@ func (cs *controllerServer) checkVolumeExistsSPDK(ctx context.Context, volumeID 
 	}
 }
 
-func (cs *controllerServer) checkVolumeExistsOIM(ctx context.Context, volumeID string) error {
+func (od *oimDriver) checkVolumeExistsOIM(ctx context.Context, volumeID string) error {
 	// Connect to OIM controller through OIM registry.
-	conn, err := cs.od.DialRegistry(ctx)
+	conn, err := od.DialRegistry(ctx)
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	defer conn.Close()
 	controllerClient := oim.NewControllerClient(conn)
-	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", cs.od.oimControllerID)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
 	_, err = controllerClient.CheckMallocBDev(ctx, &oim.CheckMallocBDevRequest{
 		BdevName: volumeID,
 	})
 	return err
+}
+
+func (od *oimDriver) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (od *oimDriver) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+// ControllerGetCapabilities implements the default GRPC callout.
+// Default supports all capabilities
+func (od *oimDriver) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
+	return &csi.ControllerGetCapabilitiesResponse{
+		Capabilities: od.cap,
+	}, nil
+}
+
+func (od *oimDriver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (od *oimDriver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}
+
+func (od *oimDriver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
 }

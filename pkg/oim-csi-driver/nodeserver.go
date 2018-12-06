@@ -32,9 +32,30 @@ import (
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
-type nodeServer struct {
-	*DefaultNodeServer
-	od *oimDriver
+func (od *oimDriver) NodeGetId(ctx context.Context, req *csi.NodeGetIdRequest) (*csi.NodeGetIdResponse, error) {
+	return &csi.NodeGetIdResponse{
+		NodeId: od.nodeID,
+	}, nil
+}
+
+func (od *oimDriver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+	return &csi.NodeGetInfoResponse{
+		NodeId: od.nodeID,
+	}, nil
+}
+
+func (od *oimDriver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+	return &csi.NodeGetCapabilitiesResponse{
+		Capabilities: []*csi.NodeServiceCapability{
+			{
+				Type: &csi.NodeServiceCapability_Rpc{
+					Rpc: &csi.NodeServiceCapability_RPC{
+						Type: csi.NodeServiceCapability_RPC_UNKNOWN,
+					},
+				},
+			},
+		},
+	}, nil
 }
 
 func findNBDDevice(ctx context.Context, client *spdk.Client, volumeID string) (nbdDevice string, err error) {
@@ -50,7 +71,7 @@ func findNBDDevice(ctx context.Context, client *spdk.Client, volumeID string) (n
 	return "", nil
 }
 
-func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Check arguments
 	if req.GetVolumeCapability() == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume capability missing in request")
@@ -96,13 +117,13 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	)
 
 	device := ""
-	if ns.od.vhostEndpoint != "" {
-		if ns.od.emulate != nil {
-			return nil, fmt.Errorf("emulating CSI driver %q not currently implemented without SPDK", ns.od.emulate.CSIDriverName)
+	if od.vhostEndpoint != "" {
+		if od.emulate != nil {
+			return nil, fmt.Errorf("emulating CSI driver %q not currently implemented without SPDK", od.emulate.CSIDriverName)
 		}
 
 		// Connect to SPDK.
-		client, err := spdk.New(ns.od.vhostEndpoint)
+		client, err := spdk.New(od.vhostEndpoint)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}
@@ -164,7 +185,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		device = nbdDevice
 	} else {
 		// Connect to OIM controller through OIM registry.
-		conn, err := ns.od.DialRegistry(ctx)
+		conn, err := od.DialRegistry(ctx)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
@@ -175,7 +196,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		// Find out about configured PCI address before
 		// triggering the more complex MapVolume operation.
 		var defPCIAddress oim.PCIAddress
-		path := ns.od.oimControllerID + "/" + oimcommon.RegistryPCI
+		path := od.oimControllerID + "/" + oimcommon.RegistryPCI
 		valuesReply, err := registryClient.GetValues(ctx, &oim.GetValuesRequest{
 			Path: path,
 		})
@@ -194,7 +215,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		}
 
 		// Make volume available and/or find out where it is.
-		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", ns.od.oimControllerID)
+		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
 		request := &oim.MapVolumeRequest{
 			VolumeId: volumeID,
 			// Malloc BDev is the default. It takes no special parameters.
@@ -202,12 +223,12 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 				Malloc: &oim.MallocParams{},
 			},
 		}
-		if ns.od.emulate != nil {
+		if od.emulate != nil {
 			// Replace default parameters with the actual
 			// values for the request. Interpretation of
 			// the request depends on which CSI driver we
 			// emulate.
-			if err := ns.od.emulate.MapVolumeParams(req, request); err != nil {
+			if err := od.emulate.MapVolumeParams(req, request); err != nil {
 				return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("create MapVolumeRequest parameters: %s", err))
 			}
 		}
@@ -410,7 +431,7 @@ func findDev(ctx context.Context, sys string, pciAddress *oim.PCIAddress, scsiDi
 	return "", 0, 0, nil
 }
 
-func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
@@ -431,9 +452,9 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if ns.od.vhostEndpoint != "" {
+	if od.vhostEndpoint != "" {
 		// Connect to SPDK.
-		client, err := spdk.New(ns.od.vhostEndpoint)
+		client, err := spdk.New(od.vhostEndpoint)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, fmt.Sprintf("Failed to connect to SPDK: %s", err))
 		}
@@ -450,14 +471,14 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 		}
 	} else {
 		// Connect to OIM controller through OIM registry.
-		conn, err := ns.od.DialRegistry(ctx)
+		conn, err := od.DialRegistry(ctx)
 		if err != nil {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		controllerClient := oim.NewControllerClient(conn)
 
 		// Make volume available and/or find out where it is.
-		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", ns.od.oimControllerID)
+		ctx := metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
 		if _, err := controllerClient.UnmapVolume(ctx, &oim.UnmapVolumeRequest{
 			VolumeId: volumeID,
 		}); err != nil {
@@ -468,7 +489,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
@@ -481,7 +502,7 @@ func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+func (od *oimDriver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {

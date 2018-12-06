@@ -31,6 +31,7 @@ const (
 
 type oimDriver struct {
 	driverName         string
+	version            string
 	nodeID             string
 	csiEndpoint        string
 	vhostEndpoint      string
@@ -40,11 +41,9 @@ type oimDriver struct {
 	oimControllerID    string
 	emulate            *EmulateCSIDriver
 
-	driver *CSIDriver
+	cap []*csi.ControllerServiceCapability
+	vc  []*csi.VolumeCapability_AccessMode
 
-	ids   *identityServer
-	ns    *nodeServer
-	cs    *controllerServer
 	vhost string
 }
 
@@ -56,8 +55,6 @@ type EmulateCSIDriver struct {
 }
 
 var (
-	//	oimDriver     *oim
-	vendorVersion       = "0.2.0"
 	supportedCSIDrivers = make(map[string]*EmulateCSIDriver)
 )
 
@@ -66,6 +63,13 @@ type Option func(*oimDriver) error
 func WithDriverName(name string) Option {
 	return func(od *oimDriver) error {
 		od.driverName = name
+		return nil
+	}
+}
+
+func WithDriverVersion(version string) Option {
+	return func(od *oimDriver) error {
+		od.version = version
 		return nil
 	}
 }
@@ -131,6 +135,7 @@ func WithEmulation(csiDriverName string) Option {
 func New(options ...Option) (*oimDriver, error) {
 	od := oimDriver{
 		driverName:  "oim-driver",
+		version:     "unknown",
 		nodeID:      "unset-node-id",
 		csiEndpoint: "unix:///var/run/oim-driver.socket",
 	}
@@ -154,26 +159,6 @@ func New(options ...Option) (*oimDriver, error) {
 	return &od, nil
 }
 
-func NewIdentityServer(od *oimDriver) *identityServer {
-	return &identityServer{
-		DefaultIdentityServer: NewDefaultIdentityServer(od.driver),
-	}
-}
-
-func NewControllerServer(od *oimDriver) *controllerServer {
-	return &controllerServer{
-		DefaultControllerServer: NewDefaultControllerServer(od.driver),
-		od: od,
-	}
-}
-
-func NewNodeServer(od *oimDriver) *nodeServer {
-	return &nodeServer{
-		DefaultNodeServer: NewDefaultNodeServer(od.driver),
-		od:                od,
-	}
-}
-
 // TODO: concurrency protection
 //
 // By default, each gRPC call will execute in its own goroutine. That means
@@ -184,32 +169,23 @@ func NewNodeServer(od *oimDriver) *nodeServer {
 // only those calls related to the same item (bdev?).
 
 func (od *oimDriver) Start(ctx context.Context) (*oimcommon.NonBlockingGRPCServer, error) {
-	// Initialize default library driver
-	od.driver = NewCSIDriver(od.driverName, vendorVersion, od.nodeID)
-	if od.driver == nil {
-		return nil, errors.New("Failed to initialize CSI Driver.")
-	}
+	// Determine capabilities.
 	if od.emulate != nil {
-		od.driver.AddControllerServiceCapabilities(od.emulate.ControllerServiceCapabilities)
-		od.driver.AddVolumeCapabilityAccessModes(od.emulate.VolumeCapabilityAccessModes)
+		od.setControllerServiceCapabilities(od.emulate.ControllerServiceCapabilities)
+		od.setVolumeCapabilityAccessModes(od.emulate.VolumeCapabilityAccessModes)
 	} else {
 		// malloc fallback
-		od.driver.AddControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME})
-		od.driver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
+		od.setControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME})
+		od.setVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
 	}
-
-	// Create GRPC servers
-	od.ids = NewIdentityServer(od)
-	od.ns = NewNodeServer(od)
-	od.cs = NewControllerServer(od)
 
 	s := oimcommon.NonBlockingGRPCServer{
 		Endpoint: od.csiEndpoint,
 	}
 	s.Start(ctx, func(s *grpc.Server) {
-		csi.RegisterIdentityServer(s, od.ids)
-		csi.RegisterNodeServer(s, od.ns)
-		csi.RegisterControllerServer(s, od.cs)
+		csi.RegisterIdentityServer(s, od)
+		csi.RegisterNodeServer(s, od)
+		csi.RegisterControllerServer(s, od)
 	})
 	return &s, nil
 }

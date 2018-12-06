@@ -17,6 +17,7 @@ import (
 )
 
 var (
+	version            = "unknown" // TODO: set at build time
 	endpoint           = flag.String("endpoint", "unix:///tmp/csi.sock", "CSI endpoint")
 	driverName         = flag.String("drivername", "oim-csi-driver", "name of the driver")
 	nodeID             = flag.String("nodeid", "", "node id")
@@ -43,6 +44,7 @@ func main() {
 
 	options := []oimcsidriver.Option{
 		oimcsidriver.WithDriverName(*driverName),
+		oimcsidriver.WithDriverVersion(version),
 		oimcsidriver.WithCSIEndpoint(*endpoint),
 		oimcsidriver.WithNodeID(*nodeID),
 		oimcsidriver.WithVHostEndpoint(*spdkSocket),
