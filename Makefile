@@ -19,6 +19,8 @@ REGISTRY_NAME=localhost:5000
 IMAGE_VERSION_oim-csi-driver=canary
 IMAGE_TAG=$(REGISTRY_NAME)/$*:$(IMAGE_VERSION_$*)
 
+REV=$(shell git describe --long --tags --match='v*' --dirty)
+
 OIM_CMDS=oim-controller oim-csi-driver oim-registry oimctl
 
 # Need bash for coproc in test/test.make.
@@ -45,7 +47,7 @@ update:
 
 .PHONY: $(OIM_CMDS)
 $(OIM_CMDS):
-	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o _output/$@ ./cmd/$@
+	CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-X main.version=$(REV) -extldflags "-static"' -o _output/$@ ./cmd/$@
 
 # _output is used as the build context. All files inside it are sent
 # to the Docker daemon when building images.

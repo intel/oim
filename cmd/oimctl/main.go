@@ -22,6 +22,9 @@ import (
 )
 
 var (
+	version      = "unknown" // set at build time
+	printVersion = flag.Bool("version", false, "output version information and exit")
+
 	endpoint = flag.String("registry", "", "the gRPC endpoint of the OIM registry (for example, dns:///localhost:8999)")
 	ca       = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections to the registry")
 	key      = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry client")
@@ -45,6 +48,11 @@ func main() {
 	config.Output = os.Stderr
 	logger := log.NewSimpleLogger(config)
 	log.Set(logger)
+
+	if *printVersion {
+		logger.Infof("oimctl %s", version)
+		return
+	}
 
 	if *endpoint == "" {
 		logger.Fatal("-registry must be set")

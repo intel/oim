@@ -17,7 +17,8 @@ import (
 )
 
 var (
-	version            = "unknown" // TODO: set at build time
+	version            = "unknown" // set at build time
+	printVersion       = flag.Bool("version", false, "output version information and exit")
 	endpoint           = flag.String("endpoint", "unix:///tmp/csi.sock", "CSI endpoint")
 	driverName         = flag.String("drivername", "oim-csi-driver", "name of the driver")
 	nodeID             = flag.String("nodeid", "", "node id")
@@ -35,6 +36,11 @@ func main() {
 
 	logger := log.NewSimpleLogger(log.NewSimpleConfig())
 	log.Set(logger)
+
+	if *printVersion {
+		logger.Infof("oim-csi-driver %s", version)
+		return
+	}
 
 	closer, err := oimcommon.InitTracer(*driverName)
 	if err != nil {

@@ -18,6 +18,8 @@ import (
 )
 
 var (
+	version           = "unknown" // set at build time
+	printVersion      = flag.Bool("version", false, "output version information and exit")
 	endpoint          = flag.String("endpoint", "tcp://:8999", "OIM controller endpoint for net.Listen")
 	spdk              = flag.String("spdk", "/var/tmp/vhost.sock", "SPDK VHost RPC socket path")
 	vhost             = flag.String("vhost-scsi-controller", "vhost.0", "SPDK VirtIO SCSI controller name")
@@ -37,6 +39,11 @@ func main() {
 
 	logger := log.NewSimpleLogger(log.NewSimpleConfig())
 	log.Set(logger)
+
+	if *printVersion {
+		logger.Infof("oim-controller %s", version)
+		return
+	}
 
 	closer, err := oimcommon.InitTracer(app)
 	if err != nil {

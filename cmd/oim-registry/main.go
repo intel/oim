@@ -17,10 +17,12 @@ import (
 )
 
 var (
-	endpoint = flag.String("endpoint", "unix:///tmp/registry.sock", "OIM registry endpoint")
-	ca       = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections")
-	key      = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry")
-	_        = log.InitSimpleFlags()
+	version      = "unknown" // set at build time
+	printVersion = flag.Bool("version", false, "output version information and exit")
+	endpoint     = flag.String("endpoint", "unix:///tmp/registry.sock", "OIM registry endpoint")
+	ca           = flag.String("ca", "", "the required CA's .crt file which is used for verifying connections")
+	key          = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the registry")
+	_            = log.InitSimpleFlags()
 )
 
 func main() {
@@ -29,6 +31,11 @@ func main() {
 
 	logger := log.NewSimpleLogger(log.NewSimpleConfig())
 	log.Set(logger)
+
+	if *printVersion {
+		logger.Infof("oim-registry %s", version)
+		return
+	}
 
 	if *ca == "" {
 		logger.Fatalf("A CA file is required.")
