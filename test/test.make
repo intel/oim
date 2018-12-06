@@ -160,10 +160,12 @@ RUNTIME_DEPS += sed -e 's;google.golang.org/grpc/*.*;grpc-go,https://github.com/
 RUNTIME_DEPS += sed \
 	-e 's;github.com/gogo/protobuf;gogo protobuf,https://github.com/gogo/protobuf;' \
 	-e 's;github.com/golang/glog;glog,https://github.com/golang/glog;' \
+	-e 's;github.com/golang/protobuf;golang-protobuf,https://github.com/golang/protobuf;' \
 	-e 's;github.com/pkg/errors;pkg/errors,https://github.com/pkg/errors;' \
 	-e 's;github.com/vgough/grpc-proxy;grpc-proxy,https://github.com/vgough/grpc-proxy;' \
 	-e 's;golang.org/x/.*;Go,https://github.com/golang/go;' \
 	-e 's;k8s.io/.*;kubernetes,https://github.com/kubernetes/kubernetes;' \
+	-e 's;github.com/kubernetes-csi/.*;kubernetes,https://github.com/kubernetes/kubernetes;' \
 	-e 's;gopkg.in/fsnotify.*;golang-github-fsnotify-fsnotify,https://github.com/fsnotify/fsnotify;' \
 	| cat |
 

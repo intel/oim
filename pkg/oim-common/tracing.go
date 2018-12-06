@@ -20,7 +20,9 @@ import (
 	// otlog "github.com/opentracing/opentracing-go/log"
 	// jaegercfg "github.com/uber/jaeger-client-go/config"
 
+	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 	"github.com/intel/oim/pkg/log"
+	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 )
 
 // PayloadFormatter is responsible for turning a gRPC request or response
@@ -44,6 +46,21 @@ func (c CompletePayloadFormatter) Sprint(payload interface{}) string {
 		return "<empty>"
 	}
 	return result
+}
+
+// StripSecretsFormatter removes secret fields from a CSI 0.3 or CSI 1.0 message
+// using the protosanitizer package.
+type StripSecretsFormatter struct{}
+
+// This is a compile-time check that we are still using CSI 0.3 and thus
+// have to use StripSecretsCSI03. It'll fail when switching to CSI 1.0,
+// in which case we must switch to filtering with StripSecrets.
+var _ = csi.CreateVolumeRequest{
+	ControllerCreateSecrets: map[string]string{},
+}
+
+func (s StripSecretsFormatter) Sprint(payload interface{}) string {
+	return protosanitizer.StripSecretsCSI03(payload).String()
 }
 
 // NullPayloadFormatter just produces "nil" or "<filtered>".

@@ -19,6 +19,7 @@ github.com/fatih/camelcase;fatih camelcase;MIT License
 github.com/globalsign/mgo;mgo;BSD 2-clause "Simplified" License
 github.com/gogo/protobuf;gogo protobuf;BSD 3-clause "New" or "Revised" License
 github.com/golang/groupcache;groupcache;Apache License 2.0
+github.com/golang/protobuf;protobuf;BSD 3-clause "New" or "Revised" License
 github.com/googleapis/gnostic;googleapis gnostic;Apache License 2.0
 github.com/google/btree;google btree;Apache License 2.0
 github.com/google/gofuzz;Google gofuzz;Apache License 2.0
@@ -42,6 +43,7 @@ github.com/inconshreveable/mousetrap;inconshreveable mousetrap;Apache License 2.
 github.com/intel/govmm;Intel govmm;Apache License 2.0
 github.com/json-iterator/go;json-iterator go;MIT License
 github.com/konsorten/go-windows-terminal-sequences;go-windows-terminal-sequences;MIT License
+github.com/kubernetes-csi/csi-lib-utils;Kubernetes csi-lib-utils;Apache License 2.0
 github.com/kubernetes-csi/csi-test;Kubernetes csi csi test;Apache License 2.0
 github.com/mailru/easyjson;Mail.Ru easyjson for golag;MIT License
 github.com/matttproud/golang_protobuf_extensions;Matt Proud golang-protobuf-extentions;Apache License 2.0

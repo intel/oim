@@ -53,7 +53,7 @@ func ChooseDialOpts(endpoint string, opts ...grpc.DialOption) []grpc.DialOption 
 	// should we do the same?
 
 	// Tracing of outgoing calls, including remote and local logging.
-	formatter := CompletePayloadFormatter{} // TODO: filter out secrets
+	formatter := StripSecretsFormatter{}
 	// interceptor := grpc_middleware.ChainUnaryClient(
 	// 	otgrpc.OpenTracingClientInterceptor(
 	// 		opentracing.GlobalTracer(),

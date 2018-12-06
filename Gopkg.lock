@@ -302,6 +302,17 @@
   revision = "c65c006176ff7ff98bb916961c7abbc6b0afc0aa"
 
 [[projects]]
+  digest = "1:0eac0f2615047aff9ce70a67b6ff9ed3d4b8b391ab76d04fef686fc740c560aa"
+  name = "github.com/golang/protobuf"
+  packages = [
+    "descriptor",
+    "protoc-gen-go/descriptor",
+  ]
+  pruneopts = "UT"
+  revision = "aa810b61a9c79d51363740d207bb46cf8e620ed5"
+  version = "v1.2.0"
+
+[[projects]]
   branch = "master"
   digest = "1:0bfbe13936953a98ae3cfe8ed6670d396ad81edf069a806d2f6515d7bb6950df"
   name = "github.com/google/btree"
@@ -420,6 +431,14 @@
   pruneopts = "UT"
   revision = "5c8c8bd35d3832f5d134ae1e1e375b69a4d25242"
   version = "v1.0.1"
+
+[[projects]]
+  digest = "1:2b060bb1a39127e592baf9ab62ec1e94100dc22107f915183f3cd1f6d1cd579a"
+  name = "github.com/kubernetes-csi/csi-lib-utils"
+  packages = ["protosanitizer"]
+  pruneopts = "UT"
+  revision = "5853414e1d4771302e0df10d1870c444c2135799"
+  version = "v0.2.0"
 
 [[projects]]
   digest = "1:f2d2fa10f6cd1ad64274c85f6105947b2966e026aafb997c3f6b7a91a4700664"
@@ -1647,6 +1666,7 @@
     "github.com/gogo/protobuf/proto",
     "github.com/gogo/protobuf/types",
     "github.com/intel/govmm/qemu",
+    "github.com/kubernetes-csi/csi-lib-utils/protosanitizer",
     "github.com/kubernetes-csi/csi-test/pkg/sanity",
     "github.com/nightlyone/lockfile",
     "github.com/onsi/ginkgo",
