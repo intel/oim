@@ -129,7 +129,6 @@ func TestNBDDev(t *testing.T) {
 	numBlocks := int64(2048)
 	blockSize := int64(512)
 	createArg := spdk.ConstructMallocBDevArgs{ConstructBDevArgs: spdk.ConstructBDevArgs{NumBlocks: numBlocks, BlockSize: blockSize, Name: name}}
-	// TODO: this does not get called when the test fails?
 	defer func() {
 		spdk.DeleteBDev(ctx, client, spdk.DeleteBDevArgs{Name: name})
 	}()
