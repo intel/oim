@@ -76,12 +76,17 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	if req.GetVolumeCapability() == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume capability missing in request")
 	}
-	if len(req.GetVolumeId()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
-	}
 	if len(req.GetTargetPath()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
 	}
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	name := req.GetVolumeId()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	volumeNameMutex.LockKey(name)
+	defer volumeNameMutex.UnlockKey(name)
 
 	// Check and prepare mount point.
 	targetPath := req.GetTargetPath()
@@ -441,6 +446,14 @@ func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	}
 	targetPath := req.GetTargetPath()
 	volumeID := req.GetVolumeId()
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	name := req.GetVolumeId()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	volumeNameMutex.LockKey(name)
+	defer volumeNameMutex.UnlockKey(name)
 
 	// Unmounting the image
 	// TODO: check whether this really is still a mount point. We might have removed it already.

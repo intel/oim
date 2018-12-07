@@ -48,6 +48,10 @@ var _ = Describe("OIM Controller", func() {
 			registry        *oimregistry.Registry
 			registryServer  *oimcommon.NonBlockingGRPCServer
 			registryAddress string
+
+			getDB = func() map[string]string {
+				return oimregistry.GetRegistryEntries(db)
+			}
 		)
 
 		BeforeEach(func() {
@@ -62,7 +66,7 @@ var _ = Describe("OIM Controller", func() {
 			// Spin up registry.
 			tlsConfig, err := oimcommon.LoadTLSConfig(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/component.registry.key"), "")
 			Expect(err).NotTo(HaveOccurred())
-			db = &oimregistry.MemRegistryDB{}
+			db = oimregistry.NewMemRegistryDB()
 			registry, err = oimregistry.New(oimregistry.DB(db), oimregistry.TLS(tlsConfig))
 			Expect(err).NotTo(HaveOccurred())
 			registryServer, service := registry.Server("tcp4://:0")
@@ -94,9 +98,9 @@ var _ = Describe("OIM Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer c.Stop()
 
-			Eventually(func() oimregistry.MemRegistryDB {
-				return *db
-			}).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
+			Eventually(func() map[string]string {
+				return oimregistry.GetRegistryEntries(db)
+			}).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 		})
 
 		It("should re-register", func() {
@@ -113,13 +117,11 @@ var _ = Describe("OIM Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer c.Stop()
 
-			getDB := func() oimregistry.MemRegistryDB {
-				return *db
-			}
-			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
-			(*db)[controllerID+"/"+oimcommon.RegistryAddress] = ""
-			Consistently(getDB, 4*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: ""}))
-			Eventually(getDB, 120*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
+			Eventually(getDB, 1*time.Second).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
+			// Remove entry.
+			db.Store(controllerID+"/"+oimcommon.RegistryAddress, "")
+			Consistently(getDB, 4*time.Second).Should(Equal(map[string]string{}))
+			Eventually(getDB, 120*time.Second).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 		})
 
 		It("should really stop", func() {
@@ -135,13 +137,11 @@ var _ = Describe("OIM Controller", func() {
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
 
-			getDB := func() oimregistry.MemRegistryDB {
-				return *db
-			}
-			Eventually(getDB, 1*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: addr}))
+			Eventually(getDB, 1*time.Second).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 			c.Stop()
-			(*db)[controllerID+"/"+oimcommon.RegistryAddress] = ""
-			Consistently(getDB, 10*time.Second).Should(Equal(oimregistry.MemRegistryDB{controllerID + "/" + oimcommon.RegistryAddress: ""}))
+			// Remove entry.
+			db.Store(controllerID+"/"+oimcommon.RegistryAddress, "")
+			Consistently(getDB, 10*time.Second).Should(Equal(map[string]string{}))
 		})
 	})
 

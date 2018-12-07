@@ -23,6 +23,7 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
+	"k8s.io/kubernetes/pkg/util/keymutex" // TODO: move to k8s.io/utils (https://github.com/kubernetes/utils/issues/62)
 )
 
 // Controller implements oim.Controller.
@@ -41,6 +42,15 @@ type Controller struct {
 	stop chan<- interface{}
 }
 
+var (
+	// Volume IDs and BDev names are the keys.
+	//
+	// It's okay to get hash collisions when volume ID and BDev name
+	// are the same, then one goroutine will just block unnecessarily;
+	// should be rare.
+	volumeMutex = keymutex.NewHashed(-1)
+)
+
 func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
 	volumeID := in.GetVolumeId()
 	if volumeID == "" {
@@ -55,6 +65,10 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	if c.vhostDev == nil {
 		return nil, errors.New("no PCI BDF configured")
 	}
+
+	// Serialize by volume.
+	volumeMutex.LockKey(volumeID)
+	defer volumeMutex.UnlockKey(volumeID)
 
 	// Reuse or create BDev.
 	if _, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: volumeID}); err != nil {
@@ -149,6 +163,10 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 		return nil, errors.New("not connected to SPDK")
 	}
 
+	// Serialize by volume.
+	volumeMutex.LockKey(volumeID)
+	defer volumeMutex.UnlockKey(volumeID)
+
 	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("GetVHostControllers: %s", err))
@@ -199,6 +217,11 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 	if c.SPDK == nil {
 		return nil, errors.New("not connected to SPDK")
 	}
+
+	// Serialize by BDev.
+	volumeMutex.LockKey(bdevName)
+	defer volumeMutex.UnlockKey(bdevName)
+
 	size := in.Size_
 	if size != 0 {
 		bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
@@ -237,6 +260,10 @@ func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDe
 	if c.SPDK == nil {
 		return nil, errors.New("not connected to SPDK")
 	}
+
+	// Serialize by BDev.
+	volumeMutex.LockKey(bdevName)
+	defer volumeMutex.UnlockKey(bdevName)
 
 	bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
 	if err == nil && len(bdevs) == 1 {

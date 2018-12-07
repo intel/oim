@@ -1434,7 +1434,7 @@
   revision = "a9a16210091c9a2b6a937e06a182955c03654c4c"
 
 [[projects]]
-  digest = "1:dac1b68222338a37f6a70e42da7db2be3c1b3e8027f7bf1103d34fb137742b2a"
+  digest = "1:3b0c8b26435c454c95aece055946ba915d2e67b067b35be1102770aa799d872a"
   name = "k8s.io/kubernetes"
   packages = [
     "cmd/kubeadm/app/apis/kubeadm",
@@ -1606,6 +1606,7 @@
     "pkg/util/goroutinemap/exponentialbackoff",
     "pkg/util/hash",
     "pkg/util/io",
+    "pkg/util/keymutex",
     "pkg/util/labels",
     "pkg/util/metrics",
     "pkg/util/mount",
@@ -1698,6 +1699,7 @@
     "k8s.io/client-go/kubernetes",
     "k8s.io/kubernetes/pkg/apis/core/v1/helper",
     "k8s.io/kubernetes/pkg/apis/storage/v1/util",
+    "k8s.io/kubernetes/pkg/util/keymutex",
     "k8s.io/kubernetes/pkg/version",
     "k8s.io/kubernetes/test/e2e/framework",
     "k8s.io/kubernetes/test/e2e/framework/ginkgowrapper",

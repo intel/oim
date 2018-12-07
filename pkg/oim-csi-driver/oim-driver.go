@@ -159,15 +159,6 @@ func New(options ...Option) (*oimDriver, error) {
 	return &od, nil
 }
 
-// TODO: concurrency protection
-//
-// By default, each gRPC call will execute in its own goroutine. That means
-// that if an operation takes a long time and the sidecar decides to re-issue
-// the call, we end up doing the same thing in parallel.
-//
-// We need to decide between a) serializing all calls or b) serializing
-// only those calls related to the same item (bdev?).
-
 func (od *oimDriver) Start(ctx context.Context) (*oimcommon.NonBlockingGRPCServer, error) {
 	// Determine capabilities.
 	if od.emulate != nil {

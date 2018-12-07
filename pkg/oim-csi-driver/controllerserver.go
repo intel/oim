@@ -34,6 +34,14 @@ func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 		return nil, status.Error(codes.InvalidArgument, "Volume Capabilities missing in request")
 	}
 
+	// Serialize operations per volume by name.
+	name := req.GetName()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty name")
+	}
+	volumeNameMutex.LockKey(name)
+	defer volumeNameMutex.UnlockKey(name)
+
 	if od.vhostEndpoint != "" {
 		return od.createVolumeSPDK(ctx, req)
 	} else {
@@ -139,6 +147,14 @@ func (od *oimDriver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
 
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	name := req.GetVolumeId()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	volumeNameMutex.LockKey(name)
+	defer volumeNameMutex.UnlockKey(name)
+
 	if od.vhostEndpoint != "" {
 		return od.deleteVolumeSPDK(ctx, req)
 	} else {
@@ -204,6 +220,14 @@ func (od *oimDriver) ValidateVolumeCapabilities(ctx context.Context, req *csi.Va
 	if req.GetVolumeCapabilities() == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume capabilities missing in request")
 	}
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	name := req.GetVolumeId()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	volumeNameMutex.LockKey(name)
+	defer volumeNameMutex.UnlockKey(name)
 
 	// Check that volume exists.
 	var err error

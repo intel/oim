@@ -39,6 +39,16 @@ type RegistryDB interface {
 	Foreach(func(controllerID, address string) bool)
 }
 
+// GetRegistryEntries returns all database entries as a map.
+func GetRegistryEntries(db RegistryDB) map[string]string {
+	entries := make(map[string]string)
+	db.Foreach(func(key, value string) bool {
+		entries[key] = value
+		return true
+	})
+	return entries
+}
+
 // Registry implements oim.Registry.
 type Registry struct {
 	db        RegistryDB
@@ -206,7 +216,7 @@ func TLS(tlsConfig *tls.Config) Option {
 
 func New(options ...Option) (*Registry, error) {
 	r := Registry{}
-	r.db = make(MemRegistryDB)
+	r.db = NewMemRegistryDB()
 	for _, op := range options {
 		err := op(&r)
 		if err != nil {

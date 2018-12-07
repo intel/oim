@@ -58,7 +58,7 @@ var _ = Describe("OIM Registry", func() {
 
 	Describe("storing mapping", func() {
 		It("should work", func() {
-			db := oimregistry.MemRegistryDB{}
+			db := oimregistry.NewMemRegistryDB()
 			var err error
 			tlsConfig, err := oimcommon.LoadTLSConfig(os.ExpandEnv("${TEST_WORK}/ca/ca.crt"), os.ExpandEnv("${TEST_WORK}/ca/component.registry.key"), "")
 			Expect(err).NotTo(HaveOccurred())
@@ -66,7 +66,7 @@ var _ = Describe("OIM Registry", func() {
 			Expect(err).NotTo(HaveOccurred())
 			key1 := "foo/controller-id"
 			value1 := "dns:///1.1.1.1/"
-			expected := oimregistry.MemRegistryDB{key1: value1}
+			expected := map[string]string{key1: value1}
 			_, err = r.SetValue(adminCtx, &oim.SetValueRequest{
 				Value: &oim.Value{
 					Path:  key1,
@@ -74,7 +74,7 @@ var _ = Describe("OIM Registry", func() {
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(db).To(Equal(expected))
+			Expect(oimregistry.GetRegistryEntries(db)).To(Equal(expected))
 
 			key2 := "foo/pci"
 			value2 := "0000:0003:20.1"
@@ -86,7 +86,7 @@ var _ = Describe("OIM Registry", func() {
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(db).To(Equal(expected))
+			Expect(oimregistry.GetRegistryEntries(db)).To(Equal(expected))
 
 			key3 := "bar/pci"
 			value3 := "0000:0004:30.2"
@@ -98,7 +98,7 @@ var _ = Describe("OIM Registry", func() {
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(db).To(Equal(expected))
+			Expect(oimregistry.GetRegistryEntries(db)).To(Equal(expected))
 
 			var values *oim.GetValuesReply
 			values, err = r.GetValues(adminCtx, &oim.GetValuesRequest{})
