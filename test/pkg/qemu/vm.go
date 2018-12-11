@@ -24,24 +24,32 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 )
 
+// VirtualMachine handles interaction with a QEMU virtual machine.
 type VirtualMachine struct {
-	QMP    *qemu.QMP
-	Cmd    *exec.Cmd
-	Stderr bytes.Buffer
-	SSHCmd string
+	qmp    *qemu.QMP
+	cmd    *exec.Cmd
+	stderr bytes.Buffer
+	sshcmd string
 	done   <-chan interface{}
 	image  string
 	start  string
 }
 
+// StartError is the error returned when starting the VM fails.
 type StartError struct {
-	Args         []string
-	Stderr       string
+	// Args has the QEMU parameters.
+	Args []string
+	// Stderr is the combined stdout/stderr.
+	Stderr string
+	// ProcessState has the exit status.
 	ProcessState *os.ProcessState
-	ExitError    error
-	OtherError   error
+	// ExitError is the result of the Wait call for the process.
+	ExitError error
+	// OtherError is an error that occcured while starting the process.
+	OtherError error
 }
 
+// Error turns the error into a string.
 func (err StartError) Error() string {
 	return fmt.Sprintf("Problem with QEMU %s: %s\nCommand terminated: %s\n%s",
 		err.Args,
@@ -50,22 +58,22 @@ func (err StartError) Error() string {
 		err.Stderr)
 }
 
-// QMPLog implements https://godoc.org/github.com/intel/govmm/qemu#QMPLog
-type QMPLog struct{}
+// qmpLog implements https://godoc.org/github.com/intel/govmm/qemu#qmpLog
+type qmpLog struct{}
 
-func (ql QMPLog) V(int32) bool {
+func (ql qmpLog) V(int32) bool {
 	return true
 }
 
-func (ql QMPLog) Infof(format string, v ...interface{}) {
+func (ql qmpLog) Infof(format string, v ...interface{}) {
 	log.L().Infof("GOVMM "+format, v...)
 }
 
-func (ql QMPLog) Warningf(format string, v ...interface{}) {
+func (ql qmpLog) Warningf(format string, v ...interface{}) {
 	log.L().Warnf("GOVMM "+format, v...)
 }
 
-func (ql QMPLog) Errorf(format string, v ...interface{}) {
+func (ql qmpLog) Errorf(format string, v ...interface{}) {
 	log.L().Errorf("GOVMM "+format, v...)
 }
 
@@ -79,7 +87,7 @@ func UseQEMU(image string) (*VirtualMachine, error) {
 	// use stdin/out for QMP. That way we immediately detect
 	// when something went wrong during startup. Kernel
 	// messages get collected also via stderr and thus
-	// end up in VM.Stderr.
+	// end up in VM.stderr.
 	vm.image, err = filepath.Abs(image)
 	if err != nil {
 		return nil, err
@@ -89,11 +97,11 @@ func UseQEMU(image string) (*VirtualMachine, error) {
 		return filepath.Join(filepath.Dir(vm.image), prefix+filepath.Base(vm.image))
 	}
 	vm.start = helperFile("start-")
-	vm.SSHCmd = helperFile("ssh-")
+	vm.sshcmd = helperFile("ssh-")
 	return &vm, nil
 }
 
-// StartQEMU() returns a VM pointer if a virtual machine could be
+// StartQEMU returns a VM pointer if a virtual machine could be
 // started, and error when starting failed, and nil for both when no
 // image is configured and thus nothing can be started.
 func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
@@ -113,7 +121,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 	// use stdin/out for QMP. That way we immediately detect
 	// when something went wrong during startup. Kernel
 	// messages get collected also via stderr and thus
-	// end up in VM.Stderr.
+	// end up in VM.stderr.
 	args := []string{
 		vm.start, vm.image + ".img",
 		"-serial", "none",
@@ -123,39 +131,39 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 	}
 	args = append(args, qemuOptions...)
 	log.L().Debugf("QEMU command: %q", args)
-	vm.Cmd = exec.Command(args[0], args[1:]...)
-	vm.Cmd.Stderr = &vm.Stderr
+	vm.cmd = exec.Command(args[0], args[1:]...) // nolint: gosec
+	vm.cmd.Stderr = &vm.stderr
 
 	// cleanup() kills the command and collects as much information as possible
 	// in the resulting error.
 	cleanup := func(err error) error {
 		var exitErr error
-		if vm.Cmd != nil {
-			if vm.Cmd.Process != nil {
-				vm.Cmd.Process.Kill()
+		if vm.cmd != nil {
+			if vm.cmd.Process != nil {
+				vm.cmd.Process.Kill() // nolint: gosec
 			}
-			exitErr = vm.Cmd.Wait()
+			exitErr = vm.cmd.Wait()
 		}
 		return StartError{
 			Args:         args,
-			Stderr:       string(vm.Stderr.Bytes()),
+			Stderr:       string(vm.stderr.Bytes()),
 			OtherError:   err,
 			ExitError:    exitErr,
-			ProcessState: vm.Cmd.ProcessState,
+			ProcessState: vm.cmd.ProcessState,
 		}
 	}
 
 	// Give VM some time to power up, then kill it.
 	// If we succeeed, we stop the timer.
 	timer := time.AfterFunc(60*time.Second, func() {
-		vm.Cmd.Process.Kill()
+		vm.cmd.Process.Kill() // nolint: gosec
 	})
 
-	cmdMonitor, err := oimcommon.AddCmdMonitor(vm.Cmd)
+	cmdMonitor, err := oimcommon.AddCmdMonitor(vm.cmd)
 	if err != nil {
 		return nil, errors.Wrap(err, "AddCmdMonitor")
 	}
-	if err = vm.Cmd.Start(); err != nil {
+	if err = vm.cmd.Start(); err != nil {
 		return nil, cleanup(err)
 	}
 	vm.done = cmdMonitor.Watch()
@@ -177,7 +185,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 
 	// Connect to QMP socket.
 	cfg := qemu.QMPConfig{
-		Logger: QMPLog{},
+		Logger: qmpLog{},
 	}
 	q, _, err := qemu.QMPStart(context.Background(), qmpSocket, cfg, make(chan struct{}))
 	if err != nil {
@@ -189,7 +197,7 @@ func StartQEMU(image string, qemuOptions ...string) (*VirtualMachine, error) {
 	if err != nil {
 		return nil, cleanup(errors.Wrapf(err, "ExecuteQMPCapabilities"))
 	}
-	vm.QMP = q
+	vm.qmp = q
 
 	// Wait for successful SSH connection.
 	for {
@@ -228,32 +236,32 @@ func (vm *VirtualMachine) String() string {
 	if vm.Running() {
 		result = result + " running"
 	}
-	if vm.Cmd != nil && vm.Cmd.Process != nil {
-		result = fmt.Sprintf("%s %d", result, vm.Cmd.Process.Pid)
+	if vm.cmd != nil && vm.cmd.Process != nil {
+		result = fmt.Sprintf("%s %d", result, vm.cmd.Process.Pid)
 	}
 	return result
 }
 
-// Executes a shell command inside the virtual machine via ssh, using the helper
+// SSH executes a shell command inside the virtual machine via ssh, using the helper
 // script of the machine image. It returns the commands combined output and
 // any exit error. Beware that (as usual) ssh will cocatenate the arguments
 // and run the result in a shell, so complex scripts may break.
 func (vm *VirtualMachine) SSH(args ...string) (string, error) {
-	log.L().Debugf("Running SSH %s %s\n", vm.SSHCmd, args)
-	cmd := exec.Command(vm.SSHCmd, args...)
+	log.L().Debugf("Running SSH %s %s\n", vm.sshcmd, args)
+	cmd := exec.Command(vm.sshcmd, args...) // nolint: gosec
 	out, err := cmd.CombinedOutput()
 	log.L().Debugf("Exit error: %v\nOutput: %s\n", err, string(out))
 	return string(out), err
 }
 
-// Transfers the content to the virtual machine and creates the file
+// Install transfers the content to the virtual machine and creates the file
 // with the chosen mode.
 func (vm *VirtualMachine) Install(path string, data io.Reader, mode os.FileMode) error {
-	cmd := exec.Command(vm.SSHCmd, fmt.Sprintf("rm -f '%[1]s' && cat > '%[1]s' && chmod %d '%s'", path, mode, path))
+	cmd := exec.Command(vm.sshcmd, fmt.Sprintf("rm -f '%[1]s' && cat > '%[1]s' && chmod %d '%s'", path, mode, path)) // nolint: gosec
 	cmd.Stdin = data
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return errors.New(fmt.Sprintf("Installing %s failed: %s", path, out))
+		return errors.Wrapf(err, "installing %s failed: %s", path, out)
 	}
 	return nil
 }
@@ -265,17 +273,17 @@ func (vm *VirtualMachine) StopQEMU() error {
 
 	// Trigger shutdown, ignoring errors.
 	// Give VM some time to power down, then kill it.
-	if vm.Cmd != nil && vm.Cmd.Process != nil {
+	if vm.cmd != nil && vm.cmd.Process != nil {
 		timer := time.AfterFunc(10*time.Second, func() {
 			log.L().Debugf("Cancelling")
-			vm.Cmd.Process.Kill()
+			vm.cmd.Process.Kill() // nolint: gosec
 		})
 		defer timer.Stop()
 		log.L().Debugf("Powering down QEMU")
-		vm.Cmd.Process.Signal(os.Interrupt)
+		vm.cmd.Process.Signal(os.Interrupt) // nolint: gosec
 		log.L().Debugf("Waiting for completion")
-		err = vm.Cmd.Wait()
-		vm.Cmd = nil
+		err = vm.cmd.Wait()
+		vm.cmd = nil
 	}
 
 	return err
@@ -314,7 +322,7 @@ func (vm *VirtualMachine) ForwardPort(logger log.Logger, from interface{}, to in
 	fp := forwardPort{
 		// ssh closes all extra file descriptors, thus defeating our
 		// CmdMonitor. Instead we wait for completion in a goroutine.
-		ssh: exec.Command(vm.SSHCmd, args...),
+		ssh: exec.Command(vm.sshcmd, args...), // nolint: gosec
 	}
 	out := oimcommon.LogWriter(logger.With("at", what))
 	fp.ssh.Stdout = out
@@ -327,7 +335,7 @@ func (vm *VirtualMachine) ForwardPort(logger log.Logger, from interface{}, to in
 	}
 	go func() {
 		defer close(terminated)
-		fp.ssh.Wait()
+		fp.ssh.Wait() // nolint: gosec
 	}()
 	return &fp, terminated, nil
 }
@@ -340,8 +348,8 @@ func portToString(port interface{}) string {
 }
 
 func (fp *forwardPort) Close() error {
-	fp.ssh.Process.Kill()
+	fp.ssh.Process.Kill() // nolint: gosec
 	<-fp.terminated
-	fp.logWriter.Close()
+	fp.logWriter.Close() // nolint: gosec
 	return nil
 }

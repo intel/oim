@@ -4,7 +4,7 @@ Copyright 2018 Intel Corporation.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// spdk adds support for the TEST_SPDK_VHOST_SOCKET env variable to test binaries
+// Package spdk adds support for the TEST_SPDK_VHOST_SOCKET env variable to test binaries
 // and manages the SPDK instance for tests.
 package spdk
 
@@ -29,20 +29,18 @@ import (
 )
 
 var (
-	// Connected to the running SPDK.
+	// SPDK handle connected to the running SPDK.
 	SPDK *spdk.Client
-	// Path to the socket of the running SPDK.
+	// SPDKPath is the path to the socket of the running SPDK.
 	SPDKPath string
-	// Path to the SCSI VHost controller of the running SPDK.
+	// VHostPath is the vhost socket for the SCSI VHost controller of the running SPDK.
 	VHostPath string
 
-	// Controller name.
+	// VHost controller name.
 	VHost = "e2e-test-vhost"
 
-	// Bus, address, and device string must match.
-	VHostBus  = "pci.0"
-	VHostAddr = 0x15
-	VHostDev  = fmt.Sprintf("0000:00:%x.0", VHostAddr)
+	// VHostDev is the BDF string for the SCSI VHost controller
+	VHostDev = "0000:00:15.0"
 
 	spdkSock = os.Getenv("TEST_SPDK_VHOST_SOCKET")
 	spdkApp  = os.Getenv("TEST_SPDK_VHOST_BINARY")
@@ -59,8 +57,10 @@ type opts struct {
 	socket     string
 }
 
+// Option is the argument type for Init.
 type Option func(*opts)
 
+// WithVHostSCSI enables the creation of a SCSI controller.
 func WithVHostSCSI() Option {
 	return func(o *opts) {
 		o.controller = true
@@ -108,11 +108,11 @@ func Init(options ...Option) error {
 
 	if spdkApp != "" {
 		// TODO: suppress logging to syslog
-		if t, err := ioutil.TempDir("", "spdk"); err != nil {
+		t, err := ioutil.TempDir("", "spdk")
+		if err != nil {
 			return errors.Wrap(err, "SPDK temp directory")
-		} else {
-			tmpDir = t
 		}
+		tmpDir = t
 		spdkSock = filepath.Join(tmpDir, "spdk.sock")
 		spdkOut = oimcommon.LogWriter(log.L().With("at", "spdk"))
 		var done <-chan interface{}
@@ -167,7 +167,7 @@ func Init(options ...Option) error {
 			}
 		}
 		{
-			cmd := exec.CommandContext(ctx, "sudo", "chmod", "a+rw", spdkSock)
+			cmd := exec.CommandContext(ctx, "sudo", "chmod", "a+rw", spdkSock) // nolint: gosec
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return errors.Wrapf(err, "chmod %s: %s", spdkSock, out)
@@ -212,7 +212,7 @@ func Init(options ...Option) error {
 		// If we are not running as root, we need to
 		// change permissions on the new socket.
 		if os.Getuid() != 0 {
-			cmd := exec.Command("sudo", "chmod", "a+rw", VHostPath)
+			cmd := exec.Command("sudo", "chmod", "a+rw", VHostPath) // nolint: gosec
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("'sudo chmod' on vhost socket %s failed: %s\n%s", VHostPath, err, string(out))
@@ -242,19 +242,21 @@ func Finalize() error {
 			}
 			VHostPath = ""
 		}
-		SPDK.Close()
+		if err := SPDK.Close(); err != nil {
+			log.L().Errorw("close SPDK socket", "error", err)
+		}
 		SPDK = nil
 	}
 	if spdkCmd != nil {
 		// Kill the process group to catch both child (sudo) and grandchild (SPDK).
 		timer := time.AfterFunc(30*time.Second, func() {
 			log.L().Infof("Killing SPDK vhost %d", spdkCmd.Process.Pid)
-			exec.Command("sudo", "--non-interactive", "kill", "-9", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
+			exec.Command("sudo", "--non-interactive", "kill", "-9", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput() // nolint: gosec
 		})
 		defer timer.Stop()
 		log.L().Infof("Stopping SPDK vhost %d", spdkCmd.Process.Pid)
-		exec.Command("sudo", "--non-interactive", "kill", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput()
-		spdkCmd.Wait()
+		exec.Command("sudo", "--non-interactive", "kill", fmt.Sprintf("-%d", spdkCmd.Process.Pid)).CombinedOutput() // nolint: gosec
+		spdkCmd.Wait()                                                                                              // nolint: gosec
 		spdkCmd = nil
 	}
 	if lock != nil {

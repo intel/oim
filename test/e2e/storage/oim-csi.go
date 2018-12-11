@@ -19,6 +19,7 @@ import (
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/qemu"
 
+	// nolint: golint
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -67,7 +68,8 @@ var _ = Describe("OIM CSI driver", func() {
 		Expect(err).NotTo(HaveOccurred())
 		targetTmp = strings.Trim(targetTmp, "\n")
 		install := func(from, to string) {
-			f, err := os.Open(from)
+			// can be ignored: warning: Potential file inclusion via variable
+			f, err := os.Open(from) // nolint: gosec
 			defer f.Close()
 			Expect(err).NotTo(HaveOccurred())
 			err = qemu.VM.Install(to, f, 0555)

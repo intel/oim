@@ -29,6 +29,7 @@ import (
 
 	"github.com/intel/oim/test/pkg/spdk"
 
+	// nolint: golint
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )

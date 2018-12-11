@@ -49,6 +49,7 @@ type NonBlockingGRPCServer struct {
 	addr net.Addr
 }
 
+// RegisterService is a callback that adds a service to the given gRPC server.
 type RegisterService func(*grpc.Server)
 
 // Start listens on the configured endpoint and runs a gRPC server with
@@ -97,7 +98,9 @@ func (s *NonBlockingGRPCServer) Start(ctx context.Context, services ...RegisterS
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		server.Serve(listener)
+		if err := server.Serve(listener); err != nil {
+			logger.Errorw("starting server", "error", err)
+		}
 	}()
 	return nil
 }

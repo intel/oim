@@ -8,7 +8,6 @@ package oimcontroller
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -51,6 +50,8 @@ var (
 	volumeMutex = keymutex.NewHashed(-1)
 )
 
+// MapVolume ensures that there is a BDev for the volume and makes it
+// available as block device.
 func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*oim.MapVolumeReply, error) {
 	volumeID := in.GetVolumeId()
 	if volumeID == "" {
@@ -76,7 +77,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		// wasn't found.
 		switch x := in.Params.(type) {
 		case *oim.MapVolumeRequest_Malloc:
-			return nil, fmt.Errorf("no existing MallocBDev with name %s found", volumeID)
+			return nil, errors.Errorf("no existing MallocBDev with name %s found", volumeID)
 		case *oim.MapVolumeRequest_Ceph:
 			if err := c.mapCeph(ctx, volumeID, x.Ceph); err != nil {
 				return nil, err
@@ -84,7 +85,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 		case nil:
 			return nil, errors.New("missing volume parameters")
 		default:
-			return nil, errors.New(fmt.Sprintf("unsupported params type %T", x))
+			return nil, errors.Errorf("unsupported params type %T", x)
 		}
 	} else {
 		// BDev with the intended name already exists. Assume that it is the right one.
@@ -97,7 +98,7 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	// call must have succeeded (idempotency!).
 	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("GetVHostControllers: %s", err))
+		return nil, errors.Wrap(err, "GetVHostControllers")
 	}
 	for _, controller := range controllers {
 		for key, value := range controller.BackendSpecific {
@@ -150,10 +151,11 @@ func (c *Controller) MapVolume(ctx context.Context, in *oim.MapVolumeRequest) (*
 	// To remove it, UnmapVolume must be called.
 
 	// Return the last SPDK error.
-	errorResult := errors.New(fmt.Sprintf("AddVHostSCSILUN failed for all LUNs, last error: %s", err))
+	errorResult := errors.Wrap(err, "AddVHostSCSILUN failed for all LUNs, last error")
 	return nil, errorResult
 }
 
+// UnmapVolume removes the block device for a BDev and (if not a local Malloc BDev) the BDev itself.
 func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest) (*oim.UnmapVolumeReply, error) {
 	volumeID := in.GetVolumeId()
 	if volumeID == "" {
@@ -169,7 +171,7 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 
 	controllers, err := spdk.GetVHostControllers(ctx, c.SPDK)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("GetVHostControllers: %s", err))
+		return nil, errors.Wrap(err, "GetVHostControllers")
 	}
 	// For the sake of completeness we keep iterating even after having found
 	// something.
@@ -187,7 +189,7 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 									SCSITargetNum: target.SCSIDevNum,
 								}
 								if err := spdk.RemoveVHostSCSITarget(ctx, c.SPDK, removeArgs); err != nil {
-									return nil, errors.New(fmt.Sprintf("RemoveVHostSCSITarget: %s", err))
+									return nil, errors.Wrap(err, "RemoveVHostSCSITarget")
 								}
 							}
 						}
@@ -209,6 +211,7 @@ func (c *Controller) UnmapVolume(ctx context.Context, in *oim.UnmapVolumeRequest
 	return &oim.UnmapVolumeReply{}, nil
 }
 
+// ProvisionMallocBDev creates a new local Malloc BDev.
 func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionMallocBDevRequest) (*oim.ProvisionMallocBDevReply, error) {
 	bdevName := in.GetBdevName()
 	if bdevName == "" {
@@ -235,7 +238,7 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 			}
 			// TODO: detect already existing BDev of the same name (https://github.com/spdk/spdk/issues/319)
 			if _, err := spdk.ConstructMallocBDev(ctx, c.SPDK, args); err != nil {
-				return nil, errors.New(fmt.Sprintf("ConstructMallocBDev failed: %s", err))
+				return nil, errors.Wrap(err, "ConstructMallocBDev")
 			}
 		} else {
 			// Check that the BDev has the right size.
@@ -252,6 +255,7 @@ func (c *Controller) ProvisionMallocBDev(ctx context.Context, in *oim.ProvisionM
 	return &oim.ProvisionMallocBDevReply{}, nil
 }
 
+// CheckMallocBDev checks whether the Malloc BDev exists.
 func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDevRequest) (*oim.CheckMallocBDevReply, error) {
 	bdevName := in.GetBdevName()
 	if bdevName == "" {
@@ -268,10 +272,9 @@ func (c *Controller) CheckMallocBDev(ctx context.Context, in *oim.CheckMallocBDe
 	bdevs, err := spdk.GetBDevs(ctx, c.SPDK, spdk.GetBDevsArgs{Name: bdevName})
 	if err == nil && len(bdevs) == 1 {
 		return &oim.CheckMallocBDevReply{}, nil
-	} else {
-		// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
-		return nil, status.Error(codes.NotFound, "")
 	}
+	// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
+	return nil, status.Error(codes.NotFound, "")
 }
 
 func (c *Controller) mapCeph(ctx context.Context, volumeID string, cephParams *oim.CephParams) error {
@@ -293,8 +296,11 @@ func (c *Controller) mapCeph(ctx context.Context, volumeID string, cephParams *o
 	return errors.Wrapf(err, "ConstructRBDBDev %q for RBD pool %q and image %q, monitors %q", volumeID, cephParams.Pool, cephParams.Image, cephParams.Monitors)
 }
 
+// Option is what New accepts to reconfigure the resulting controller.
 type Option func(c *Controller) error
 
+// WithRegistry sets the OIM registry end point for the optional
+// self-registrarion. It takes a gRPC dial string.
 func WithRegistry(address string) Option {
 	return func(c *Controller) error {
 		c.registryAddress = address
@@ -302,6 +308,7 @@ func WithRegistry(address string) Option {
 	}
 }
 
+// WithRegistryDelay sets the interval between self-registration calls.
 func WithRegistryDelay(delay time.Duration) Option {
 	return func(c *Controller) error {
 		c.registryDelay = delay
@@ -309,6 +316,8 @@ func WithRegistryDelay(delay time.Duration) Option {
 	}
 }
 
+// WithCreds sets the secret key and CA used by the controller for
+// mutual TLS.
 func WithCreds(creds credentials.TransportCredentials) Option {
 	return func(c *Controller) error {
 		c.creds = creds
@@ -326,6 +335,9 @@ func WithControllerAddress(address string) Option {
 	}
 }
 
+// WithControllerID sets the unique ID that this controller instance
+// has inside the OIM registry. Only needed when self-registration is
+// enabled with WithRegistry.
 func WithControllerID(controllerID string) Option {
 	return func(c *Controller) error {
 		c.controllerID = controllerID
@@ -333,6 +345,7 @@ func WithControllerID(controllerID string) Option {
 	}
 }
 
+// WithSPDK sets the SPDK vhost socket path for JSON RPC.
 func WithSPDK(path string) Option {
 	return func(c *Controller) error {
 		c.spdkPath = path
@@ -340,6 +353,8 @@ func WithSPDK(path string) Option {
 	}
 }
 
+// WithVHostController sets the name of the existing SCSI device to
+// which BDevs are to be attached.
 func WithVHostController(vhost string) Option {
 	return func(c *Controller) error {
 		c.vhostSCSI = vhost
@@ -347,6 +362,8 @@ func WithVHostController(vhost string) Option {
 	}
 }
 
+// WithVHostDev sets the PCI address of the SCSI device. It takes a
+// PCI Bus/Device/Function string.
 func WithVHostDev(dev string) Option {
 	return func(c *Controller) error {
 		d, err := oimcommon.ParseBDFString(dev)
@@ -358,6 +375,7 @@ func WithVHostDev(dev string) Option {
 	}
 }
 
+// New constructs a new OIM controller instance.
 func New(options ...Option) (*Controller, error) {
 	c := Controller{
 		controllerID:  "unset-controller-id",
@@ -379,7 +397,7 @@ func New(options ...Option) (*Controller, error) {
 	}
 
 	if c.registryAddress != "" && (c.controllerID == "" || c.controllerAddr == "") {
-		return nil, errors.New("Need both controller ID and external controller address for registering  with the OIM registry.")
+		return nil, errors.New("need both controller ID and external controller address for registering  with the OIM registry")
 	}
 
 	if c.creds == nil {
@@ -389,7 +407,7 @@ func New(options ...Option) (*Controller, error) {
 	return &c, nil
 }
 
-// Starts the interaction with the OIM Registry, if one was configured.
+// Start begins the interaction with the OIM Registry, if one was configured.
 func (c *Controller) Start() error {
 	if c.registryAddress == "" {
 		return nil
@@ -449,7 +467,7 @@ func (c *Controller) register(ctx context.Context) {
 	})
 }
 
-// Stops the interaction with the OIM Registry, if one was configured.
+// Stop ends the interaction with the OIM Registry, if one was configured.
 func (c *Controller) Stop() {
 	if c.stop != nil {
 		close(c.stop)
@@ -457,10 +475,12 @@ func (c *Controller) Stop() {
 	}
 }
 
+// Server returns a new gRPC server listening on the given endpoint.
 func (c *Controller) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
 	return Server(endpoint, c, c.creds)
 }
 
+// Server configures an arbitrary OIM controller implementation as a gRPC server.
 func Server(endpoint string, c oim.ControllerServer, creds credentials.TransportCredentials) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
 	service := func(s *grpc.Server) {
 		oim.RegisterControllerServer(s, c)

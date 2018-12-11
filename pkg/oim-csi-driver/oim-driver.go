@@ -21,14 +21,19 @@ import (
 )
 
 const (
-	kib    int64 = 1024
-	mib    int64 = kib * 1024
-	gib    int64 = mib * 1024
-	gib100 int64 = gib * 100
-	tib    int64 = gib * 1024
-	tib100 int64 = tib * 100
+	kib int64 = 1024
+	mib int64 = kib * 1024
+	gib int64 = mib * 1024
+	tib int64 = gib * 1024
 )
 
+// Driver is the public interface for managing the OIM CSI driver.
+type Driver interface {
+	Start(ctx context.Context) (*oimcommon.NonBlockingGRPCServer, error)
+	Run(ctx context.Context) error
+}
+
+// oimDriver is the actual implementation.
 type oimDriver struct {
 	driverName         string
 	version            string
@@ -47,6 +52,7 @@ type oimDriver struct {
 	vhost string
 }
 
+// EmulateCSIDriver deals with parameters meant for some other CSI driver.
 type EmulateCSIDriver struct {
 	CSIDriverName                 string
 	ControllerServiceCapabilities []csi.ControllerServiceCapability_RPC_Type
@@ -58,8 +64,10 @@ var (
 	supportedCSIDrivers = make(map[string]*EmulateCSIDriver)
 )
 
+// Option is the type-safe parameter for configuring New.
 type Option func(*oimDriver) error
 
+// WithDriverName overrides the default CSI driver name.
 func WithDriverName(name string) Option {
 	return func(od *oimDriver) error {
 		od.driverName = name
@@ -67,6 +75,7 @@ func WithDriverName(name string) Option {
 	}
 }
 
+// WithDriverVersion sets the version reported by the driver.
 func WithDriverVersion(version string) Option {
 	return func(od *oimDriver) error {
 		od.version = version
@@ -74,6 +83,7 @@ func WithDriverVersion(version string) Option {
 	}
 }
 
+// WithNodeID sets the node ID reported by the driver.
 func WithNodeID(id string) Option {
 	return func(od *oimDriver) error {
 		od.nodeID = id
@@ -81,6 +91,9 @@ func WithNodeID(id string) Option {
 	}
 }
 
+// WithCSIEndpoint determines what the driver listens on.
+// Uses the same unix:// or tcp:// prefix as other CSI
+// drivers to determine the network.
 func WithCSIEndpoint(endpoint string) Option {
 	return func(od *oimDriver) error {
 		od.csiEndpoint = endpoint
@@ -88,6 +101,8 @@ func WithCSIEndpoint(endpoint string) Option {
 	}
 }
 
+// WithVHostEndpoint sets the net.Dial string for
+// the SPDK RPC communication.
 func WithVHostEndpoint(endpoint string) Option {
 	return func(od *oimDriver) error {
 		od.vhostEndpoint = endpoint
@@ -95,6 +110,8 @@ func WithVHostEndpoint(endpoint string) Option {
 	}
 }
 
+// WithOIMRegistryAddress sets the gRPC dial string for
+// contacting the OIM registry.
 func WithOIMRegistryAddress(address string) Option {
 	return func(od *oimDriver) error {
 		od.oimRegistryAddress = address
@@ -102,6 +119,8 @@ func WithOIMRegistryAddress(address string) Option {
 	}
 }
 
+// WithRegistryCreds sets the TLS key and CA for
+// connections to the OIM registry.
 func WithRegistryCreds(ca, key string) Option {
 	return func(od *oimDriver) error {
 		od.registryCA = ca
@@ -110,6 +129,8 @@ func WithRegistryCreds(ca, key string) Option {
 	}
 }
 
+// WithOIMControllerID sets the ID assigned to the
+// controller that is responsible for the host.
 func WithOIMControllerID(id string) Option {
 	return func(od *oimDriver) error {
 		od.oimControllerID = id
@@ -117,6 +138,10 @@ func WithOIMControllerID(id string) Option {
 	}
 }
 
+// WithEmulation switches between different personalities:
+// in this mode, the OIM CSI driver handles arguments for
+// some other, "emulated" CSI driver and redirects local
+// node operations to the OIM controller.
 func WithEmulation(csiDriverName string) Option {
 	return func(od *oimDriver) error {
 		if csiDriverName == "" {
@@ -132,7 +157,8 @@ func WithEmulation(csiDriverName string) Option {
 	}
 }
 
-func New(options ...Option) (*oimDriver, error) {
+// New constructs a new OIM driver instance.
+func New(options ...Option) (Driver, error) {
 	od := oimDriver{
 		driverName:  "oim-driver",
 		version:     "unknown",

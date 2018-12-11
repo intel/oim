@@ -55,7 +55,8 @@ import (
 	"github.com/intel/oim/pkg/log"
 )
 
-// From SPDK's include/spdk/jsonrpc.h:
+// From SPDK's include/spdk/jsonrpc.h, copied verbatim.
+// nolint: golint
 const (
 	ERROR_PARSE_ERROR      = -32700
 	ERROR_INVALID_REQUEST  = -32600
@@ -121,7 +122,7 @@ type clientRequest struct {
 	Version string       `json:"jsonrpc"`
 	Method  string       `json:"method"`
 	Params  *interface{} `json:"params,omitempty"`
-	Id      uint64       `json:"id"`
+	ID      uint64       `json:"id"`
 }
 
 func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
@@ -134,18 +135,18 @@ func (c *clientCodec) WriteRequest(r *rpc.Request, param interface{}) error {
 	} else {
 		c.req.Params = &param
 	}
-	c.req.Id = r.Seq
+	c.req.ID = r.Seq
 	return c.enc.Encode(&c.req)
 }
 
 type clientResponse struct {
-	Id     uint64           `json:"id"`
+	ID     uint64           `json:"id"`
 	Result *json.RawMessage `json:"result"`
 	Error  interface{}      `json:"error"`
 }
 
 func (r *clientResponse) reset() {
-	r.Id = 0
+	r.ID = 0
 	r.Result = nil
 	r.Error = nil
 }
@@ -160,12 +161,12 @@ func (c *clientCodec) ReadResponseHeader(r *rpc.Response) error {
 	}
 
 	c.mutex.Lock()
-	r.ServiceMethod = c.pending[c.resp.Id]
-	delete(c.pending, c.resp.Id)
+	r.ServiceMethod = c.pending[c.resp.ID]
+	delete(c.pending, c.resp.ID)
 	c.mutex.Unlock()
 
 	r.Error = ""
-	r.Seq = c.resp.Id
+	r.Seq = c.resp.ID
 	if c.resp.Error != nil || c.resp.Result == nil {
 		// SPDK returns a map[string]interface {}
 		// with "code" and "message" as keys.
@@ -221,6 +222,7 @@ func (c *clientCodec) Close() error {
 	return c.c.Close()
 }
 
+// Client encapsulates the connection to a SPDK JSON server.
 type Client struct {
 	client *rpc.Client
 }
@@ -248,6 +250,7 @@ func (lc *logConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// New constructs a new SPDK JSON client.
 func New(path string) (*Client, error) {
 	conn, err := net.Dial("unix", path)
 	if err != nil {
@@ -258,10 +261,12 @@ func New(path string) (*Client, error) {
 	return &Client{client: client}, nil
 }
 
-func (c *Client) Close() {
-	c.client.Close()
+// Close the connection to the server.
+func (c *Client) Close() error {
+	return c.client.Close()
 }
 
+// Invoke a certain method, get the reply and return the error (if any).
 func (c *Client) Invoke(_ context.Context, method string, args, reply interface{}) error {
 	return c.client.Call(method, args, reply)
 }

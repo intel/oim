@@ -28,7 +28,7 @@ import (
 )
 
 func init() {
-	framework.Factories[framework.What{"Secret"}] = &SecretFactory{}
+	framework.Factories[framework.What{Kind: "Secret"}] = &SecretFactory{}
 }
 
 type SecretFactory struct{}

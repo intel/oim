@@ -49,7 +49,7 @@ func setupProviderConfig(data *[]byte) error {
 				return err
 			}
 			if qemu.VM == nil {
-				return errors.New("A QEMU image is required for this test.")
+				return errors.New("a QEMU image is required for this test")
 			}
 			// Tell child nodes about our SPDK path.
 			*data = []byte(spdk.SPDKPath)
@@ -192,8 +192,12 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 }, func() {
 	// Run only Ginkgo on node 1
 	framework.Logf("Running AfterSuite actions on node 1")
-	qemu.Finalize()
-	spdk.Finalize()
+	if err := qemu.Finalize(); err != nil {
+		framework.Logf("QEMU shutdown: %s", err)
+	}
+	if err := spdk.Finalize(); err != nil {
+		framework.Logf("SPDK shutdown: %s", err)
+	}
 })
 
 // RunE2ETests checks configuration parameters (specified through flags) and then runs

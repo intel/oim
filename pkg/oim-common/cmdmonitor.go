@@ -44,8 +44,8 @@ func (cm CmdMonitor) Watch() <-chan interface{} {
 	go func() {
 		defer close(done)
 		b := make([]byte, 1)
-		cm.pr.Read(b)
+		cm.pr.Read(b) // nolint: gosec
 	}()
-	cm.pw.Close()
+	cm.pw.Close() // nolint: gosec
 	return done
 }

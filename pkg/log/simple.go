@@ -91,21 +91,24 @@ func (sl *simpleLogger) checkThreshold(threshold Threshold) {
 
 func (sl *simpleLogger) Output(threshold Threshold, args ...interface{}) {
 	if threshold >= sl.config.Level {
-		sl.config.Output.Write(sl.formatter.Print(threshold, sl.fields, args...))
+		// Errors intentionally ignored here.
+		sl.config.Output.Write(sl.formatter.Print(threshold, sl.fields, args...)) // nolint: gosec
 	}
 	sl.checkThreshold(threshold)
 }
 
 func (sl *simpleLogger) Outputf(threshold Threshold, format string, args ...interface{}) {
 	if threshold >= sl.config.Level {
-		sl.config.Output.Write(sl.formatter.Printf(threshold, sl.fields, format, args...))
+		// Errors intentionally ignored here.
+		sl.config.Output.Write(sl.formatter.Printf(threshold, sl.fields, format, args...)) // nolint: gosec
 	}
 	sl.checkThreshold(threshold)
 }
 
 func (sl *simpleLogger) Outputw(threshold Threshold, msg string, keysAndValues ...interface{}) {
 	if threshold >= sl.config.Level {
-		sl.config.Output.Write(sl.formatter.Printw(threshold, sl.fields, msg, keysAndValues...))
+		// Errors intentionally ignored here.
+		sl.config.Output.Write(sl.formatter.Printw(threshold, sl.fields, msg, keysAndValues...)) // nolint: gosec
 	}
 	sl.checkThreshold(threshold)
 }

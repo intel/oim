@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
@@ -50,9 +51,17 @@ func GetRegistryEntries(db RegistryDB) map[string]string {
 }
 
 // Registry implements oim.Registry.
-type Registry struct {
+type registry struct {
 	db        RegistryDB
 	tlsConfig *tls.Config
+}
+
+// RegistryServer is the public interface for managing a OIM registry server.
+type RegistryServer interface {
+	oim.RegistryServer
+
+	// Server creates a server as required to run the registry service.
+	Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server))
 }
 
 func getPeer(ctx context.Context) (string, error) {
@@ -72,7 +81,7 @@ func getPeer(ctx context.Context) (string, error) {
 	return commonName, nil
 }
 
-func (r *Registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.SetValueReply, error) {
+func (r *registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.SetValueReply, error) {
 	value := in.GetValue()
 	if value == nil {
 		return nil, errors.New("missing value")
@@ -103,7 +112,7 @@ func (r *Registry) SetValue(ctx context.Context, in *oim.SetValueRequest) (*oim.
 	return &oim.SetValueReply{}, nil
 }
 
-func (r *Registry) GetValues(ctx context.Context, in *oim.GetValuesRequest) (*oim.GetValuesReply, error) {
+func (r *registry) GetValues(ctx context.Context, in *oim.GetValuesRequest) (*oim.GetValuesReply, error) {
 	// sanitize path
 	elements, err := oimcommon.SplitRegistryPath(in.GetPath())
 	if err != nil {
@@ -137,15 +146,15 @@ func (r *Registry) GetValues(ctx context.Context, in *oim.GetValuesRequest) (*oi
 
 // StreamDirectory transparently proxies gRPC method calls to the
 // corresponding controller, without keeping connections open.
-func (r *Registry) StreamDirector() proxy.StreamDirector {
-	return &StreamDirector{r}
+func (r *registry) StreamDirector() proxy.StreamDirector {
+	return &streamDirector{r}
 }
 
-type StreamDirector struct {
-	r *Registry
+type streamDirector struct {
+	r *registry
 }
 
-func (sd *StreamDirector) Connect(ctx context.Context, method string) (context.Context, *grpc.ClientConn, error) {
+func (sd *streamDirector) Connect(ctx context.Context, method string) (context.Context, *grpc.ClientConn, error) {
 	// Make sure we never forward internal services.
 	if strings.HasPrefix(method, "/oim.v0.Registry/") {
 		return nil, nil, status.Error(codes.Unimplemented, "unknown method")
@@ -194,29 +203,36 @@ func (sd *StreamDirector) Connect(ctx context.Context, method string) (context.C
 	return outCtx, conn, err
 }
 
-func (sd *StreamDirector) Release(ctx context.Context, conn *grpc.ClientConn) {
-	conn.Close()
+func (sd *streamDirector) Release(ctx context.Context, conn *grpc.ClientConn) {
+	if err := conn.Close(); err != nil {
+		log.FromContext(ctx).Warnw("closing connection", "error", err)
+	}
 }
 
-type Option func(r *Registry) error
+// Option is the parameter type taken by New.
+type Option func(r *registry) error
 
+// DB sets the registry database backend.
 func DB(db RegistryDB) Option {
-	return func(r *Registry) error {
+	return func(r *registry) error {
 		r.db = db
 		return nil
 	}
 }
 
+// TLS sets the TLS configuration (secret key, CA) for the OIM registry server.
 func TLS(tlsConfig *tls.Config) Option {
-	return func(r *Registry) error {
+	return func(r *registry) error {
 		r.tlsConfig = tlsConfig
 		return nil
 	}
 }
 
-func New(options ...Option) (*Registry, error) {
-	r := Registry{}
-	r.db = NewMemRegistryDB()
+// New creates a new instance of the OIM registry.
+func New(options ...Option) (RegistryServer, error) {
+	r := registry{
+		db: NewMemRegistryDB(),
+	}
 	for _, op := range options {
 		err := op(&r)
 		if err != nil {
@@ -229,8 +245,7 @@ func New(options ...Option) (*Registry, error) {
 	return &r, nil
 }
 
-// Creates a server as required to run the registry service.
-func (r *Registry) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
+func (r *registry) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, func(*grpc.Server)) {
 	service := func(s *grpc.Server) {
 		oim.RegisterRegistryServer(s, r)
 	}
@@ -238,7 +253,7 @@ func (r *Registry) Server(endpoint string) (*oimcommon.NonBlockingGRPCServer, fu
 		Endpoint: endpoint,
 		ServerOptions: []grpc.ServerOption{
 			grpc.CustomCodec(proxy.Codec()),
-			grpc.UnknownServiceHandler(proxy.TransparentHandler(&StreamDirector{r})),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(&streamDirector{r})),
 			grpc.Creds(credentials.NewTLS(r.tlsConfig)),
 		},
 	}

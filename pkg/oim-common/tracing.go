@@ -59,6 +59,8 @@ var _ = csi.CreateVolumeRequest{
 	ControllerCreateSecrets: map[string]string{},
 }
 
+// Sprint currently strips messages for CSI 0.3. It needs to be updated
+// when migrating to CSI 1.0.
 func (s StripSecretsFormatter) Sprint(payload interface{}) string {
 	return protosanitizer.StripSecretsCSI03(payload).String()
 }

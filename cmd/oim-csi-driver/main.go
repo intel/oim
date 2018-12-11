@@ -63,5 +63,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Failed to initialize driver: %s\n", err)
 	}
-	driver.Run(context.Background())
+	if err := driver.Run(context.Background()); err != nil {
+		logger.Fatal(err)
+	}
 }

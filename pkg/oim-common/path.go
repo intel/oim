@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	// The special registry path element for the gRPC target value.
+	// RegistryAddress is the special registry path element for the gRPC target value.
 	RegistryAddress = "address"
-	// The special registry path element with the PCI address of an accelerator card.
+
+	// RegistryPCI is the special registry path element with the PCI address of an accelerator card.
 	RegistryPCI = "pci"
 )
 
@@ -31,6 +32,7 @@ func SplitRegistryPath(path string) ([]string, error) {
 	return elements, nil
 }
 
+// JoinRegistryPath combines different path elements into a full path.
 func JoinRegistryPath(elements []string) string {
 	return strings.Join(elements, "/")
 }

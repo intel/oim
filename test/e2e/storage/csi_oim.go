@@ -20,10 +20,13 @@ import (
 	"github.com/intel/oim/pkg/spec/oim/v0"
 	"github.com/intel/oim/test/pkg/spdk"
 
+	// nolint: golint
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
+// OIMControlPlane manages the components making up the OIM control plane
+// (registry, controller).
 type OIMControlPlane struct {
 	registryServer, controllerServer *oimcommon.NonBlockingGRPCServer
 	controller                       *oimcontroller.Controller
@@ -35,7 +38,7 @@ type OIMControlPlane struct {
 	registryAddress string
 }
 
-// TODO: test binaries instead or in addition?
+// StartOIMControlPlane starts the servers.
 func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	var err error
 
@@ -44,6 +47,8 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	}
 
 	op.ctx, op.cancel = context.WithCancel(ctx)
+
+	// TODO: test binaries instead or in addition?
 
 	// Spin up registry on the host. We
 	// intentionally use the hostname here instead
@@ -118,6 +123,7 @@ func (op *OIMControlPlane) StartOIMControlPlane(ctx context.Context) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// StopOIMControlPlane stops the servers.
 func (op *OIMControlPlane) StopOIMControlPlane(ctx context.Context) {
 	By("stopping OIM services")
 
@@ -136,6 +142,7 @@ func (op *OIMControlPlane) StopOIMControlPlane(ctx context.Context) {
 		op.controller.Stop()
 	}
 	if op.tmpDir != "" {
-		os.RemoveAll(op.tmpDir)
+		err := os.RemoveAll(op.tmpDir)
+		Expect(err).NotTo(HaveOccurred())
 	}
 }

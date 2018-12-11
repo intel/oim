@@ -168,7 +168,7 @@ var _ = Describe("OIM Registry", func() {
 		var (
 			controllerID     = "host-0"
 			tmpDir           string
-			registry         *oimregistry.Registry
+			registry         oimregistry.RegistryServer
 			registryServer   *oimcommon.NonBlockingGRPCServer
 			registryAddress  string
 			controllerClient oim.ControllerClient
@@ -187,7 +187,8 @@ var _ = Describe("OIM Registry", func() {
 			registry, err = oimregistry.New(oimregistry.TLS(tlsConfig))
 			Expect(err).NotTo(HaveOccurred())
 			registryAddress = "unix://" + filepath.Join(tmpDir, "registry.sock")
-			registryServer, service := registry.Server(registryAddress)
+			server, service := registry.Server(registryAddress)
+			registryServer = server
 			err = registryServer.Start(ctx, service)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -309,7 +310,8 @@ var _ = Describe("OIM Registry", func() {
 				Expect(err).NotTo(HaveOccurred())
 				controller = &MockController{}
 				controllerAddress := "unix://" + filepath.Join(tmpDir, "controller.sock")
-				controllerServer, service := oimcontroller.Server(controllerAddress, controller, controllerCreds)
+				server, service := oimcontroller.Server(controllerAddress, controller, controllerCreds)
+				controllerServer = server
 				err = controllerServer.Start(ctx, service)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -319,6 +321,7 @@ var _ = Describe("OIM Registry", func() {
 						Value: controllerAddress,
 					},
 				})
+				Expect(err).NotTo(HaveOccurred())
 			}
 
 			AfterEach(func() {

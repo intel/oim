@@ -4,7 +4,7 @@ Copyright 2018 Intel Corporation.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// qemu adds support for the TEST_QEMU_IMAGE env variable to test binaries
+// Package qemu adds support for the TEST_QEMU_IMAGE env variable to test binaries
 // and manages the virtual machine instance(s) for tests. If TEST_QEMU_IMAGE
 // is a symlink to a file of the format <base name>.0.img, then
 // all other images with the same base name will also be started. SPDK
@@ -26,6 +26,7 @@ import (
 )
 
 var (
+	// VM is the master virtual machine instance used for testing.
 	VM  *VirtualMachine
 	vms []*VirtualMachine
 
@@ -39,8 +40,10 @@ type opts struct {
 	kubernetes bool
 }
 
+// Option is the parameter type accepted By New.
 type Option func(*opts)
 
+// WithKubernetes enables the starting of Kubernetes inside the VM.
 func WithKubernetes() Option {
 	return func(o *opts) {
 		o.kubernetes = true
@@ -99,7 +102,7 @@ func Init(options ...Option) error {
 	log.L().Infof("Starting %s with: %v", qemuImage, opts)
 	vm, err := StartQEMU(qemuImage, opts...)
 	if err != nil {
-		procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
+		procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput() // nolint: gosec
 		return fmt.Errorf("Starting QEMU %s with %s failed: %s\nRunning processes:\n%s",
 			qemuImage, opts, err, procs)
 	}
@@ -124,7 +127,7 @@ func Init(options ...Option) error {
 			log.L().Infof("Starting additional image %s", img)
 			vm, err := StartQEMU(img)
 			if err != nil {
-				procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput()
+				procs, _ := exec.Command("ps", "-ef", "--forest").CombinedOutput() // nolint: gosec
 				return fmt.Errorf("Starting QEMU %s failed: %s\nRunning processes:\n%s",
 					img, err, procs)
 			}
@@ -137,7 +140,7 @@ func Init(options ...Option) error {
 	}
 	kube := filepath.Join(filepath.Dir(qemuImage), "kube-"+strings.TrimSuffix(filepath.Base(qemuImage), ".img"))
 	log.L().Infof("Starting Kubernetes with: %s", kube)
-	cmd := exec.Command(kube)
+	cmd := exec.Command(kube) // nolint: gosec
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("Starting Kubernetes with %s failed: %s\n%s", kube, err, out)
@@ -179,7 +182,9 @@ func Finalize() error {
 	// SPDK refuses to remove the controller.
 	for _, vm := range vms {
 		log.L().Infof("Stopping QEMU %s", vm)
-		vm.StopQEMU()
+		if err := vm.StopQEMU(); err != nil {
+			return err
+		}
 	}
 	vms = nil
 	VM = nil

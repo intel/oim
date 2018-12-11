@@ -10,20 +10,21 @@ import (
 	"sync"
 )
 
-// MemRegistryDB implements an in-memory DB for Registry. Each call is
+// memRegistryDB implements an in-memory DB for Registry. Each call is
 // protected against concurrent access via locking.
-type MemRegistryDB struct {
+type memRegistryDB struct {
 	db    map[string]string
 	mutex sync.Mutex
 }
 
-func NewMemRegistryDB() *MemRegistryDB {
-	m := &MemRegistryDB{}
+// NewMemRegistryDB constructs a new in-memory database.
+func NewMemRegistryDB() RegistryDB {
+	m := &memRegistryDB{}
 	m.db = make(map[string]string)
 	return m
 }
 
-func (m *MemRegistryDB) Store(controllerID, address string) {
+func (m *memRegistryDB) Store(controllerID, address string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -33,13 +34,13 @@ func (m *MemRegistryDB) Store(controllerID, address string) {
 		m.db[controllerID] = address
 	}
 }
-func (m *MemRegistryDB) Lookup(controllerID string) (address string) {
+func (m *memRegistryDB) Lookup(controllerID string) (address string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	return m.db[controllerID]
 }
-func (m *MemRegistryDB) Foreach(callback func(controllerID, address string) bool) {
+func (m *memRegistryDB) Foreach(callback func(controllerID, address string) bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 

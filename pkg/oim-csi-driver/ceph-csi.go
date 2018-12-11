@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	rbdDefaultAdminId = "admin"
-	rbdDefaultUserId  = rbdDefaultAdminId
+	rbdDefaultAdminID = "admin"
+	rbdDefaultUserID  = rbdDefaultAdminID
 )
 
 type rbdVolume struct {
@@ -27,8 +27,8 @@ type rbdVolume struct {
 	Monitors           string `json:"monitors"`
 	MonValueFromSecret string `json:"monValueFromSecret"`
 	Pool               string `json:"pool"`
-	AdminId            string `json:"adminId"`
-	UserId             string `json:"userId"`
+	AdminID            string `json:"adminId"`
+	UserID             string `json:"userId"`
 }
 
 var emulateCephCSI = &EmulateCSIDriver{
@@ -82,7 +82,7 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 	if err != nil {
 		return err
 	}
-	userId := volOptions.UserId
+	userID := volOptions.UserID
 	credentials := from.GetNodePublishSecrets()
 
 	mon, err := getMon(volOptions, credentials)
@@ -90,14 +90,14 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 		return err
 	}
 
-	key, err := getRBDKey(userId, credentials)
+	key, err := getRBDKey(userID, credentials)
 	if err != nil {
 		return err
 	}
 
 	to.Params = &oim.MapVolumeRequest_Ceph{
 		Ceph: &oim.CephParams{
-			UserId:   userId,
+			UserId:   userID,
 			Secret:   key,
 			Monitors: mon,
 			Pool:     volOptions.Pool,
@@ -121,13 +121,13 @@ func getRBDVolumeOptions(volOptions map[string]string) (*rbdVolume, error) {
 			return nil, fmt.Errorf("Either monitors or monValueFromSecret must be set")
 		}
 	}
-	rbdVol.AdminId, ok = volOptions["adminid"]
+	rbdVol.AdminID, ok = volOptions["adminid"]
 	if !ok {
-		rbdVol.AdminId = rbdDefaultAdminId
+		rbdVol.AdminID = rbdDefaultAdminID
 	}
-	rbdVol.UserId, ok = volOptions["userid"]
+	rbdVol.UserID, ok = volOptions["userid"]
 	if !ok {
-		rbdVol.UserId = rbdDefaultUserId
+		rbdVol.UserID = rbdDefaultUserID
 	}
 	return rbdVol, nil
 }
@@ -148,11 +148,11 @@ func getMon(pOpts *rbdVolume, credentials map[string]string) (string, error) {
 			// yet another sanity check
 			return "", fmt.Errorf("either monitors or monValueFromSecret must be set")
 		}
-		if val, ok := credentials[pOpts.MonValueFromSecret]; !ok {
+		val, ok := credentials[pOpts.MonValueFromSecret]
+		if !ok {
 			return "", fmt.Errorf("mon data %s is not set in secret", pOpts.MonValueFromSecret)
-		} else {
-			mon = val
 		}
+		mon = val
 	}
 	return mon, nil
 }

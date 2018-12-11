@@ -97,6 +97,7 @@ func TestSPDK(t *testing.T) {
 	driver, err := New(WithCSIEndpoint(endpoint), WithVHostEndpoint(spdk.SPDKPath))
 	require.NoError(t, err)
 	s, err := driver.Start(ctx)
+	require.NoError(t, err)
 	defer s.ForceStop(ctx)
 
 	sudo := SetupSudoMount(t)
@@ -194,6 +195,7 @@ func TestMockOIM(t *testing.T) {
 	)
 	require.NoError(t, err)
 	s, err := driver.Start(ctx)
+	require.NoError(t, err)
 	defer s.ForceStop(ctx)
 
 	// CSI does not use transport security for its Unix domain socket.

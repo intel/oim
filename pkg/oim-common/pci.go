@@ -18,7 +18,7 @@ import (
 
 var bdfRe = regexp.MustCompile(`^\s*(?:([0-9a-fA-F]{0,4}):)?([0-9a-fA-F]{0,2}):([0-9a-fA-F]{0,2})\.([0-7]{0,1})\s*$`)
 
-// HexToI32 takes 0 to 4 hex digits and turns them into an uint32. It
+// HexToU32 takes 0 to 4 hex digits and turns them into an uint32. It
 // panics on invalid content, so the caller must check for valid input
 // in advance. 0xFFFF is the default if the string is empty.
 func HexToU32(hex string) uint32 {
@@ -32,7 +32,7 @@ func HexToU32(hex string) uint32 {
 	return uint32(value)
 }
 
-// ParseBSDString accepts a PCI address in extended BDF notation.
+// ParseBDFString accepts a PCI address in extended BDF notation.
 func ParseBDFString(dev string) (*oim.PCIAddress, error) {
 	parts := bdfRe.FindStringSubmatch(dev)
 	if len(parts) == 0 {

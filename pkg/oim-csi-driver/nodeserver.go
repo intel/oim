@@ -32,6 +32,8 @@ import (
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
+// Name is specified by generated interface, can't make it NodeGetID.
+// nolint: golint
 func (od *oimDriver) NodeGetId(ctx context.Context, req *csi.NodeGetIdRequest) (*csi.NodeGetIdResponse, error) {
 	return &csi.NodeGetIdResponse{
 		NodeId: od.nodeID,
@@ -147,8 +149,10 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 			// Unfortunately this is racy. We assume that we are the
 			// only users of /dev/nbd*.
 			for i := 0; ; i++ {
+				// Filename from variable is save here.
 				n := fmt.Sprintf("/dev/nbd%d", i)
-				nbdFile, err := os.Open(n)
+				nbdFile, err := os.Open(n) // nolint: gosec
+
 				// We stop when we run into the first non-existent device name.
 				if os.IsNotExist(err) {
 					if nbdError == nil {
@@ -162,7 +166,11 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 				}
 				defer nbdFile.Close()
 				size, err := oimcommon.GetBlkSize64(nbdFile)
-				nbdFile.Close()
+				if err != nil {
+					nbdError = err
+					continue
+				}
+				err = nbdFile.Close()
 				if err != nil {
 					nbdError = err
 					continue
@@ -321,7 +329,9 @@ func waitForDevice(ctx context.Context, sys string, pciAddress *oim.PCIAddress, 
 		"scsi", scsiDisk,
 	)
 	watcher, err := fsnotify.NewWatcher()
-	watcher.Add(sys)
+	if err == nil {
+		err = watcher.Add(sys)
+	}
 	if err != nil {
 		return "", 0, 0, status.Error(codes.Internal, err.Error())
 	}
@@ -428,6 +438,8 @@ func findDev(ctx context.Context, sys string, pciAddress *oim.PCIAddress, scsiDi
 			if parts == nil {
 				return "", 0, 0, fmt.Errorf("Unexpected entry in %s, not a major:minor symlink: %s", sys, entry.Name())
 			}
+			// The regex has already ensured that we have a valid integer.
+			// nolint: gosec
 			major, _ := strconv.Atoi(parts[1])
 			minor, _ := strconv.Atoi(parts[2])
 			return dev, major, minor, nil

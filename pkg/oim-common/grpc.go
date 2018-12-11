@@ -89,7 +89,7 @@ func LoadTLSConfig(caFile, key, peerName string) (*tls.Config, error) {
 	}
 
 	certPool := x509.NewCertPool()
-	bs, err := ioutil.ReadFile(caFile)
+	bs, err := ioutil.ReadFile(caFile) // nolint: gosec
 	if err != nil {
 		return nil, errors.Wrap(err, "read CA cert")
 	}

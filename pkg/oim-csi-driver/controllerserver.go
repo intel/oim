@@ -44,9 +44,8 @@ func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 
 	if od.vhostEndpoint != "" {
 		return od.createVolumeSPDK(ctx, req)
-	} else {
-		return od.createVolumeOIM(ctx, req)
 	}
+	return od.createVolumeOIM(ctx, req)
 }
 
 func (od *oimDriver) createVolumeSPDK(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -157,9 +156,8 @@ func (od *oimDriver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 
 	if od.vhostEndpoint != "" {
 		return od.deleteVolumeSPDK(ctx, req)
-	} else {
-		return od.deleteVolumeOIM(ctx, req)
 	}
+	return od.deleteVolumeOIM(ctx, req)
 }
 
 func (od *oimDriver) deleteVolumeSPDK(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
@@ -259,10 +257,10 @@ func (od *oimDriver) checkVolumeExistsSPDK(ctx context.Context, volumeID string)
 	bdevs, err := spdk.GetBDevs(ctx, client, spdk.GetBDevsArgs{Name: volumeID})
 	if err == nil && len(bdevs) == 1 {
 		return nil
-	} else {
-		// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
-		return status.Error(codes.NotFound, "")
 	}
+
+	// TODO: detect "not found" error (https://github.com/spdk/spdk/issues/319)
+	return status.Error(codes.NotFound, "")
 }
 
 func (od *oimDriver) checkVolumeExistsOIM(ctx context.Context, volumeID string) error {

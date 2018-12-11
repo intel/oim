@@ -31,8 +31,6 @@ import (
 
 var _ = Describe("OIM Controller", func() {
 	var (
-		c               *oimcontroller.Controller
-		ctx             context.Context
 		controllerCreds credentials.TransportCredentials
 	)
 
@@ -44,10 +42,11 @@ var _ = Describe("OIM Controller", func() {
 
 	Describe("registration", func() {
 		var (
-			db              *oimregistry.MemRegistryDB
-			registry        *oimregistry.Registry
+			db              oimregistry.RegistryDB
+			registry        oimregistry.RegistryServer
 			registryServer  *oimcommon.NonBlockingGRPCServer
 			registryAddress string
+			ctx             context.Context
 
 			getDB = func() map[string]string {
 				return oimregistry.GetRegistryEntries(db)
@@ -69,7 +68,8 @@ var _ = Describe("OIM Controller", func() {
 			db = oimregistry.NewMemRegistryDB()
 			registry, err = oimregistry.New(oimregistry.DB(db), oimregistry.TLS(tlsConfig))
 			Expect(err).NotTo(HaveOccurred())
-			registryServer, service := registry.Server("tcp4://:0")
+			server, service := registry.Server("tcp4://:0")
+			registryServer = server
 			err = registryServer.Start(ctx, service)
 			Expect(err).NotTo(HaveOccurred())
 			addr := registryServer.Addr()
@@ -94,6 +94,7 @@ var _ = Describe("OIM Controller", func() {
 				oimcontroller.WithControllerID(controllerID),
 				oimcontroller.WithControllerAddress(addr),
 			)
+			Expect(err).NotTo(HaveOccurred())
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
 			defer c.Stop()
@@ -113,6 +114,7 @@ var _ = Describe("OIM Controller", func() {
 				oimcontroller.WithControllerAddress(addr),
 				oimcontroller.WithRegistryDelay(5*time.Second),
 			)
+			Expect(err).NotTo(HaveOccurred())
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
 			defer c.Stop()
@@ -134,6 +136,7 @@ var _ = Describe("OIM Controller", func() {
 				oimcontroller.WithControllerAddress(addr),
 				oimcontroller.WithRegistryDelay(5*time.Second),
 			)
+			Expect(err).NotTo(HaveOccurred())
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -154,6 +157,7 @@ var _ = Describe("OIM Controller", func() {
 				BdevName: bdevName,
 				Size_:    1 * 1024 * 1024,
 			}
+			c *oimcontroller.Controller
 		)
 
 		BeforeEach(func() {
@@ -185,15 +189,6 @@ var _ = Describe("OIM Controller", func() {
 			// Clean up all bdevs and thus also VHost LUNs which might
 			// have been created during testing.
 			if testspdk.SPDK != nil {
-
-				bdevArgs := oim.ProvisionMallocBDevRequest{
-					BdevName: bdevName,
-				}
-				_, err := c.ProvisionMallocBDev(context.Background(), &bdevArgs)
-				if err != nil {
-					failed = append(failed, fmt.Errorf("ProvisionMallocBDev: %s", err))
-				}
-
 				bdevs, err := spdk.GetBDevs(context.Background(), c.SPDK, spdk.GetBDevsArgs{})
 				if err != nil {
 					failed = append(failed, errors.New(fmt.Sprintf("GetBDevs: %s", err)))

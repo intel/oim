@@ -20,27 +20,40 @@ TEST_ALL=$(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/test/e2e $(IMPORT_PATH)/test/pkg/
 TEST_ARGS=$(IMPORT_PATH)/pkg/... $(if $(_TEST_QEMU_IMAGE), $(IMPORT_PATH)/test/e2e)
 
 .PHONY: test
-test: all vet run_tests
+test: all run_tests
 
-# TODO: add -shadow
-.PHONY: vet
-vet:
-	go vet $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
+# gometalinter (https://github.com/alecthomas/gometalinter) might not
+# be installed, so we skip the test if that is the case.
+LINTER = $(shell PATH=$$GOPATH/bin:$$PATH command -v gometalinter || echo true)
 
-# golint may sometimes be too strict and intentionally has
-# no way to suppress uninteded warnings, but it finds real
-# issues, so we try to become complete free of warnings.
-# Right now only some parts of the code pass, so the test
-# target only checks those to avoid regressions.
-#
-# golint might not be installed, so we skip the test if
-# that is the case.
+# Packages that don't need to pass lint checking are explicitly
+# excluded.
+TEST_LINT_EXCLUDE =
+# Vendored code must be checked upstream.
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/vendor
+# Generated code.
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/spec/oim/v0
+# pkg/mount is temporarily copied from Kubernetes (TODO: replace with https://github.com/kubernetes/kubernetes/pull/68513 once that is merged)
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/mount
+# test code will soon be replaced (https://github.com/kubernetes/kubernetes/pull/70992)
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/test/e2e
+
+# TODO: Simplifying the code can come later.
+LINTER += --disable=gocyclo
+
+# These tools parse a file written for go 1.11 although the current go (or the go they were were built with?) is
+# older and then fail:
+# vendor/golang.org/x/net/http2/go111.go:26:16:warning: error return value not checked (invalid operation: trace (variable of type *net/http/httptrace.ClientTrace) has no field or method Got1xxResponse) (errcheck)
+# TODO: try with go 1.11
+LINTER += --disable=errcheck --disable=maligned --disable=structcheck --disable=varcheck --disable=interfacer --disable=unconvert --disable=megacheck --disable=gotype
+
+# Shadowing variables "err" and "ctx" is often intentional, therefore this check led to too many false positives.
+LINTER += --disable=vetshadow
+
 .PHONY: lint test_lint
 test: test_lint
-lint:
-	golint $(IMPORT_PATH)/pkg/... $(IMPORT_PATH)/cmd/...
 test_lint:
-	@ golint -help >/dev/null 2>&1; if [ $$? -eq 2 ]; then echo "running golint..."; golint -set_exit_status $(IMPORT_PATH)/pkg/log; fi
+	$(LINTER) $$(go list $(IMPORT_PATH)/... | grep -v $(foreach i,$(TEST_LINT_EXCLUDE),-e '$(i)') | sed -e 's;$(IMPORT_PATH)/;./;')
 
 # Check resp. fix formatting.
 .PHONY: test_fmt fmt

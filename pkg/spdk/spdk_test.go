@@ -135,7 +135,7 @@ func TestNBDDev(t *testing.T) {
 	_, err := spdk.ConstructMallocBDev(ctx, client, createArg)
 	require.NoError(t, err, "Failed to create %+v", createArg)
 
-	nbd, err := spdk.GetNBDDisks(ctx, client)
+	_, err = spdk.GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
 
 	// Find the first unused nbd device node. Unfortunately
@@ -151,9 +151,8 @@ func TestNBDDev(t *testing.T) {
 		require.NoError(t, err)
 		if size == 0 {
 			break
-		} else {
-			nbdFile.Close()
 		}
+		nbdFile.Close()
 	}
 	t.Logf("Using NBD %s, %+v", nbdDevice, nbdFile)
 
@@ -161,7 +160,7 @@ func TestNBDDev(t *testing.T) {
 	err = spdk.StartNBDDisk(ctx, client, startArg)
 	require.NoError(t, err, "Start NBD Disk with %+v", startArg)
 
-	nbd, err = spdk.GetNBDDisks(ctx, client)
+	nbd, err := spdk.GetNBDDisks(ctx, client)
 	assert.NoError(t, err, "get initial list of disks")
 	assert.Equal(t, nbd, spdk.GetNBDDisksResponse{startArg}, "should have one NBD device running")
 

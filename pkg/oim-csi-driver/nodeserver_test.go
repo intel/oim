@@ -35,7 +35,7 @@ func TestFindDev(t *testing.T) {
 	defer os.RemoveAll(tmp)
 
 	// Nothing in empty dir.
-	dev, major, minor, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
+	dev, _, _, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
@@ -66,12 +66,12 @@ func TestFindDev(t *testing.T) {
 		err = os.Symlink(to, filepath.Join(tmp, from))
 		require.NoError(t, err)
 	}
-	dev, major, minor, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
+	dev, _, _, err = findDev(ctx, tmp, &oim.PCIAddress{}, &oim.SCSIDisk{})
 	assert.NoError(t, err)
 	assert.Equal(t, "", dev)
 
 	// Closer, but not quite.
-	dev, major, minor, err = findDev(ctx, tmp,
+	dev, _, _, err = findDev(ctx, tmp,
 		&oim.PCIAddress{
 			Device: 0x17,
 		},
@@ -95,7 +95,7 @@ func TestFindDev(t *testing.T) {
 	assert.Equal(t, minor, 0)
 
 	// Without SCSI.
-	dev, major, minor, err = findDev(ctx, tmp,
+	dev, _, _, err = findDev(ctx, tmp,
 		&oim.PCIAddress{
 			Device: 0x18,
 		},
@@ -131,7 +131,7 @@ func TestFindDev(t *testing.T) {
 	// Timeout aborts wait.
 	timeout, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	dev, major, minor, err = waitForDevice(timeout, tmp,
+	_, _, _, err = waitForDevice(timeout, tmp,
 		&oim.PCIAddress{
 			Device: 0x17,
 		},
@@ -166,7 +166,7 @@ func TestFindDev(t *testing.T) {
 	// Broken entry.
 	err = os.Symlink("../../devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:1/0:0:2:0/block/sdd", filepath.Join(tmp, "a:b"))
 	require.NoError(t, err)
-	dev, major, minor, err = findDev(ctx, tmp,
+	_, _, _, err = findDev(ctx, tmp,
 		&oim.PCIAddress{
 			Device: 0x17,
 		},
