@@ -48,7 +48,7 @@ func init() {
 	supportedCSIDrivers["ceph-csi"] = emulateCephCSI
 }
 
-func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRequest) error {
+func mapCephVolumeParams(from *csi.NodeStageVolumeRequest, to *oim.MapVolumeRequest) error {
 	// Currently ceph-csi is passed this kind of request:
 	//
 	// volume_id: ".....-0242ac110002"
@@ -71,11 +71,11 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 	//
 	// The code for retrieving the relevant attributes was copied from https://github.com/ceph/ceph-csi/tree/master/pkg/rbd
 
-	targetPath := from.GetTargetPath()
-	if !strings.HasSuffix(targetPath, "/mount") {
+	targetPath := from.GetStagingTargetPath()
+	if !strings.HasSuffix(targetPath, "/globalmount") {
 		return fmt.Errorf("malformed value of target path: %s", targetPath)
 	}
-	s := strings.Split(strings.TrimSuffix(targetPath, "/mount"), "/")
+	s := strings.Split(strings.TrimSuffix(targetPath, "/globalmount"), "/")
 	volName := s[len(s)-1]
 
 	volOptions, err := getRBDVolumeOptions(from.VolumeAttributes)
@@ -83,7 +83,7 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 		return err
 	}
 	userID := volOptions.UserID
-	credentials := from.GetNodePublishSecrets()
+	credentials := from.GetNodeStageSecrets()
 
 	mon, err := getMon(volOptions, credentials)
 	if err != nil {

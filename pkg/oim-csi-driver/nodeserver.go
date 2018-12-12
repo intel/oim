@@ -39,7 +39,7 @@ func (od *oimDriver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCa
 			{
 				Type: &csi.NodeServiceCapability_Rpc{
 					Rpc: &csi.NodeServiceCapability_RPC{
-						Type: csi.NodeServiceCapability_RPC_UNKNOWN,
+						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
 					},
 				},
 			},
@@ -48,24 +48,131 @@ func (od *oimDriver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCa
 }
 
 func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	// Check arguments
-	if req.GetVolumeCapability() == nil {
-		return nil, status.Error(codes.InvalidArgument, "Volume capability missing in request")
+	targetPath := req.GetTargetPath()
+	stagingTargetPath := req.GetStagingTargetPath()
+	volumeID := req.GetVolumeId()
+	volumeCapability := req.GetVolumeCapability()
+	readOnly := req.GetReadonly()
+
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty target path")
 	}
-	if len(req.GetTargetPath()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
+	if stagingTargetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty staging target path")
+	}
+	if volumeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	if volumeCapability == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing volume capability")
 	}
 
 	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
-	name := req.GetVolumeId()
-	if name == "" {
+	volumeNameMutex.LockKey(volumeID)
+	defer volumeNameMutex.UnlockKey(volumeID)
+
+	mounter := mount.New("")
+
+	// The following code was copied from:
+	// https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver/blob/fa02b8971cb686b3e2e9cd965c18fde3ccadd10a/pkg/gce-pd-csi-driver/node.go#L45
+
+	notMnt, err := mounter.IsLikelyNotMountPoint(targetPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, status.Error(codes.Internal, errors.Wrap(err, "validate target path").Error())
+	}
+	if !notMnt {
+		// TODO(https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver/issues/95): check if mount is compatible. Return OK if it is, or appropriate error.
+		/*
+			1) Target Path MUST be the vol referenced by vol ID
+			2) VolumeCapability MUST match
+			3) Readonly MUST match
+		*/
+		return &csi.NodePublishVolumeResponse{}, nil
+	}
+
+	if err := mounter.MakeDir(targetPath); err != nil {
+		return nil, status.Error(codes.Internal, errors.Wrap(err, "make target dir").Error())
+	}
+
+	// Perform a bind mount to the full path to allow duplicate mounts of the same PD.
+	options := []string{"bind"}
+	if readOnly {
+		options = append(options, "ro")
+	}
+
+	err = mounter.Mount(stagingTargetPath, targetPath, "ext4", options)
+	if err != nil {
+		notMnt, mntErr := mounter.IsLikelyNotMountPoint(targetPath)
+		if mntErr != nil {
+			return nil, status.Error(codes.Internal, errors.Wrap(mntErr, "check whether target path is a mount point").Error())
+		}
+		if !notMnt {
+			if mntErr = mounter.Unmount(targetPath); mntErr != nil {
+				return nil, status.Error(codes.Internal, errors.Wrap(mntErr, "unmount target path").Error())
+			}
+			notMnt, mntErr := mounter.IsLikelyNotMountPoint(targetPath)
+			if mntErr != nil {
+				return nil, status.Error(codes.Internal, errors.Wrap(mntErr, "check whether target path is a mount point").Error())
+			}
+			if !notMnt {
+				// This is very odd, we don't expect it.  We'll try again next sync loop.
+				return nil, status.Error(codes.Internal, errors.Wrap(mntErr, "something is wrong with mounting").Error())
+			}
+		}
+		os.Remove(targetPath) // nolint: gosec
+		return nil, status.Error(codes.Internal, errors.Wrap(err, "mount of disk failed").Error())
+	}
+
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+	targetPath := req.GetTargetPath()
+	volumeID := req.GetVolumeId()
+
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty target path")
+	}
+	if volumeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
 	}
-	volumeNameMutex.LockKey(name)
-	defer volumeNameMutex.UnlockKey(name)
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	volumeNameMutex.LockKey(volumeID)
+	defer volumeNameMutex.UnlockKey(volumeID)
+
+	// The following code was copied from:
+	// https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver/blob/master/pkg/gce-pd-csi-driver/node.go#L128
+
+	mounter := mount.New("")
+	err := mount.UnmountPath(targetPath, mounter)
+	if err != nil {
+		return nil, status.Error(codes.Internal, errors.Wrap(err, "unmount failed").Error())
+	}
+
+	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	targetPath := req.GetStagingTargetPath()
+	volumeID := req.GetVolumeId()
+	volumeCapability := req.GetVolumeCapability()
+
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty target path")
+	}
+	if volumeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
+	}
+	if volumeCapability == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing volume capability")
+	}
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	volumeNameMutex.LockKey(volumeID)
+	defer volumeNameMutex.UnlockKey(volumeID)
 
 	// Check and prepare mount point.
-	targetPath := req.GetTargetPath()
 	notMnt, err := mount.New("").IsLikelyNotMountPoint(targetPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -79,19 +186,16 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 	if !notMnt {
 		// Already mounted, nothing to do.
-		return &csi.NodePublishVolumeResponse{}, nil
+		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
 	fsType := req.GetVolumeCapability().GetMount().GetFsType()
-	readOnly := req.GetReadonly()
-	volumeID := req.GetVolumeId()
 	attrib := req.GetVolumeAttributes()
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
 
 	log.FromContext(ctx).Infow("mounting",
 		"target", targetPath,
 		"fstype", fsType,
-		"read-only", readOnly,
 		"volumeid", volumeID,
 		"attributes", attrib,
 		"flags", mountFlags,
@@ -106,36 +210,29 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	}
 
 	options := []string{}
-	if readOnly {
-		options = append(options, "ro")
-	}
 	diskMounter := &mount.SafeFormatAndMount{Interface: mount.New(""), Exec: mount.NewOsExec()}
 	if err := diskMounter.FormatAndMount(device, targetPath, fsType, options); err != nil {
 		// We get a pretty bad error code from FormatAndMount ("exit code 1") :-/
-		return nil, errors.Wrapf(err, "formatting as %s and mounting %s at %s", fsType, device, targetPath)
+		return nil, status.Error(codes.Internal, errors.Wrapf(err, "formatting as %s and mounting %s at %s", fsType, device, targetPath).Error())
 	}
 
-	return &csi.NodePublishVolumeResponse{}, nil
+	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	// Check arguments
-	if len(req.GetVolumeId()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
-	}
-	if len(req.GetTargetPath()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
-	}
-	targetPath := req.GetTargetPath()
+func (od *oimDriver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	targetPath := req.GetStagingTargetPath()
 	volumeID := req.GetVolumeId()
 
-	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
-	name := req.GetVolumeId()
-	if name == "" {
+	if targetPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "empty target path")
+	}
+	if volumeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
 	}
-	volumeNameMutex.LockKey(name)
-	defer volumeNameMutex.UnlockKey(name)
+
+	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
+	volumeNameMutex.LockKey(volumeID)
+	defer volumeNameMutex.UnlockKey(volumeID)
 
 	// Unmounting the image
 	// TODO: check whether this really is still a mount point. We might have removed it already.
@@ -143,36 +240,12 @@ func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 		"target", targetPath,
 		"volumeid", volumeID,
 	)
-	if err := mount.New("").Unmount(req.GetTargetPath()); err != nil {
+	if err := mount.New("").Unmount(targetPath); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	if err := od.deleteDevice(ctx, volumeID); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	return &csi.NodeUnpublishVolumeResponse{}, nil
-}
-
-func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	// Check arguments
-	if len(req.GetVolumeId()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
-	}
-	if len(req.GetStagingTargetPath()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
-	}
-
-	return &csi.NodeStageVolumeResponse{}, nil
-}
-
-func (od *oimDriver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	// Check arguments
-	if len(req.GetVolumeId()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
-	}
-	if len(req.GetStagingTargetPath()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Target path missing in request")
 	}
 
 	return &csi.NodeUnstageVolumeResponse{}, nil

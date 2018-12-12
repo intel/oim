@@ -57,7 +57,7 @@ type EmulateCSIDriver struct {
 	CSIDriverName                 string
 	ControllerServiceCapabilities []csi.ControllerServiceCapability_RPC_Type
 	VolumeCapabilityAccessModes   []csi.VolumeCapability_AccessMode_Mode
-	MapVolumeParams               func(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRequest) error
+	MapVolumeParams               func(from *csi.NodeStageVolumeRequest, to *oim.MapVolumeRequest) error
 }
 
 var (

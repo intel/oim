@@ -46,14 +46,14 @@ func findNBDDevice(ctx context.Context, client *spdk.Client, volumeID string) (n
 
 type cleanup func() error
 
-func (od *oimDriver) createDevice(ctx context.Context, req *csi.NodePublishVolumeRequest) (string, cleanup, error) {
+func (od *oimDriver) createDevice(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
 	if od.vhostEndpoint != "" {
 		return od.createDeviceDirectly(ctx, req)
 	}
 	return od.createDeviceWithController(ctx, req)
 }
 
-func (od *oimDriver) createDeviceDirectly(ctx context.Context, req *csi.NodePublishVolumeRequest) (string, cleanup, error) {
+func (od *oimDriver) createDeviceDirectly(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
 	if od.emulate != nil {
 		return "", nil, errors.Errorf("emulating CSI driver %q not currently implemented when using SPDK directly", od.emulate.CSIDriverName)
 	}
@@ -128,7 +128,7 @@ func (od *oimDriver) createDeviceDirectly(ctx context.Context, req *csi.NodePubl
 	return nbdDevice, nil, nil
 }
 
-func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.NodePublishVolumeRequest) (string, cleanup, error) {
+func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
 	volumeID := req.GetVolumeId()
 
 	// Connect to OIM controller through OIM registry.

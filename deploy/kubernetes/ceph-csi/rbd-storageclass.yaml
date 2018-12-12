@@ -27,6 +27,8 @@ parameters:
     # monitor settings under the keys "admin", "kubernetes" and "monitors".
     csiProvisionerSecretName: csi-rbd-secret
     csiProvisionerSecretNamespace: default
+    csiNodeStageSecretName: csi-rbd-secret
+    csiNodeStageSecretNamespace: default
     csiNodePublishSecretName: csi-rbd-secret
     csiNodePublishSecretNamespace: default
 
