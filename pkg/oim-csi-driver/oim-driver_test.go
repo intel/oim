@@ -209,11 +209,11 @@ func TestMockOIM(t *testing.T) {
 	volumeID := "my-test-volume"
 	deadline, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, err = csiClient.NodePublishVolume(deadline,
-		&csi.NodePublishVolumeRequest{
-			VolumeId:         volumeID,
-			TargetPath:       tmp + "/target",
-			VolumeCapability: &csi.VolumeCapability{},
+	_, err = csiClient.NodeStageVolume(deadline,
+		&csi.NodeStageVolumeRequest{
+			VolumeId:          volumeID,
+			StagingTargetPath: tmp + "/stagingtarget",
+			VolumeCapability:  &csi.VolumeCapability{},
 		})
 	if assert.Error(t, err) {
 		// Both gRPC and waitForDevice will abort when the deadline is reached.

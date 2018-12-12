@@ -153,6 +153,7 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 				"deploy/kubernetes/ceph-csi/rbd-node.yaml",
 				"deploy/kubernetes/ceph-csi/oim-node.yaml",
 				"deploy/kubernetes/ceph-csi/rbd-statefulset.yaml",
+				"deploy/kubernetes/ceph-csi/rbd-storageclass.yaml",
 			)
 			destructors = append(destructors, destructor)
 			Expect(err).NotTo(HaveOccurred())
@@ -161,22 +162,6 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		It("should provision storage", func() {
 			t := storageClassTest{
 				provisioner: "oim-rbd",
-				parameters: map[string]string{
-					// The cluster must be provisioned
-					// with a "csi-rbd-secret" that has
-					// the following keys:
-					// - monitors = mon1:port,mon2:port,...
-					// - admin = base64-encoded key value from keyring for user "admin" (used for provisioning)
-					// - kubernetes = base64-encoded key value for user "kubernetes" (used for mounting volumes)
-					"monValueFromSecret":            "monitors",
-					"adminid":                       "admin",
-					"userid":                        "kubernetes",
-					"csiProvisionerSecretName":      "csi-rbd-secret",
-					"csiProvisionerSecretNamespace": "default",
-					"csiNodePublishSecretName":      "csi-rbd-secret",
-					"csiNodePublishSecretNamespace": "default",
-					"pool":                          "rbd",
-				},
 				// See https://github.com/ceph/ceph-csi/issues/85
 				claimSize:    "1Gi",
 				expectedSize: "1Gi",
@@ -189,11 +174,11 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 			}
 
 			claim := newClaim(t, ns.GetName(), "")
-			class := newStorageClass(t, ns.GetName(), "")
-			claim.Spec.StorageClassName = &class.ObjectMeta.Name
+			scName := "oim-rbd-sc-" + f.UniqueName
+			claim.Spec.StorageClassName = &scName
 			// TODO: check machine state while volume is mounted:
 			// a missing UnmapVolume call in nodeserver.go must be detected
-			testDynamicProvisioning(t, cs, claim, class)
+			testDynamicProvisioning(t, cs, claim, nil)
 		})
 	})
 })
