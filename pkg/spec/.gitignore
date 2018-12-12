@@ -3,3 +3,4 @@
 /.build/
 /protoc
 /protoc-gen-gogofaster
+/*.tmp
