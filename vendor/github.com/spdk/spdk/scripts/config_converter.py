@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
 import configparser
 import re
@@ -30,7 +30,7 @@ iscsi_dict["construct_target_node"] = []
 
 nvmf_dict = OrderedDict()
 nvmf_dict["set_nvmf_target_config"] = []
-nvmf_dict["set_nvmf_target_options"] = []
+nvmf_dict["set_nvmf_target_max_subsystems"] = []
 nvmf_dict["construct_nvmf_subsystem"] = []
 
 
@@ -163,6 +163,8 @@ def get_aio_bdev_json(config, section):
     for option in config.options("AIO"):
         if option == "AIO":
             value = config.get("AIO", option).split("\n")
+    if value is None:
+        return aio_json
     for item in value:
         items = re.findall("\S+", item)
         params = {}
@@ -291,11 +293,6 @@ def get_split_bdev_json(config, section):
 def get_nvmf_options_json(config, section):
     params = [
         ["AcceptorPollRate", "acceptor_poll_rate", int, 10000],
-        ["MaxQueuesPerSession", "max_qpairs_per_ctrlr", int, 64],
-        ["MaxQueueDepth", "max_queue_depth", int, 128],
-        ["IncapsuleDataSize", "in_capsule_data_size", int, 4096],
-        ["MaxIOSize", "max_io_size", int, 131072],
-        ["IOUnitSize", "io_unit_size", int, 131072],
         ["MaxSubsystems", "max_subsystems", int, 1024]
     ]
     for option in config.options("Nvmf"):
@@ -307,7 +304,7 @@ def get_nvmf_options_json(config, section):
     })
     nvmf_json.append({
         "params": to_json_params(params[1:7]),
-        "method": "set_nvmf_target_options"
+        "method": "set_nvmf_target_max_subsystems"
     })
 
     return nvmf_json
@@ -689,6 +686,9 @@ if __name__ == "__main__":
                     section_to_subsystem[match_section][
                         item['method']].append(item)
         elif section == "Global":
+            pass
+        elif section == "Ioat":
+            # Ioat doesn't support JSON config yet.
             pass
         elif section == "VirtioPci":
             print("Please use spdk target flags.")

@@ -33,31 +33,17 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
 
 APP = vhost
 
 C_SRCS := vhost.c
 
-SPDK_LIB_LIST = event_bdev event_copy event_net event_scsi event_vhost event
+SPDK_LIB_LIST = $(ALL_MODULES_LIST)
+SPDK_LIB_LIST += vhost rte_vhost event_vhost
+SPDK_LIB_LIST += event_bdev event_copy event_net event_scsi event
 SPDK_LIB_LIST += jsonrpc json rpc bdev_rpc bdev scsi copy trace conf
 SPDK_LIB_LIST += thread util log log_rpc app_rpc
-SPDK_LIB_LIST += vhost rte_vhost event_nbd nbd net
+SPDK_LIB_LIST += event_nbd nbd net sock
 
-LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS) \
-	$(COPY_MODULES_LINKER_ARGS) \
-	$(SOCK_MODULES_LINKER_ARGS)
-LIBS += $(SPDK_LIB_LINKER_ARGS)
-LIBS += $(ENV_LINKER_ARGS)
-
-all : $(APP)
-	@:
-
-$(APP) : $(OBJS) $(SPDK_LIB_FILES) $(ENV_LIBS) $(BLOCKDEV_MODULES_FILES) $(COPY_MODULES_FILES) $(SOCK_MODULES_FILES)
-	$(LINK_C)
-
-clean :
-	$(CLEAN_C) $(APP)
-
-include $(SPDK_ROOT_DIR)/mk/spdk.deps.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.app.mk

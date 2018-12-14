@@ -261,10 +261,13 @@ struct spdk_bdev {
 	uint64_t blockcnt;
 
 	/**
-	 * This is used to make sure buffers are sector aligned.
-	 * This causes double buffering on writes.
+	 * Specifies an alignment requirement for data buffers associated with an spdk_bdev_io.
+	 * 0 = no alignment requirement
+	 * >0 = alignment requirement is 2 ^ required_alignment.
+	 * bdev layer will automatically double buffer any spdk_bdev_io that violates this
+	 * alignment, before the spdk_bdev_io is submitted to the bdev module.
 	 */
-	bool need_aligned_buffer;
+	uint8_t required_alignment;
 
 	/**
 	 * Specifies whether the optimal_io_boundary is mandatory or
@@ -486,6 +489,11 @@ struct spdk_bdev_io {
 		/** requested size of the buffer associated with this I/O */
 		uint64_t buf_len;
 
+		/** if the request is double buffered, store original request iovs here */
+		struct iovec  bounce_iov;
+		struct iovec *orig_iovs;
+		int           orig_iovcnt;
+
 		/** Callback for when buf is allocated */
 		spdk_bdev_io_get_buf_cb get_buf_cb;
 
@@ -647,10 +655,14 @@ const struct spdk_bdev_aliases_list *spdk_bdev_get_aliases(const struct spdk_bde
 
 /**
  * Allocate a buffer for given bdev_io.  Allocation will happen
- * only if the bdev_io has no assigned SGL yet. The buffer will be
- * freed automatically on \c spdk_bdev_free_io() call. This call
- * will never fail - in case of lack of memory given callback \c cb
- * will be deferred until enough memory is freed.
+ * only if the bdev_io has no assigned SGL yet or SGL is not
+ * aligned to \c bdev->required_alignment.  If SGL is not aligned,
+ * this call will cause copy from SGL to bounce buffer on write
+ * path or copy from bounce buffer to SGL before completion
+ * callback on read path.  The buffer will be freed automatically
+ * on \c spdk_bdev_free_io() call. This call will never fail.
+ * In case of lack of memory given callback \c cb will be deferred
+ * until enough memory is freed.
  *
  * \param bdev_io I/O to allocate buffer for.
  * \param cb callback to be called when the buffer is allocated
@@ -848,10 +860,11 @@ int spdk_bdev_part_free(struct spdk_bdev_part *part);
 /**
  * Calls spdk_bdev_unregister on the bdev for each part associated with base_bdev.
  *
- * \param base_bdev The spdk_bdev upon which an spdk_bdev-part_base is built
+ * \param part_base The part base object built on top of an spdk_bdev
  * \param tailq The list of spdk_bdev_part bdevs associated with this base bdev.
  */
-void spdk_bdev_part_base_hotremove(struct spdk_bdev *base_bdev, struct bdev_part_tailq *tailq);
+void spdk_bdev_part_base_hotremove(struct spdk_bdev_part_base *part_base,
+				   struct bdev_part_tailq *tailq);
 
 /**
  * Construct a new spdk_bdev_part_base on top of the provided bdev.

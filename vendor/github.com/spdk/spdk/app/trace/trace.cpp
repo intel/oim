@@ -210,15 +210,13 @@ process_event(struct spdk_trace_entry *e, uint64_t tsc_rate,
 }
 
 static int
-populate_events(struct spdk_trace_history *history)
+populate_events(struct spdk_trace_history *history, int num_entries)
 {
-	int i, num_entries, num_entries_filled;
+	int i, num_entries_filled;
 	struct spdk_trace_entry *e;
 	int first, last, lcore;
 
 	lcore = history->lcore;
-
-	num_entries = SPDK_COUNTOF(history->entries);
 
 	e = history->entries;
 
@@ -286,7 +284,8 @@ static void usage(void)
 int main(int argc, char **argv)
 {
 	void			*history_ptr;
-	struct spdk_trace_history *history_entries, *history;
+	struct spdk_trace_history *history;
+	struct spdk_trace_histories *histories;
 	int			fd, i;
 	int			lcore = SPDK_TRACE_MAX_LCORE;
 	uint64_t		tsc_offset;
@@ -295,6 +294,7 @@ int main(int argc, char **argv)
 	int			op;
 	char			shm_name[64];
 	int			shm_id = -1, shm_pid = -1;
+	uint64_t		trace_histories_size;
 
 	g_exe_name = argv[0];
 	while ((op = getopt(argc, argv, "c:f:i:p:qs:")) != -1) {
@@ -341,15 +341,14 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (shm_id >= 0) {
-		snprintf(shm_name, sizeof(shm_name), "/%s_trace.%d", app_name, shm_id);
-	} else {
-		snprintf(shm_name, sizeof(shm_name), "/%s_trace.pid%d", app_name, shm_pid);
-	}
-
 	if (file_name) {
 		fd = open(file_name, O_RDONLY);
 	} else {
+		if (shm_id >= 0) {
+			snprintf(shm_name, sizeof(shm_name), "/%s_trace.%d", app_name, shm_id);
+		} else {
+			snprintf(shm_name, sizeof(shm_name), "/%s_trace.pid%d", app_name, shm_pid);
+		}
 		fd = shm_open(shm_name, O_RDONLY, 0600);
 	}
 	if (fd < 0) {
@@ -358,9 +357,10 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 
+	/* Map the header of trace file */
 	history_ptr = mmap(NULL, sizeof(*g_histories), PROT_READ, MAP_SHARED, fd, 0);
 	if (history_ptr == MAP_FAILED) {
-		fprintf(stderr, "Could not mmap shm %s.\n", shm_name);
+		fprintf(stderr, "Could not mmap %s.\n", file_name ? file_name : shm_name);
 		usage();
 		exit(-1);
 	}
@@ -378,25 +378,46 @@ int main(int argc, char **argv)
 		printf("TSC Rate: %ju\n", g_tsc_rate);
 	}
 
-	history_entries = (struct spdk_trace_history *)malloc(sizeof(g_histories->per_lcore_history));
-	if (history_entries == NULL) {
+	/* Remap the entire trace file */
+	trace_histories_size = spdk_get_trace_histories_size(g_histories);
+	munmap(history_ptr, sizeof(*g_histories));
+	history_ptr = mmap(NULL, trace_histories_size, PROT_READ, MAP_SHARED, fd, 0);
+	if (history_ptr == MAP_FAILED) {
+		fprintf(stderr, "Could not mmap %s.\n", file_name ? file_name : shm_name);
+		usage();
+		exit(-1);
+	}
+
+	g_histories = (struct spdk_trace_histories *)history_ptr;
+
+	histories = (struct spdk_trace_histories *)malloc(trace_histories_size);
+	if (histories == NULL) {
 		goto cleanup;
 	}
-	memcpy(history_entries, g_histories->per_lcore_history,
-	       sizeof(g_histories->per_lcore_history));
+
+	memcpy(histories, g_histories, trace_histories_size);
 
 	if (lcore == SPDK_TRACE_MAX_LCORE) {
 		for (i = 0; i < SPDK_TRACE_MAX_LCORE; i++) {
-			history = &history_entries[i];
+			history = spdk_get_per_lcore_history(histories, i);
 			if (history->entries[0].tsc == 0) {
 				continue;
 			}
-			populate_events(history);
+
+			if (g_verbose && history->num_entries) {
+				printf("Trace Size of lcore (%d): %ju\n", i, history->num_entries);
+			}
+
+			populate_events(history, history->num_entries);
 		}
 	} else {
-		history = &history_entries[lcore];
+		history = spdk_get_per_lcore_history(histories, lcore);
 		if (history->entries[0].tsc != 0) {
-			populate_events(history);
+			if (g_verbose && history->num_entries) {
+				printf("Trace Size of lcore (%d): %ju\n", lcore, history->num_entries);
+			}
+
+			populate_events(history, history->num_entries);
 		}
 	}
 
@@ -408,10 +429,10 @@ int main(int argc, char **argv)
 		process_event(it->second, g_tsc_rate, tsc_offset, it->first.lcore);
 	}
 
-	free(history_entries);
+	free(histories);
 
 cleanup:
-	munmap(history_ptr, sizeof(*g_histories));
+	munmap(history_ptr, trace_histories_size);
 	close(fd);
 
 	return (0);

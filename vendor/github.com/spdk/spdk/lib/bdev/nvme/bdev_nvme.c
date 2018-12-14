@@ -114,7 +114,7 @@ static pthread_mutex_t g_bdev_nvme_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static TAILQ_HEAD(, nvme_ctrlr)	g_nvme_ctrlrs = TAILQ_HEAD_INITIALIZER(g_nvme_ctrlrs);
 
-static int nvme_ctrlr_create_bdevs(struct nvme_ctrlr *nvme_ctrlr);
+static void nvme_ctrlr_create_bdevs(struct nvme_ctrlr *nvme_ctrlr);
 static int bdev_nvme_library_init(void);
 static void bdev_nvme_library_fini(void);
 static int bdev_nvme_queue_cmd(struct nvme_bdev *bdev, struct spdk_nvme_qpair *qpair,
@@ -260,6 +260,20 @@ bdev_nvme_unregister_cb(void *io_device)
 	spdk_nvme_detach(ctrlr);
 }
 
+static void
+bdev_nvme_ctrlr_destruct(struct nvme_ctrlr *nvme_ctrlr)
+{
+	assert(nvme_ctrlr->destruct);
+	pthread_mutex_lock(&g_bdev_nvme_mutex);
+	TAILQ_REMOVE(&g_nvme_ctrlrs, nvme_ctrlr, tailq);
+	pthread_mutex_unlock(&g_bdev_nvme_mutex);
+	spdk_io_device_unregister(nvme_ctrlr->ctrlr, bdev_nvme_unregister_cb);
+	spdk_poller_unregister(&nvme_ctrlr->adminq_timer_poller);
+	free(nvme_ctrlr->name);
+	free(nvme_ctrlr->bdevs);
+	free(nvme_ctrlr);
+}
+
 static int
 bdev_nvme_destruct(void *ctx)
 {
@@ -269,21 +283,15 @@ bdev_nvme_destruct(void *ctx)
 	pthread_mutex_lock(&g_bdev_nvme_mutex);
 	nvme_ctrlr->ref--;
 	free(nvme_disk->disk.name);
-	memset(nvme_disk, 0, sizeof(*nvme_disk));
-	if (nvme_ctrlr->ref == 0) {
-		TAILQ_REMOVE(&g_nvme_ctrlrs, nvme_ctrlr, tailq);
+	nvme_disk->active = false;
+	if (nvme_ctrlr->ref == 0 && nvme_ctrlr->destruct) {
 		pthread_mutex_unlock(&g_bdev_nvme_mutex);
-		spdk_io_device_unregister(nvme_ctrlr->ctrlr, bdev_nvme_unregister_cb);
-		spdk_poller_unregister(&nvme_ctrlr->adminq_timer_poller);
-		free(nvme_ctrlr->name);
-		free(nvme_ctrlr->bdevs);
-		free(nvme_ctrlr);
+		bdev_nvme_ctrlr_destruct(nvme_ctrlr);
 		return 0;
 	}
 
 	pthread_mutex_unlock(&g_bdev_nvme_mutex);
 	return 0;
-
 }
 
 static int
@@ -929,6 +937,10 @@ timeout_cb(void *cb_arg, struct spdk_nvme_ctrlr *ctrlr,
 		}
 		break;
 	case SPDK_BDEV_NVME_TIMEOUT_ACTION_NONE:
+		SPDK_DEBUGLOG(SPDK_LOG_BDEV_NVME, "No action for nvme controller timeout.\n");
+		break;
+	default:
+		SPDK_ERRLOG("An invalid timeout action value is found.\n");
 		break;
 	}
 }
@@ -1017,13 +1029,7 @@ create_ctrlr(struct spdk_nvme_ctrlr *ctrlr,
 				sizeof(struct nvme_io_channel),
 				name);
 
-	if (nvme_ctrlr_create_bdevs(nvme_ctrlr) != 0) {
-		spdk_io_device_unregister(ctrlr, bdev_nvme_unregister_cb);
-		free(nvme_ctrlr->bdevs);
-		free(nvme_ctrlr->name);
-		free(nvme_ctrlr);
-		return -1;
-	}
+	nvme_ctrlr_create_bdevs(nvme_ctrlr);
 
 	nvme_ctrlr->adminq_timer_poller = spdk_poller_register(bdev_nvme_poll_adminq, ctrlr,
 					  g_opts.nvme_adminq_poll_period_us);
@@ -1089,6 +1095,16 @@ remove_cb(void *cb_ctx, struct spdk_nvme_ctrlr *ctrlr)
 				if (nvme_bdev->active) {
 					spdk_bdev_unregister(&nvme_bdev->disk, NULL, NULL);
 				}
+			}
+
+			pthread_mutex_lock(&g_bdev_nvme_mutex);
+			assert(!nvme_ctrlr->destruct);
+			nvme_ctrlr->destruct = true;
+			if (nvme_ctrlr->ref == 0) {
+				pthread_mutex_unlock(&g_bdev_nvme_mutex);
+				bdev_nvme_ctrlr_destruct(nvme_ctrlr);
+			} else {
+				pthread_mutex_unlock(&g_bdev_nvme_mutex);
 			}
 			return;
 		}
@@ -1187,6 +1203,11 @@ spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 
 	if (nvme_ctrlr_get(trid) != NULL) {
 		SPDK_ERRLOG("A controller with the provided trid (traddr: %s) already exists.\n", trid->traddr);
+		return -1;
+	}
+
+	if (nvme_ctrlr_get_by_name(base_name)) {
+		SPDK_ERRLOG("A controller with the provided name (%s) already exists.\n", base_name);
 		return -1;
 	}
 
@@ -1447,10 +1468,34 @@ end:
 static void
 bdev_nvme_library_fini(void)
 {
+	struct nvme_ctrlr *nvme_ctrlr, *tmp;
+
 	spdk_poller_unregister(&g_hotplug_poller);
+
+	pthread_mutex_lock(&g_bdev_nvme_mutex);
+	TAILQ_FOREACH_SAFE(nvme_ctrlr, &g_nvme_ctrlrs, tailq, tmp) {
+		if (nvme_ctrlr->ref > 0) {
+			SPDK_ERRLOG("Controller %s is still referenced, can't destroy it\n",
+				    nvme_ctrlr->name);
+			continue;
+		}
+
+		if (nvme_ctrlr->destruct) {
+			/* This controller's destruction was already started
+			 * before the application started shutting down
+			 */
+			continue;
+		}
+
+		nvme_ctrlr->destruct = true;
+		pthread_mutex_unlock(&g_bdev_nvme_mutex);
+		bdev_nvme_ctrlr_destruct(nvme_ctrlr);
+		pthread_mutex_lock(&g_bdev_nvme_mutex);
+	}
+	pthread_mutex_unlock(&g_bdev_nvme_mutex);
 }
 
-static int
+static void
 nvme_ctrlr_create_bdevs(struct nvme_ctrlr *nvme_ctrlr)
 {
 	int			rc;
@@ -1462,10 +1507,14 @@ nvme_ctrlr_create_bdevs(struct nvme_ctrlr *nvme_ctrlr)
 		rc = nvme_ctrlr_create_bdev(nvme_ctrlr, nsid);
 		if (rc == 0) {
 			bdev_created++;
+		} else {
+			SPDK_NOTICELOG("Failed to create bdev for namespace %u of %s\n", nsid, nvme_ctrlr->name);
 		}
 	}
 
-	return (bdev_created > 0) ? 0 : -1;
+	if (bdev_created == 0) {
+		SPDK_NOTICELOG("No bdev is created for NVMe controller %s\n", nvme_ctrlr->name);
+	}
 }
 
 static void

@@ -79,6 +79,8 @@ int __itt_init_ittlib(const char *, __itt_group_id);
 #define SPDK_BDEV_QOS_MIN_BYTES_PER_SEC		(10 * 1024 * 1024)
 #define SPDK_BDEV_QOS_LIMIT_NOT_DEFINED		UINT64_MAX
 
+#define SPDK_BDEV_POOL_ALIGNMENT 512
+
 static const char *qos_conf_type[] = {"Limit_IOPS", "Limit_BPS"};
 static const char *qos_rpc_type[] = {"rw_ios_per_sec", "rw_mbytes_per_sec"};
 
@@ -409,6 +411,78 @@ spdk_bdev_io_set_buf(struct spdk_bdev_io *bdev_io, void *buf, size_t len)
 	iovs[0].iov_len = len;
 }
 
+static bool
+_is_buf_allocated(struct iovec *iovs)
+{
+	return iovs[0].iov_base != NULL;
+}
+
+static bool
+_are_iovs_aligned(struct iovec *iovs, int iovcnt, uint32_t alignment)
+{
+	int i;
+	uintptr_t iov_base;
+
+	if (spdk_likely(alignment == 1)) {
+		return true;
+	}
+
+	for (i = 0; i < iovcnt; i++) {
+		iov_base = (uintptr_t)iovs[i].iov_base;
+		if ((iov_base & (alignment - 1)) != 0) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void
+_copy_iovs_to_buf(void *buf, size_t buf_len, struct iovec *iovs, int iovcnt)
+{
+	int i;
+	size_t len;
+
+	for (i = 0; i < iovcnt; i++) {
+		len = spdk_min(iovs[i].iov_len, buf_len);
+		memcpy(buf, iovs[i].iov_base, len);
+		buf += len;
+		buf_len -= len;
+	}
+}
+
+static void
+_copy_buf_to_iovs(struct iovec *iovs, int iovcnt, void *buf, size_t buf_len)
+{
+	int i;
+	size_t len;
+
+	for (i = 0; i < iovcnt; i++) {
+		len = spdk_min(iovs[i].iov_len, buf_len);
+		memcpy(iovs[i].iov_base, buf, len);
+		buf += len;
+		buf_len -= len;
+	}
+}
+
+static void
+_bdev_io_set_bounce_buf(struct spdk_bdev_io *bdev_io, void *buf, size_t len)
+{
+	/* save original iovec */
+	bdev_io->internal.orig_iovs = bdev_io->u.bdev.iovs;
+	bdev_io->internal.orig_iovcnt = bdev_io->u.bdev.iovcnt;
+	/* set bounce iov */
+	bdev_io->u.bdev.iovs = &bdev_io->internal.bounce_iov;
+	bdev_io->u.bdev.iovcnt = 1;
+	/* set bounce buffer for this operation */
+	bdev_io->u.bdev.iovs[0].iov_base = buf;
+	bdev_io->u.bdev.iovs[0].iov_len = len;
+	/* if this is write path, copy data from original buffer to bounce buffer */
+	if (bdev_io->type == SPDK_BDEV_IO_TYPE_WRITE) {
+		_copy_iovs_to_buf(buf, len, bdev_io->internal.orig_iovs, bdev_io->internal.orig_iovcnt);
+	}
+}
+
 static void
 spdk_bdev_io_put_buf(struct spdk_bdev_io *bdev_io)
 {
@@ -417,15 +491,18 @@ spdk_bdev_io_put_buf(struct spdk_bdev_io *bdev_io)
 	void *buf, *aligned_buf;
 	bdev_io_stailq_t *stailq;
 	struct spdk_bdev_mgmt_channel *ch;
-
-	assert(bdev_io->u.bdev.iovcnt == 1);
+	uint64_t buf_len;
+	uint64_t alignment;
+	bool buf_allocated;
 
 	buf = bdev_io->internal.buf;
+	buf_len = bdev_io->internal.buf_len;
+	alignment = spdk_bdev_get_buf_align(bdev_io->bdev);
 	ch = bdev_io->internal.ch->shared_resource->mgmt_ch;
 
 	bdev_io->internal.buf = NULL;
 
-	if (bdev_io->internal.buf_len <= SPDK_BDEV_SMALL_BUF_MAX_SIZE) {
+	if (buf_len + alignment <= SPDK_BDEV_SMALL_BUF_MAX_SIZE + SPDK_BDEV_POOL_ALIGNMENT) {
 		pool = g_bdev_mgr.buf_small_pool;
 		stailq = &ch->need_buf_small;
 	} else {
@@ -438,13 +515,40 @@ spdk_bdev_io_put_buf(struct spdk_bdev_io *bdev_io)
 	} else {
 		tmp = STAILQ_FIRST(stailq);
 
-		aligned_buf = (void *)(((uintptr_t)buf + 511) & ~511UL);
-		spdk_bdev_io_set_buf(tmp, aligned_buf, tmp->internal.buf_len);
+		alignment = spdk_bdev_get_buf_align(tmp->bdev);
+		buf_allocated = _is_buf_allocated(tmp->u.bdev.iovs);
+
+		aligned_buf = (void *)(((uintptr_t)buf +
+					(alignment - 1)) & ~(alignment - 1));
+		if (buf_allocated) {
+			_bdev_io_set_bounce_buf(tmp, aligned_buf, tmp->internal.buf_len);
+		} else {
+			spdk_bdev_io_set_buf(tmp, aligned_buf, tmp->internal.buf_len);
+		}
 
 		STAILQ_REMOVE_HEAD(stailq, internal.buf_link);
 		tmp->internal.buf = buf;
 		tmp->internal.get_buf_cb(tmp->internal.ch->channel, tmp);
 	}
+}
+
+static void
+_bdev_io_unset_bounce_buf(struct spdk_bdev_io *bdev_io)
+{
+	/* if this is read path, copy data from bounce buffer to original buffer */
+	if (bdev_io->type == SPDK_BDEV_IO_TYPE_READ &&
+	    bdev_io->internal.status == SPDK_BDEV_IO_STATUS_SUCCESS) {
+		_copy_buf_to_iovs(bdev_io->internal.orig_iovs, bdev_io->internal.orig_iovcnt,
+				  bdev_io->internal.bounce_iov.iov_base, bdev_io->internal.bounce_iov.iov_len);
+	}
+	/* set orignal buffer for this io */
+	bdev_io->u.bdev.iovcnt = bdev_io->internal.orig_iovcnt;
+	bdev_io->u.bdev.iovs = bdev_io->internal.orig_iovs;
+	/* disable bouncing buffer for this io */
+	bdev_io->internal.orig_iovcnt = 0;
+	bdev_io->internal.orig_iovs = NULL;
+	/* return bounce buffer to the pool */
+	spdk_bdev_io_put_buf(bdev_io);
 }
 
 void
@@ -454,22 +558,29 @@ spdk_bdev_io_get_buf(struct spdk_bdev_io *bdev_io, spdk_bdev_io_get_buf_cb cb, u
 	bdev_io_stailq_t *stailq;
 	void *buf, *aligned_buf;
 	struct spdk_bdev_mgmt_channel *mgmt_ch;
+	uint64_t alignment;
+	bool buf_allocated;
 
 	assert(cb != NULL);
 	assert(bdev_io->u.bdev.iovs != NULL);
 
-	if (spdk_unlikely(bdev_io->u.bdev.iovs[0].iov_base != NULL)) {
-		/* Buffer already present */
+	alignment = spdk_bdev_get_buf_align(bdev_io->bdev);
+	buf_allocated = _is_buf_allocated(bdev_io->u.bdev.iovs);
+
+	if (buf_allocated &&
+	    _are_iovs_aligned(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt, alignment)) {
+		/* Buffer already present and aligned */
 		cb(bdev_io->internal.ch->channel, bdev_io);
 		return;
 	}
 
-	assert(len <= SPDK_BDEV_LARGE_BUF_MAX_SIZE);
+	assert(len + alignment <= SPDK_BDEV_LARGE_BUF_MAX_SIZE + SPDK_BDEV_POOL_ALIGNMENT);
 	mgmt_ch = bdev_io->internal.ch->shared_resource->mgmt_ch;
 
 	bdev_io->internal.buf_len = len;
 	bdev_io->internal.get_buf_cb = cb;
-	if (len <= SPDK_BDEV_SMALL_BUF_MAX_SIZE) {
+
+	if (len + alignment <= SPDK_BDEV_SMALL_BUF_MAX_SIZE + SPDK_BDEV_POOL_ALIGNMENT) {
 		pool = g_bdev_mgr.buf_small_pool;
 		stailq = &mgmt_ch->need_buf_small;
 	} else {
@@ -482,9 +593,13 @@ spdk_bdev_io_get_buf(struct spdk_bdev_io *bdev_io, spdk_bdev_io_get_buf_cb cb, u
 	if (!buf) {
 		STAILQ_INSERT_TAIL(stailq, bdev_io, internal.buf_link);
 	} else {
-		aligned_buf = (void *)(((uintptr_t)buf + 511) & ~511UL);
-		spdk_bdev_io_set_buf(bdev_io, aligned_buf, len);
+		aligned_buf = (void *)(((uintptr_t)buf + (alignment - 1)) & ~(alignment - 1));
 
+		if (buf_allocated) {
+			_bdev_io_set_bounce_buf(bdev_io, aligned_buf, len);
+		} else {
+			spdk_bdev_io_set_buf(bdev_io, aligned_buf, len);
+		}
 		bdev_io->internal.buf = buf;
 		bdev_io->internal.get_buf_cb(bdev_io->internal.ch->channel, bdev_io);
 	}
@@ -809,7 +924,7 @@ spdk_bdev_initialize(spdk_bdev_init_cb cb_fn, void *cb_arg)
 
 	g_bdev_mgr.buf_small_pool = spdk_mempool_create(mempool_name,
 				    BUF_SMALL_POOL_SIZE,
-				    SPDK_BDEV_SMALL_BUF_MAX_SIZE + 512,
+				    SPDK_BDEV_SMALL_BUF_MAX_SIZE + SPDK_BDEV_POOL_ALIGNMENT,
 				    cache_size,
 				    SPDK_ENV_SOCKET_ID_ANY);
 	if (!g_bdev_mgr.buf_small_pool) {
@@ -823,7 +938,7 @@ spdk_bdev_initialize(spdk_bdev_init_cb cb_fn, void *cb_arg)
 
 	g_bdev_mgr.buf_large_pool = spdk_mempool_create(mempool_name,
 				    BUF_LARGE_POOL_SIZE,
-				    SPDK_BDEV_LARGE_BUF_MAX_SIZE + 512,
+				    SPDK_BDEV_LARGE_BUF_MAX_SIZE + SPDK_BDEV_POOL_ALIGNMENT,
 				    cache_size,
 				    SPDK_ENV_SOCKET_ID_ANY);
 	if (!g_bdev_mgr.buf_large_pool) {
@@ -966,7 +1081,7 @@ _spdk_bdev_finish_unregister_bdevs_iter(void *cb_arg, int bdeverrno)
 	if (TAILQ_EMPTY(&g_bdev_mgr.bdevs)) {
 		SPDK_DEBUGLOG(SPDK_LOG_BDEV, "Done unregistering bdevs\n");
 		/*
-		 * Bdev module finish need to be deffered as we might be in the middle of some context
+		 * Bdev module finish need to be deferred as we might be in the middle of some context
 		 * (like bdev part free) that will use this bdev (or private bdev driver ctx data)
 		 * after returning.
 		 */
@@ -975,12 +1090,38 @@ _spdk_bdev_finish_unregister_bdevs_iter(void *cb_arg, int bdeverrno)
 	}
 
 	/*
-	 * Unregister the last bdev in the list.  The last bdev in the list should be a bdev
-	 * that has no bdevs that depend on it.
+	 * Unregister last unclaimed bdev in the list, to ensure that bdev subsystem
+	 * shutdown proceeds top-down. The goal is to give virtual bdevs an opportunity
+	 * to detect clean shutdown as opposed to run-time hot removal of the underlying
+	 * base bdevs.
+	 *
+	 * Also, walk the list in the reverse order.
 	 */
-	bdev = TAILQ_LAST(&g_bdev_mgr.bdevs, spdk_bdev_list);
-	SPDK_DEBUGLOG(SPDK_LOG_BDEV, "Unregistering bdev '%s'\n", bdev->name);
-	spdk_bdev_unregister(bdev, _spdk_bdev_finish_unregister_bdevs_iter, bdev);
+	for (bdev = TAILQ_LAST(&g_bdev_mgr.bdevs, spdk_bdev_list);
+	     bdev; bdev = TAILQ_PREV(bdev, spdk_bdev_list, internal.link)) {
+		if (bdev->internal.claim_module != NULL) {
+			SPDK_DEBUGLOG(SPDK_LOG_BDEV, "Skipping claimed bdev '%s'(<-'%s').\n",
+				      bdev->name, bdev->internal.claim_module->name);
+			continue;
+		}
+
+		SPDK_DEBUGLOG(SPDK_LOG_BDEV, "Unregistering bdev '%s'\n", bdev->name);
+		spdk_bdev_unregister(bdev, _spdk_bdev_finish_unregister_bdevs_iter, bdev);
+		return;
+	}
+
+	/*
+	 * If any bdev fails to unclaim underlying bdev properly, we may face the
+	 * case of bdev list consisting of claimed bdevs only (if claims are managed
+	 * correctly, this would mean there's a loop in the claims graph which is
+	 * clearly impossible). Warn and unregister last bdev on the list then.
+	 */
+	for (bdev = TAILQ_LAST(&g_bdev_mgr.bdevs, spdk_bdev_list);
+	     bdev; bdev = TAILQ_PREV(bdev, spdk_bdev_list, internal.link)) {
+		SPDK_ERRLOG("Unregistering claimed bdev '%s'!\n", bdev->name);
+		spdk_bdev_unregister(bdev, _spdk_bdev_finish_unregister_bdevs_iter, bdev);
+		return;
+	}
 }
 
 void
@@ -1131,13 +1272,13 @@ _spdk_bdev_qos_update_per_io(struct spdk_bdev_qos *qos, uint64_t io_size_in_byte
 	}
 }
 
-static void
+static int
 _spdk_bdev_qos_io_submit(struct spdk_bdev_channel *ch, struct spdk_bdev_qos *qos)
 {
 	struct spdk_bdev_io		*bdev_io = NULL;
 	struct spdk_bdev		*bdev = ch->bdev;
 	struct spdk_bdev_shared_resource *shared_resource = ch->shared_resource;
-	int				i;
+	int				i, submitted_ios = 0;
 	bool				to_limit_io;
 	uint64_t			io_size_in_byte;
 
@@ -1145,7 +1286,7 @@ _spdk_bdev_qos_io_submit(struct spdk_bdev_channel *ch, struct spdk_bdev_qos *qos
 		for (i = 0; i < SPDK_BDEV_QOS_NUM_RATE_LIMIT_TYPES; i++) {
 			if (qos->rate_limits[i].max_per_timeslice > 0 &&
 			    (qos->rate_limits[i].remaining_this_timeslice <= 0)) {
-				return;
+				return submitted_ios;
 			}
 		}
 
@@ -1159,7 +1300,10 @@ _spdk_bdev_qos_io_submit(struct spdk_bdev_channel *ch, struct spdk_bdev_qos *qos
 			_spdk_bdev_qos_update_per_io(qos, io_size_in_byte);
 		}
 		bdev->fn_table->submit_request(ch->channel, bdev_io);
+		submitted_ios++;
 	}
+
+	return submitted_ios;
 }
 
 static void
@@ -1483,6 +1627,8 @@ spdk_bdev_io_init(struct spdk_bdev_io *bdev_io,
 	bdev_io->internal.in_submit_request = false;
 	bdev_io->internal.buf = NULL;
 	bdev_io->internal.io_submit_ch = NULL;
+	bdev_io->internal.orig_iovs = NULL;
+	bdev_io->internal.orig_iovcnt = 0;
 }
 
 static bool
@@ -1580,9 +1726,7 @@ spdk_bdev_channel_poll_qos(void *arg)
 		}
 	}
 
-	_spdk_bdev_qos_io_submit(qos->ch, qos);
-
-	return -1;
+	return _spdk_bdev_qos_io_submit(qos->ch, qos);
 }
 
 static void
@@ -1633,6 +1777,7 @@ _spdk_bdev_enable_qos(struct spdk_bdev *bdev, struct spdk_bdev_channel *ch)
 
 			/* Take another reference to ch */
 			io_ch = spdk_get_io_channel(__bdev_to_io_dev(bdev));
+			assert(io_ch != NULL);
 			qos->ch = ch;
 
 			qos->thread = spdk_io_channel_get_thread(io_ch);
@@ -2033,12 +2178,7 @@ spdk_bdev_get_qos_rate_limits(struct spdk_bdev *bdev, uint64_t *limits)
 size_t
 spdk_bdev_get_buf_align(const struct spdk_bdev *bdev)
 {
-	/* TODO: push this logic down to the bdev modules */
-	if (bdev->need_aligned_buffer) {
-		return bdev->blocklen;
-	}
-
-	return 1;
+	return 1 << bdev->required_alignment;
 }
 
 uint32_t
@@ -2888,7 +3028,7 @@ static inline void
 _spdk_bdev_io_complete(void *ctx)
 {
 	struct spdk_bdev_io *bdev_io = ctx;
-	uint64_t tsc;
+	uint64_t tsc, tsc_diff;
 
 	if (spdk_unlikely(bdev_io->internal.in_submit_request || bdev_io->internal.io_submit_ch)) {
 		/*
@@ -2910,6 +3050,7 @@ _spdk_bdev_io_complete(void *ctx)
 	}
 
 	tsc = spdk_get_ticks();
+	tsc_diff = tsc - bdev_io->internal.submit_tsc;
 	spdk_trace_record_tsc(tsc, TRACE_BDEV_IO_DONE, 0, 0, (uintptr_t)bdev_io, 0);
 
 	if (bdev_io->internal.status == SPDK_BDEV_IO_STATUS_SUCCESS) {
@@ -2917,12 +3058,12 @@ _spdk_bdev_io_complete(void *ctx)
 		case SPDK_BDEV_IO_TYPE_READ:
 			bdev_io->internal.ch->stat.bytes_read += bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
 			bdev_io->internal.ch->stat.num_read_ops++;
-			bdev_io->internal.ch->stat.read_latency_ticks += (tsc - bdev_io->internal.submit_tsc);
+			bdev_io->internal.ch->stat.read_latency_ticks += tsc_diff;
 			break;
 		case SPDK_BDEV_IO_TYPE_WRITE:
 			bdev_io->internal.ch->stat.bytes_written += bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
 			bdev_io->internal.ch->stat.num_write_ops++;
-			bdev_io->internal.ch->stat.write_latency_ticks += (tsc - bdev_io->internal.submit_tsc);
+			bdev_io->internal.ch->stat.write_latency_ticks += tsc_diff;
 			break;
 		default:
 			break;
@@ -3011,6 +3152,10 @@ spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status sta
 			return;
 		}
 	} else {
+		if (spdk_unlikely(bdev_io->internal.orig_iovcnt > 0)) {
+			_bdev_io_unset_bounce_buf(bdev_io);
+		}
+
 		assert(bdev_ch->io_outstanding > 0);
 		assert(shared_resource->io_outstanding > 0);
 		bdev_ch->io_outstanding--;
@@ -3261,6 +3406,16 @@ spdk_bdev_init(struct spdk_bdev *bdev)
 	bdev->internal.claim_module = NULL;
 	bdev->internal.qd_poller = NULL;
 	bdev->internal.qos = NULL;
+
+	if (spdk_bdev_get_buf_align(bdev) > 1) {
+		if (bdev->split_on_optimal_io_boundary) {
+			bdev->optimal_io_boundary = spdk_min(bdev->optimal_io_boundary,
+							     SPDK_BDEV_LARGE_BUF_MAX_SIZE / bdev->blocklen);
+		} else {
+			bdev->split_on_optimal_io_boundary = true;
+			bdev->optimal_io_boundary = SPDK_BDEV_LARGE_BUF_MAX_SIZE / bdev->blocklen;
+		}
+	}
 
 	TAILQ_INIT(&bdev->internal.open_descs);
 
@@ -3939,7 +4094,7 @@ spdk_bdev_set_qos_rate_limits(struct spdk_bdev *bdev, uint64_t *limits,
 
 SPDK_LOG_REGISTER_COMPONENT("bdev", SPDK_LOG_BDEV)
 
-SPDK_TRACE_REGISTER_FN(bdev_trace)
+SPDK_TRACE_REGISTER_FN(bdev_trace, "bdev", TRACE_GROUP_BDEV)
 {
 	spdk_trace_register_owner(OWNER_BDEV, 'b');
 	spdk_trace_register_object(OBJECT_BDEV_IO, 'i');

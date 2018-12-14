@@ -57,6 +57,8 @@
 #define MAP_256TB_IDX(vfn_2mb)	((vfn_2mb) >> (SHIFT_1GB - SHIFT_2MB))
 #define MAP_1GB_IDX(vfn_2mb)	((vfn_2mb) & ((1ULL << (SHIFT_1GB - SHIFT_2MB)) - 1))
 
+#define _2MB_OFFSET(ptr)	(((uintptr_t)(ptr)) &  (VALUE_2MB - 1))
+
 /* Page is registered */
 #define REG_MAP_REGISTERED	(1ULL << 62)
 
@@ -612,9 +614,9 @@ spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, uint64_t 
 		return map->default_translation;
 	}
 
-	cur_size = VALUE_2MB;
+	cur_size = VALUE_2MB - _2MB_OFFSET(vaddr);
 	if (size != NULL) {
-		*size = VALUE_2MB;
+		*size = cur_size;
 	}
 
 	map_2mb = &map_1gb->map[idx_1gb];
@@ -653,14 +655,18 @@ memory_hotplug_cb(enum rte_mem_event event_type,
 		  const void *addr, size_t len, void *arg)
 {
 	if (event_type == RTE_MEM_EVENT_ALLOC) {
+		spdk_mem_register((void *)addr, len);
+
+		/* Now mark each segment so that DPDK won't later free it.
+		 * This ensures we don't have to deal with the memory
+		 * getting freed in different units than it was allocated.
+		 */
 		while (len > 0) {
 			struct rte_memseg *seg;
 
 			seg = rte_mem_virt2memseg(addr, NULL);
 			assert(seg != NULL);
-			assert(len >= seg->hugepage_sz);
-
-			spdk_mem_register((void *)seg->addr, seg->hugepage_sz);
+			seg->flags |= RTE_MEMSEG_FLAG_DO_NOT_FREE;
 			addr = (void *)((uintptr_t)addr + seg->hugepage_sz);
 			len -= seg->hugepage_sz;
 		}

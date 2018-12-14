@@ -216,7 +216,7 @@ def set_bdev_nvme_hotplug(client, enable, period_us=None):
 
 
 def construct_nvme_bdev(client, name, trtype, traddr, adrfam=None, trsvcid=None, subnqn=None):
-    """Construct NVMe namespace block device.
+    """Construct NVMe namespace block devices.
 
     Args:
         name: bdev name prefix; "n" + namespace ID will be appended to create unique names
@@ -227,7 +227,7 @@ def construct_nvme_bdev(client, name, trtype, traddr, adrfam=None, trsvcid=None,
         subnqn: subsystem NQN to connect to (optional)
 
     Returns:
-        Name of created block device.
+        Names of created block devices.
     """
     params = {'name': name,
               'trtype': trtype,
@@ -372,19 +372,19 @@ def delete_pmem_bdev(client, name):
     return client.call('delete_pmem_bdev', params)
 
 
-def construct_passthru_bdev(client, base_bdev_name, passthru_bdev_name):
+def construct_passthru_bdev(client, base_bdev_name, name):
     """Construct a pass-through block device.
 
     Args:
         base_bdev_name: name of the existing bdev
-        passthru_bdev_name: name of block device
+        name: name of block device
 
     Returns:
         Name of created block device.
     """
     params = {
         'base_bdev_name': base_bdev_name,
-        'passthru_bdev_name': passthru_bdev_name,
+        'name': name,
     }
     return client.call('construct_passthru_bdev', params)
 

@@ -71,6 +71,8 @@ struct spdk_nvmf_cmd {
 	struct spdk_nvme_sgl_descriptor sgl[NVME_RDMA_MAX_SGL_DESCRIPTORS];
 };
 
+struct spdk_nvme_rdma_hooks g_nvme_hooks = {};
+
 /* Mapping from virtual address to ibv_mr pointer for a protection domain */
 struct spdk_nvme_rdma_mr_map {
 	struct ibv_pd				*pd;
@@ -82,19 +84,23 @@ struct spdk_nvme_rdma_mr_map {
 /* NVMe RDMA transport extensions for spdk_nvme_ctrlr */
 struct nvme_rdma_ctrlr {
 	struct spdk_nvme_ctrlr			ctrlr;
+
+	struct ibv_pd				*pd;
 };
 
 /* NVMe RDMA qpair extensions for spdk_nvme_qpair */
 struct nvme_rdma_qpair {
 	struct spdk_nvme_qpair			qpair;
 
-	struct rdma_event_channel		*cm_channel;
-
 	struct rdma_cm_id			*cm_id;
 
 	struct ibv_cq				*cq;
 
 	struct	spdk_nvme_rdma_req		*rdma_reqs;
+
+	uint32_t				max_send_sge;
+
+	uint32_t				max_recv_sge;
 
 	uint16_t				num_entries;
 
@@ -120,6 +126,9 @@ struct nvme_rdma_qpair {
 
 	TAILQ_HEAD(, spdk_nvme_rdma_req)	free_reqs;
 	TAILQ_HEAD(, spdk_nvme_rdma_req)	outstanding_reqs;
+
+	/* Placed at the end of the struct since it is not used frequently */
+	struct rdma_event_channel		*cm_channel;
 };
 
 struct spdk_nvme_rdma_req {
@@ -241,11 +250,26 @@ nvme_rdma_qpair_init(struct nvme_rdma_qpair *rqpair)
 {
 	int			rc;
 	struct ibv_qp_init_attr	attr;
+	struct ibv_device_attr	dev_attr;
+	struct nvme_rdma_ctrlr	*rctrlr;
+
+	rc = ibv_query_device(rqpair->cm_id->verbs, &dev_attr);
+	if (rc != 0) {
+		SPDK_ERRLOG("Failed to query RDMA device attributes.\n");
+		return -1;
+	}
 
 	rqpair->cq = ibv_create_cq(rqpair->cm_id->verbs, rqpair->num_entries * 2, rqpair, NULL, 0);
 	if (!rqpair->cq) {
 		SPDK_ERRLOG("Unable to create completion queue: errno %d: %s\n", errno, spdk_strerror(errno));
 		return -1;
+	}
+
+	rctrlr = nvme_rdma_ctrlr(rqpair->qpair.ctrlr);
+	if (g_nvme_hooks.get_ibv_pd) {
+		rctrlr->pd = g_nvme_hooks.get_ibv_pd(&rctrlr->ctrlr.trid, rqpair->cm_id->verbs);
+	} else {
+		rctrlr->pd = NULL;
 	}
 
 	memset(&attr, 0, sizeof(struct ibv_qp_init_attr));
@@ -254,14 +278,21 @@ nvme_rdma_qpair_init(struct nvme_rdma_qpair *rqpair)
 	attr.recv_cq		= rqpair->cq;
 	attr.cap.max_send_wr	= rqpair->num_entries; /* SEND operations */
 	attr.cap.max_recv_wr	= rqpair->num_entries; /* RECV operations */
-	attr.cap.max_send_sge	= NVME_RDMA_DEFAULT_TX_SGE;
-	attr.cap.max_recv_sge	= NVME_RDMA_DEFAULT_RX_SGE;
+	attr.cap.max_send_sge	= spdk_min(NVME_RDMA_DEFAULT_TX_SGE, dev_attr.max_sge);
+	attr.cap.max_recv_sge	= spdk_min(NVME_RDMA_DEFAULT_RX_SGE, dev_attr.max_sge);
 
-	rc = rdma_create_qp(rqpair->cm_id, NULL, &attr);
+	rc = rdma_create_qp(rqpair->cm_id, rctrlr->pd, &attr);
+
 	if (rc) {
 		SPDK_ERRLOG("rdma_create_qp failed\n");
 		return -1;
 	}
+
+	/* ibv_create_qp will change the values in attr.cap. Make sure we store the proper value. */
+	rqpair->max_send_sge = spdk_min(NVME_RDMA_DEFAULT_TX_SGE, attr.cap.max_send_sge);
+	rqpair->max_recv_sge = spdk_min(NVME_RDMA_DEFAULT_RX_SGE, attr.cap.max_recv_sge);
+
+	rctrlr->pd = rqpair->cm_id->qp->pd;
 
 	rqpair->cm_id->context = &rqpair->qpair;
 
@@ -617,23 +648,30 @@ nvme_rdma_mr_map_notify(void *cb_ctx, struct spdk_mem_map *map,
 
 	switch (action) {
 	case SPDK_MEM_MAP_NOTIFY_REGISTER:
-		mr = ibv_reg_mr(pd, vaddr, size,
-				IBV_ACCESS_LOCAL_WRITE |
-				IBV_ACCESS_REMOTE_READ |
-				IBV_ACCESS_REMOTE_WRITE);
-		if (mr == NULL) {
-			SPDK_ERRLOG("ibv_reg_mr() failed\n");
-			return -EFAULT;
+		if (!g_nvme_hooks.get_rkey) {
+			mr = ibv_reg_mr(pd, vaddr, size,
+					IBV_ACCESS_LOCAL_WRITE |
+					IBV_ACCESS_REMOTE_READ |
+					IBV_ACCESS_REMOTE_WRITE);
+			if (mr == NULL) {
+				SPDK_ERRLOG("ibv_reg_mr() failed\n");
+				return -EFAULT;
+			} else {
+				rc = spdk_mem_map_set_translation(map, (uint64_t)vaddr, size, (uint64_t)mr);
+			}
 		} else {
-			rc = spdk_mem_map_set_translation(map, (uint64_t)vaddr, size, (uint64_t)mr);
+			rc = spdk_mem_map_set_translation(map, (uint64_t)vaddr, size,
+							  g_nvme_hooks.get_rkey(pd, vaddr, size));
 		}
 		break;
 	case SPDK_MEM_MAP_NOTIFY_UNREGISTER:
-		mr = (struct ibv_mr *)spdk_mem_map_translate(map, (uint64_t)vaddr, NULL);
-		rc = spdk_mem_map_clear_translation(map, (uint64_t)vaddr, size);
-		if (mr) {
-			ibv_dereg_mr(mr);
+		if (!g_nvme_hooks.get_rkey) {
+			mr = (struct ibv_mr *)spdk_mem_map_translate(map, (uint64_t)vaddr, NULL);
+			if (mr) {
+				ibv_dereg_mr(mr);
+			}
 		}
+		rc = spdk_mem_map_clear_translation(map, (uint64_t)vaddr, size);
 		break;
 	default:
 		SPDK_UNREACHABLE();
@@ -643,13 +681,20 @@ nvme_rdma_mr_map_notify(void *cb_ctx, struct spdk_mem_map *map,
 }
 
 static int
+nvme_rdma_check_contiguous_entries(uint64_t addr_1, uint64_t addr_2)
+{
+	/* Two contiguous mappings will point to the same address which is the start of the RDMA MR. */
+	return addr_1 == addr_2;
+}
+
+static int
 nvme_rdma_register_mem(struct nvme_rdma_qpair *rqpair)
 {
 	struct ibv_pd *pd = rqpair->cm_id->qp->pd;
 	struct spdk_nvme_rdma_mr_map *mr_map;
 	const struct spdk_mem_map_ops nvme_rdma_map_ops = {
 		.notify_cb = nvme_rdma_mr_map_notify,
-		.are_contiguous = NULL
+		.are_contiguous = nvme_rdma_check_contiguous_entries
 	};
 
 	pthread_mutex_lock(&g_rdma_mr_maps_mutex);
@@ -873,6 +918,9 @@ nvme_rdma_build_contig_inline_request(struct nvme_rdma_qpair *rqpair,
 			(uint64_t)payload, &requested_size);
 
 	if (mr == NULL || requested_size < req->payload_size) {
+		if (mr) {
+			SPDK_ERRLOG("Data buffer split over multiple RDMA Memory Regions\n");
+		}
 		return -EINVAL;
 	}
 
@@ -918,9 +966,22 @@ nvme_rdma_build_contig_request(struct nvme_rdma_qpair *rqpair,
 	assert(nvme_payload_type(&req->payload) == NVME_PAYLOAD_TYPE_CONTIG);
 
 	requested_size = req->payload_size;
-	mr = (struct ibv_mr *)spdk_mem_map_translate(rqpair->mr_map->map, (uint64_t)payload,
-			&requested_size);
-	if (mr == NULL || requested_size < req->payload_size) {
+	if (!g_nvme_hooks.get_rkey) {
+
+		mr = (struct ibv_mr *)spdk_mem_map_translate(rqpair->mr_map->map, (uint64_t)payload,
+				&requested_size);
+		if (mr == NULL) {
+			return -1;
+		}
+		req->cmd.dptr.sgl1.keyed.key = mr->rkey;
+	} else {
+		req->cmd.dptr.sgl1.keyed.key = spdk_mem_map_translate(rqpair->mr_map->map,
+					       (uint64_t)payload,
+					       &requested_size);
+	}
+
+	if (requested_size < req->payload_size) {
+		SPDK_ERRLOG("Data buffer split over multiple RDMA Memory Regions\n");
 		return -1;
 	}
 
@@ -937,7 +998,6 @@ nvme_rdma_build_contig_request(struct nvme_rdma_qpair *rqpair,
 	req->cmd.dptr.sgl1.keyed.type = SPDK_NVME_SGL_TYPE_KEYED_DATA_BLOCK;
 	req->cmd.dptr.sgl1.keyed.subtype = SPDK_NVME_SGL_SUBTYPE_ADDRESS;
 	req->cmd.dptr.sgl1.keyed.length = req->payload_size;
-	req->cmd.dptr.sgl1.keyed.key = mr->rkey;
 	req->cmd.dptr.sgl1.address = (uint64_t)payload;
 
 	return 0;
@@ -977,17 +1037,28 @@ nvme_rdma_build_sgl_request(struct nvme_rdma_qpair *rqpair,
 		sge_length = spdk_min(remaining_size, sge_length);
 		mr_length = sge_length;
 
-		mr = (struct ibv_mr *)spdk_mem_map_translate(rqpair->mr_map->map, (uint64_t)virt_addr,
-				&mr_length);
+		if (!g_nvme_hooks.get_rkey) {
+			mr = (struct ibv_mr *)spdk_mem_map_translate(rqpair->mr_map->map,
+					(uint64_t)virt_addr,
+					&mr_length);
+			if (mr == NULL) {
+				return -1;
+			}
+			cmd->sgl[num_sgl_desc].keyed.key = mr->rkey;
+		} else {
+			cmd->sgl[num_sgl_desc].keyed.key = spdk_mem_map_translate(rqpair->mr_map->map,
+							   (uint64_t)virt_addr,
+							   &mr_length);
+		}
 
-		if (mr == NULL || mr_length < sge_length) {
+		if (mr_length < sge_length) {
+			SPDK_ERRLOG("Data buffer split over multiple RDMA Memory Regions\n");
 			return -1;
 		}
 
 		cmd->sgl[num_sgl_desc].keyed.type = SPDK_NVME_SGL_TYPE_KEYED_DATA_BLOCK;
 		cmd->sgl[num_sgl_desc].keyed.subtype = SPDK_NVME_SGL_SUBTYPE_ADDRESS;
 		cmd->sgl[num_sgl_desc].keyed.length = sge_length;
-		cmd->sgl[num_sgl_desc].keyed.key = mr->rkey;
 		cmd->sgl[num_sgl_desc].address = (uint64_t)virt_addr;
 
 		remaining_size -= sge_length;
@@ -1017,11 +1088,11 @@ nvme_rdma_build_sgl_request(struct nvme_rdma_qpair *rqpair,
 		 * the NVMe command. */
 		rdma_req->send_sgl[0].length = sizeof(struct spdk_nvme_cmd);
 
-		req->cmd.dptr.sgl1.keyed.type = SPDK_NVME_SGL_TYPE_KEYED_DATA_BLOCK;
-		req->cmd.dptr.sgl1.keyed.subtype = SPDK_NVME_SGL_SUBTYPE_ADDRESS;
-		req->cmd.dptr.sgl1.keyed.length = req->payload_size;
-		req->cmd.dptr.sgl1.keyed.key = mr->rkey;
-		req->cmd.dptr.sgl1.address = rqpair->cmds[rdma_req->id].sgl[0].address;
+		req->cmd.dptr.sgl1.keyed.type = cmd->sgl[0].keyed.type;
+		req->cmd.dptr.sgl1.keyed.subtype = cmd->sgl[0].keyed.subtype;
+		req->cmd.dptr.sgl1.keyed.length = cmd->sgl[0].keyed.length;
+		req->cmd.dptr.sgl1.keyed.key = cmd->sgl[0].keyed.key;
+		req->cmd.dptr.sgl1.address = cmd->sgl[0].address;
 	} else {
 		/*
 		 * Otherwise, The SGL descriptor embedded in the command must point to the list of
@@ -1074,6 +1145,9 @@ nvme_rdma_build_sgl_inline_request(struct nvme_rdma_qpair *rqpair,
 	mr = (struct ibv_mr *)spdk_mem_map_translate(rqpair->mr_map->map, (uint64_t)virt_addr,
 			&requested_size);
 	if (mr == NULL || requested_size < req->payload_size) {
+		if (mr) {
+			SPDK_ERRLOG("Data buffer split over multiple RDMA Memory Regions\n");
+		}
 		return -1;
 	}
 
@@ -1631,4 +1705,10 @@ int
 nvme_rdma_ctrlr_free_cmb_io_buffer(struct spdk_nvme_ctrlr *ctrlr, void *buf, size_t size)
 {
 	return 0;
+}
+
+void
+spdk_nvme_rdma_init_hooks(struct spdk_nvme_rdma_hooks *hooks)
+{
+	g_nvme_hooks = *hooks;
 }

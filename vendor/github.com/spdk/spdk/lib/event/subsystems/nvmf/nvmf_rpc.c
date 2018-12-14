@@ -1299,42 +1299,36 @@ SPDK_RPC_REGISTER("nvmf_subsystem_allow_any_host", nvmf_rpc_subsystem_allow_any_
 		  SPDK_RPC_RUNTIME)
 
 static const struct spdk_json_object_decoder nvmf_rpc_subsystem_tgt_opts_decoder[] = {
-	{"max_queue_depth", offsetof(struct spdk_nvmf_tgt_opts, max_queue_depth), spdk_json_decode_uint16, true},
-	{"max_qpairs_per_ctrlr", offsetof(struct spdk_nvmf_tgt_opts, max_qpairs_per_ctrlr), spdk_json_decode_uint16, true},
-	{"in_capsule_data_size", offsetof(struct spdk_nvmf_tgt_opts, in_capsule_data_size), spdk_json_decode_uint32, true},
-	{"max_io_size", offsetof(struct spdk_nvmf_tgt_opts, max_io_size), spdk_json_decode_uint32, true},
-	{"max_subsystems", offsetof(struct spdk_nvmf_tgt_opts, max_subsystems), spdk_json_decode_uint32, true},
-	{"io_unit_size", offsetof(struct spdk_nvmf_tgt_opts, io_unit_size), spdk_json_decode_uint32, true},
+	{"max_subsystems", 0, spdk_json_decode_uint32, true}
 };
 
 static void
 nvmf_rpc_subsystem_set_tgt_opts(struct spdk_jsonrpc_request *request,
 				const struct spdk_json_val *params)
 {
-	struct spdk_nvmf_tgt_opts *opts;
-	struct spdk_json_write_ctx *w;
+	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_REQUEST,
+					 "This function has been deprecated in favor of set_nvmf_target_max_subsystems and create_nvmf_transport");
+}
+SPDK_RPC_REGISTER("set_nvmf_target_options", nvmf_rpc_subsystem_set_tgt_opts,
+		  SPDK_RPC_STARTUP | SPDK_RPC_RUNTIME)
 
-	if (g_spdk_nvmf_tgt_opts != NULL) {
+static void
+nvmf_rpc_subsystem_set_tgt_max_subsystems(struct spdk_jsonrpc_request *request,
+		const struct spdk_json_val *params)
+{
+	struct spdk_json_write_ctx *w;
+	uint32_t max_subsystems = 0;
+
+	if (g_spdk_nvmf_tgt_max_subsystems != 0) {
 		SPDK_ERRLOG("this RPC must not be called more than once.\n");
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
 						 "Must not call more than once");
 		return;
 	}
 
-	opts = calloc(1, sizeof(*opts));
-	if (opts == NULL) {
-		SPDK_ERRLOG("malloc() failed for target options\n");
-		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
-						 "Out of memory");
-		return;
-	}
-
-	spdk_nvmf_tgt_opts_init(opts);
-
 	if (params != NULL) {
 		if (spdk_json_decode_object(params, nvmf_rpc_subsystem_tgt_opts_decoder,
-					    SPDK_COUNTOF(nvmf_rpc_subsystem_tgt_opts_decoder), opts)) {
-			free(opts);
+					    SPDK_COUNTOF(nvmf_rpc_subsystem_tgt_opts_decoder), &max_subsystems)) {
 			SPDK_ERRLOG("spdk_json_decode_object() failed\n");
 			spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
 							 "Invalid parameters");
@@ -1342,7 +1336,7 @@ nvmf_rpc_subsystem_set_tgt_opts(struct spdk_jsonrpc_request *request,
 		}
 	}
 
-	g_spdk_nvmf_tgt_opts = opts;
+	g_spdk_nvmf_tgt_max_subsystems = max_subsystems;
 
 	w = spdk_jsonrpc_begin_result(request);
 	if (w == NULL) {
@@ -1352,7 +1346,8 @@ nvmf_rpc_subsystem_set_tgt_opts(struct spdk_jsonrpc_request *request,
 	spdk_json_write_bool(w, true);
 	spdk_jsonrpc_end_result(request, w);
 }
-SPDK_RPC_REGISTER("set_nvmf_target_options", nvmf_rpc_subsystem_set_tgt_opts, SPDK_RPC_STARTUP)
+SPDK_RPC_REGISTER("set_nvmf_target_max_subsystems", nvmf_rpc_subsystem_set_tgt_max_subsystems,
+		  SPDK_RPC_STARTUP)
 
 static int decode_conn_sched(const struct spdk_json_val *val, void *out)
 {
@@ -1526,7 +1521,17 @@ nvmf_rpc_create_transport(struct spdk_jsonrpc_request *request,
 	/* Initialize all the transport options (based on transport type) and decode the
 	 * parameters again to update any options passed in rpc create transport call.
 	 */
-	spdk_nvmf_transport_opts_init(trtype, &ctx->opts);
+	if (!spdk_nvmf_transport_opts_init(trtype, &ctx->opts)) {
+		/* This can happen if user specifies PCIE transport type which isn't valid for
+		 * NVMe-oF.
+		 */
+		SPDK_ERRLOG("Invalid transport type '%s'\n", ctx->trtype);
+		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						     "Invalid transport type '%s'\n", ctx->trtype);
+		nvmf_rpc_create_transport_ctx_free(ctx);
+		return;
+	}
+
 	if (spdk_json_decode_object(params, nvmf_rpc_create_transport_decoder,
 				    SPDK_COUNTOF(nvmf_rpc_create_transport_decoder),
 				    ctx)) {
@@ -1560,3 +1565,51 @@ nvmf_rpc_create_transport(struct spdk_jsonrpc_request *request,
 }
 
 SPDK_RPC_REGISTER("nvmf_create_transport", nvmf_rpc_create_transport, SPDK_RPC_RUNTIME)
+
+static void
+dump_nvmf_transport(struct spdk_json_write_ctx *w, struct spdk_nvmf_transport *transport)
+{
+	const struct spdk_nvmf_transport_opts *opts = spdk_nvmf_get_transport_opts(transport);
+	spdk_nvme_transport_type_t type = spdk_nvmf_get_transport_type(transport);
+
+	spdk_json_write_object_begin(w);
+
+	spdk_json_write_named_string(w, "trtype", spdk_nvme_transport_id_trtype_str(type));
+	spdk_json_write_named_uint32(w, "max_queue_depth", opts->max_queue_depth);
+	spdk_json_write_named_uint32(w, "max_qpairs_per_ctrlr", opts->max_qpairs_per_ctrlr);
+	spdk_json_write_named_uint32(w, "in_capsule_data_size", opts->in_capsule_data_size);
+	spdk_json_write_named_uint32(w, "max_io_size", opts->max_io_size);
+	spdk_json_write_named_uint32(w, "io_unit_size", opts->io_unit_size);
+	spdk_json_write_named_uint32(w, "max_aq_depth", opts->max_aq_depth);
+
+	spdk_json_write_object_end(w);
+}
+
+static void
+nvmf_rpc_get_nvmf_transports(struct spdk_jsonrpc_request *request,
+			     const struct spdk_json_val *params)
+{
+	struct spdk_json_write_ctx *w;
+	struct spdk_nvmf_transport *transport;
+
+	if (params != NULL) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "get_nvmf_transports requires no parameters");
+		return;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	if (w == NULL) {
+		return;
+	}
+
+	spdk_json_write_array_begin(w);
+	transport = spdk_nvmf_transport_get_first(g_spdk_nvmf_tgt);
+	while (transport) {
+		dump_nvmf_transport(w, transport);
+		transport = spdk_nvmf_transport_get_next(transport);
+	}
+	spdk_json_write_array_end(w);
+	spdk_jsonrpc_end_result(request, w);
+}
+SPDK_RPC_REGISTER("get_nvmf_transports", nvmf_rpc_get_nvmf_transports, SPDK_RPC_RUNTIME)

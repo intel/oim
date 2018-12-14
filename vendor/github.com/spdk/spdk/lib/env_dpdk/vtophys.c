@@ -103,7 +103,6 @@ static struct vfio_cfg g_vfio = {
 struct spdk_vtophys_pci_device {
 	struct rte_pci_device *pci_device;
 	TAILQ_ENTRY(spdk_vtophys_pci_device) tailq;
-	uint64_t ref;
 };
 
 static pthread_mutex_t g_vtophys_pci_devices_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -305,11 +304,7 @@ vtophys_get_paddr_pci(uint64_t vaddr)
 	struct spdk_vtophys_pci_device *vtophys_dev;
 	uintptr_t paddr;
 	struct rte_pci_device	*dev;
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 1)
 	struct rte_mem_resource *res;
-#else
-	struct rte_pci_resource *res;
-#endif
 	unsigned r;
 
 	pthread_mutex_lock(&g_vtophys_pci_devices_mutex);
@@ -445,6 +440,27 @@ spdk_vfio_enabled(void)
 #endif
 }
 
+/* Check if IOMMU is enabled on the system */
+static bool
+has_iommu_groups(void)
+{
+	struct dirent *d;
+	int count = 0;
+	DIR *dir = opendir("/sys/kernel/iommu_groups");
+
+	if (dir == NULL) {
+		return false;
+	}
+
+	while (count < 3 && (d = readdir(dir)) != NULL) {
+		count++;
+	}
+
+	closedir(dir);
+	/* there will always be ./ and ../ entries */
+	return count > 2;
+}
+
 static void
 spdk_vtophys_iommu_init(void)
 {
@@ -454,7 +470,7 @@ spdk_vtophys_iommu_init(void)
 	DIR *dir;
 	struct dirent *d;
 
-	if (!spdk_vfio_enabled()) {
+	if (!spdk_vfio_enabled() || !has_iommu_groups()) {
 		return;
 	}
 
@@ -497,26 +513,15 @@ void
 spdk_vtophys_pci_device_added(struct rte_pci_device *pci_device)
 {
 	struct spdk_vtophys_pci_device *vtophys_dev;
-	bool found = false;
 
 	pthread_mutex_lock(&g_vtophys_pci_devices_mutex);
-	TAILQ_FOREACH(vtophys_dev, &g_vtophys_pci_devices, tailq) {
-		if (vtophys_dev->pci_device == pci_device) {
-			vtophys_dev->ref++;
-			found = true;
-			break;
-		}
-	}
 
-	if (!found) {
-		vtophys_dev = calloc(1, sizeof(*vtophys_dev));
-		if (vtophys_dev) {
-			vtophys_dev->pci_device = pci_device;
-			vtophys_dev->ref = 1;
-			TAILQ_INSERT_TAIL(&g_vtophys_pci_devices, vtophys_dev, tailq);
-		} else {
-			DEBUG_PRINT("Memory allocation error\n");
-		}
+	vtophys_dev = calloc(1, sizeof(*vtophys_dev));
+	if (vtophys_dev) {
+		vtophys_dev->pci_device = pci_device;
+		TAILQ_INSERT_TAIL(&g_vtophys_pci_devices, vtophys_dev, tailq);
+	} else {
+		DEBUG_PRINT("Memory allocation error\n");
 	}
 	pthread_mutex_unlock(&g_vtophys_pci_devices_mutex);
 
@@ -558,11 +563,8 @@ spdk_vtophys_pci_device_removed(struct rte_pci_device *pci_device)
 	pthread_mutex_lock(&g_vtophys_pci_devices_mutex);
 	TAILQ_FOREACH(vtophys_dev, &g_vtophys_pci_devices, tailq) {
 		if (vtophys_dev->pci_device == pci_device) {
-			assert(vtophys_dev->ref > 0);
-			if (--vtophys_dev->ref == 0) {
-				TAILQ_REMOVE(&g_vtophys_pci_devices, vtophys_dev, tailq);
-				free(vtophys_dev);
-			}
+			TAILQ_REMOVE(&g_vtophys_pci_devices, vtophys_dev, tailq);
+			free(vtophys_dev);
 			break;
 		}
 	}

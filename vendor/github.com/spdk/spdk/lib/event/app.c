@@ -47,11 +47,13 @@
 #define SPDK_APP_DEFAULT_LOG_LEVEL		SPDK_LOG_NOTICE
 #define SPDK_APP_DEFAULT_LOG_PRINT_LEVEL	SPDK_LOG_INFO
 #define SPDK_APP_DEFAULT_BACKTRACE_LOG_LEVEL	SPDK_LOG_ERROR
+#define SPDK_APP_DEFAULT_NUM_TRACE_ENTRIES	SPDK_DEFAULT_NUM_TRACE_ENTRIES
 
 #define SPDK_APP_DPDK_DEFAULT_MEM_SIZE		-1
 #define SPDK_APP_DPDK_DEFAULT_MASTER_CORE	-1
 #define SPDK_APP_DPDK_DEFAULT_MEM_CHANNEL	-1
 #define SPDK_APP_DPDK_DEFAULT_CORE_MASK		"0x1"
+#define SPDK_APP_DEFAULT_CORE_LIMIT		0x140000000 /* 5 GiB */
 
 struct spdk_app {
 	struct spdk_conf		*config;
@@ -103,8 +105,8 @@ static const struct option g_cmdline_options[] = {
 	{"no-pci",			no_argument,		NULL, NO_PCI_OPT_IDX},
 #define PCI_BLACKLIST_OPT_IDX	'B'
 	{"pci-blacklist",		required_argument,	NULL, PCI_BLACKLIST_OPT_IDX},
-#define TRACEFLAG_OPT_IDX	'L'
-	{"traceflag",			required_argument,	NULL, TRACEFLAG_OPT_IDX},
+#define LOGFLAG_OPT_IDX	'L'
+	{"logflag",			required_argument,	NULL, LOGFLAG_OPT_IDX},
 #define HUGE_UNLINK_OPT_IDX	'R'
 	{"huge-unlink",			no_argument,		NULL, HUGE_UNLINK_OPT_IDX},
 #define PCI_WHITELIST_OPT_IDX	'W'
@@ -113,6 +115,10 @@ static const struct option g_cmdline_options[] = {
 	{"silence-noticelog",		no_argument,		NULL, SILENCE_NOTICELOG_OPT_IDX},
 #define WAIT_FOR_RPC_OPT_IDX	258
 	{"wait-for-rpc",		no_argument,		NULL, WAIT_FOR_RPC_OPT_IDX},
+#define HUGE_DIR_OPT_IDX	259
+	{"huge-dir",			no_argument,		NULL, HUGE_DIR_OPT_IDX},
+#define NUM_TRACE_ENTRIES_OPT_IDX	260
+	{"num-trace-entries",		required_argument,	NULL, NUM_TRACE_ENTRIES_OPT_IDX},
 };
 
 /* Global section */
@@ -270,6 +276,7 @@ spdk_app_opts_init(struct spdk_app_opts *opts)
 	opts->max_delay_us = 0;
 	opts->print_level = SPDK_APP_DEFAULT_LOG_PRINT_LEVEL;
 	opts->rpc_addr = SPDK_DEFAULT_RPC_ADDR;
+	opts->num_entries = SPDK_APP_DEFAULT_NUM_TRACE_ENTRIES;
 	opts->delay_subsystem_init = false;
 }
 
@@ -486,6 +493,7 @@ spdk_app_setup_env(struct spdk_app_opts *opts)
 	env_opts.mem_size = opts->mem_size;
 	env_opts.hugepage_single_segments = opts->hugepage_single_segments;
 	env_opts.unlink_hugepage = opts->unlink_hugepage;
+	env_opts.hugedir = opts->hugedir;
 	env_opts.no_pci = opts->no_pci;
 	env_opts.num_pci_addr = opts->num_pci_addr;
 	env_opts.pci_blacklist = opts->pci_blacklist;
@@ -515,7 +523,7 @@ spdk_app_setup_trace(struct spdk_app_opts *opts)
 		snprintf(shm_name, sizeof(shm_name), "/%s_trace.pid%d", opts->name, (int)getpid());
 	}
 
-	if (spdk_trace_init(shm_name) != 0) {
+	if (spdk_trace_init(shm_name, opts->num_entries) != 0) {
 		return -1;
 	}
 
@@ -577,7 +585,7 @@ spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
 	if (opts->enable_coredump) {
 		struct rlimit core_limits;
 
-		core_limits.rlim_cur = core_limits.rlim_max = RLIM_INFINITY;
+		core_limits.rlim_cur = core_limits.rlim_max = SPDK_APP_DEFAULT_CORE_LIMIT;
 		setrlimit(RLIMIT_CORE, &core_limits);
 	}
 #endif
@@ -701,10 +709,9 @@ usage(void (*app_usage)(void))
 {
 	printf("%s [options]\n", g_executable_name);
 	printf("options:\n");
-	printf(" -c, --config <config>     config file (default %s)\n", g_default_opts.config_file);
+	printf(" -c, --config <config>     config file (default %s)\n",
+	       g_default_opts.config_file != NULL ? g_default_opts.config_file : "none");
 	printf(" -d, --limit-coredump      do not set max coredump size to RLIM_INFINITY\n");
-	printf(" -e, --tpoint-group-mask <mask>\n");
-	printf("                           tracepoint group mask for spdk trace buffers (default 0x0)\n");
 	printf(" -g, --single-file-segments\n");
 	printf("                           force creating just one hugetlbfs file\n");
 	printf(" -h, --help                show this usage\n");
@@ -714,10 +721,13 @@ usage(void (*app_usage)(void))
 	printf(" -p, --master-core <id>    master (primary) core for DPDK\n");
 	printf(" -r, --rpc-socket <path>   RPC listen address (default %s)\n", SPDK_DEFAULT_RPC_ADDR);
 	printf(" -s, --mem-size <size>     memory size in MB for DPDK (default: ");
-	if (g_default_opts.mem_size > 0) {
-		printf("%dMB)\n", g_default_opts.mem_size);
-	} else {
+#ifndef __linux__
+	if (g_default_opts.mem_size <= 0) {
 		printf("all hugepage memory)\n");
+	} else
+#endif
+	{
+		printf("%dMB)\n", g_default_opts.mem_size >= 0 ? g_default_opts.mem_size : 0);
 	}
 	printf("     --silence-noticelog   disable notice level logging to stderr\n");
 	printf(" -u, --no-pci              disable PCI access\n");
@@ -727,7 +737,11 @@ usage(void (*app_usage)(void))
 	printf(" -R, --huge-unlink         unlink huge files after initialization\n");
 	printf(" -W, --pci-whitelist <bdf>\n");
 	printf("                           pci addr to whitelist (-B and -W cannot be used at the same time)\n");
-	spdk_tracelog_usage(stdout, "-L");
+	printf("      --huge-dir <path>    use a specific hugetlbfs mount to reserve memory from\n");
+	printf("      --num-trace-entries <num>   number of trace entries for each core (default %d)\n",
+	       SPDK_APP_DEFAULT_NUM_TRACE_ENTRIES);
+	spdk_log_usage(stdout, "-L");
+	spdk_trace_mask_usage(stdout, "-e");
 	if (app_usage) {
 		app_usage();
 	}
@@ -883,14 +897,14 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 				goto out;
 			}
 			break;
-		case TRACEFLAG_OPT_IDX:
+		case LOGFLAG_OPT_IDX:
 #ifndef DEBUG
 			fprintf(stderr, "%s must be built with CONFIG_DEBUG=y for -L flag\n",
 				argv[0]);
 			usage(app_usage);
 			goto out;
 #else
-			rc = spdk_log_set_trace_flag(optarg);
+			rc = spdk_log_set_flag(optarg);
 			if (rc < 0) {
 				fprintf(stderr, "unknown flag\n");
 				usage(app_usage);
@@ -915,6 +929,17 @@ spdk_app_parse_args(int argc, char **argv, struct spdk_app_opts *opts,
 			if (rc != 0) {
 				free(opts->pci_whitelist);
 				opts->pci_whitelist = NULL;
+				goto out;
+			}
+			break;
+		case HUGE_DIR_OPT_IDX:
+			opts->hugedir = optarg;
+			break;
+		case NUM_TRACE_ENTRIES_OPT_IDX:
+			opts->num_entries = strtoull(optarg, NULL, 0);
+			if (opts->num_entries == ULLONG_MAX || opts->num_entries == 0) {
+				fprintf(stderr, "Invalid num_entries %s\n", optarg);
+				usage(app_usage);
 				goto out;
 			}
 			break;
@@ -996,3 +1021,55 @@ spdk_rpc_start_subsystem_init(struct spdk_jsonrpc_request *request,
 	spdk_subsystem_init(cb_event);
 }
 SPDK_RPC_REGISTER("start_subsystem_init", spdk_rpc_start_subsystem_init, SPDK_RPC_STARTUP)
+
+struct subsystem_init_poller_ctx {
+	struct spdk_poller *init_poller;
+	struct spdk_jsonrpc_request *request;
+};
+
+static int
+spdk_rpc_subsystem_init_poller_ctx(void *ctx)
+{
+	struct spdk_json_write_ctx *w;
+	struct subsystem_init_poller_ctx *poller_ctx = ctx;
+
+	if (spdk_rpc_get_state() == SPDK_RPC_RUNTIME) {
+		w = spdk_jsonrpc_begin_result(poller_ctx->request);
+		if (w != NULL) {
+			spdk_json_write_bool(w, true);
+			spdk_jsonrpc_end_result(poller_ctx->request, w);
+		}
+		spdk_poller_unregister(&poller_ctx->init_poller);
+		free(poller_ctx);
+	}
+
+	return 1;
+}
+
+static void
+spdk_rpc_wait_subsystem_init(struct spdk_jsonrpc_request *request,
+			     const struct spdk_json_val *params)
+{
+	struct spdk_json_write_ctx *w;
+	struct subsystem_init_poller_ctx *ctx;
+
+	if (spdk_rpc_get_state() == SPDK_RPC_RUNTIME) {
+		w = spdk_jsonrpc_begin_result(request);
+		if (w == NULL) {
+			return;
+		}
+		spdk_json_write_bool(w, true);
+		spdk_jsonrpc_end_result(request, w);
+	} else {
+		ctx = malloc(sizeof(struct subsystem_init_poller_ctx));
+		if (ctx == NULL) {
+			spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+							 "Unable to allocate memory for the request context\n");
+			return;
+		}
+		ctx->request = request;
+		ctx->init_poller = spdk_poller_register(spdk_rpc_subsystem_init_poller_ctx, ctx, 0);
+	}
+}
+SPDK_RPC_REGISTER("wait_subsystem_init", spdk_rpc_wait_subsystem_init,
+		  SPDK_RPC_STARTUP | SPDK_RPC_RUNTIME)

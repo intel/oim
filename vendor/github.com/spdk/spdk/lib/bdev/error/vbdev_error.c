@@ -254,9 +254,11 @@ static struct spdk_bdev_fn_table vbdev_error_fn_table = {
 };
 
 static void
-spdk_vbdev_error_base_bdev_hotremove_cb(void *_base_bdev)
+spdk_vbdev_error_base_bdev_hotremove_cb(void *_part_base)
 {
-	spdk_bdev_part_base_hotremove(_base_bdev, &g_error_disks);
+	struct spdk_bdev_part_base *part_base = _part_base;
+
+	spdk_bdev_part_base_hotremove(part_base, &g_error_disks);
 }
 
 static int

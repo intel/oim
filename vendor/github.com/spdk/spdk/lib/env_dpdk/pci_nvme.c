@@ -36,7 +36,6 @@
 #include "spdk/pci_ids.h"
 
 static struct rte_pci_id nvme_pci_driver_id[] = {
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 7, 0, 1)
 	{
 		.class_id = SPDK_PCI_CLASS_NVME,
 		.vendor_id = PCI_ANY_ID,
@@ -44,13 +43,10 @@ static struct rte_pci_id nvme_pci_driver_id[] = {
 		.subsystem_vendor_id = PCI_ANY_ID,
 		.subsystem_device_id = PCI_ANY_ID,
 	},
-#else
-	{RTE_PCI_DEVICE(0x8086, 0x0953)},
-#endif
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
-static struct spdk_pci_enum_ctx g_nvme_pci_drv = {
+static struct spdk_pci_driver g_nvme_pci_drv = {
 	.driver = {
 		.drv_flags	= RTE_PCI_DRV_NEED_MAPPING
 #if RTE_VERSION >= RTE_VERSION_NUM(18, 8, 0, 0)
@@ -58,32 +54,20 @@ static struct spdk_pci_enum_ctx g_nvme_pci_drv = {
 #endif
 		,
 		.id_table	= nvme_pci_driver_id,
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
 		.probe		= spdk_pci_device_init,
 		.remove		= spdk_pci_device_fini,
 		.driver.name	= "spdk_nvme",
-#else
-		.devinit	= spdk_pci_device_init,
-		.devuninit	= spdk_pci_device_fini,
-		.name		= "spdk_nvme",
-#endif
 	},
 
 	.cb_fn = NULL,
 	.cb_arg = NULL,
-	.mtx = PTHREAD_MUTEX_INITIALIZER,
 	.is_registered = false,
 };
 
-int
-spdk_pci_nvme_device_attach(spdk_pci_enum_cb enum_cb,
-			    void *enum_ctx, struct spdk_pci_addr *pci_address)
+struct spdk_pci_driver *
+spdk_pci_nvme_get_driver(void)
 {
-	return spdk_pci_device_attach(&g_nvme_pci_drv, enum_cb, enum_ctx, pci_address);
+	return &g_nvme_pci_drv;
 }
 
-int
-spdk_pci_nvme_enumerate(spdk_pci_enum_cb enum_cb, void *enum_ctx)
-{
-	return spdk_pci_enumerate(&g_nvme_pci_drv, enum_cb, enum_ctx);
-}
+SPDK_PMD_REGISTER_PCI(g_nvme_pci_drv);

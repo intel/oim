@@ -293,7 +293,7 @@ usage(const char *program_name)
 	printf("     subnqn      Subsystem NQN (default: %s)\n", SPDK_NVMF_DISCOVERY_NQN);
 	printf("    Example: -r 'trtype:RDMA adrfam:IPv4 traddr:192.168.100.8 trsvcid:4420'\n");
 
-	spdk_tracelog_usage(stdout, "-L");
+	spdk_log_usage(stdout, "-L");
 
 	printf(" -v         verbose (enable warnings)\n");
 	printf(" -H         show this usage\n");
@@ -319,7 +319,7 @@ parse_args(int argc, char **argv)
 			}
 			break;
 		case 'L':
-			rc = spdk_log_set_trace_flag(optarg);
+			rc = spdk_log_set_flag(optarg);
 			if (rc < 0) {
 				fprintf(stderr, "unknown flag\n");
 				usage(argv[0]);
@@ -523,7 +523,6 @@ int main(int argc, char **argv)
 	spdk_env_opts_init(&opts);
 	opts.name = "aer";
 	opts.core_mask = "0x1";
-	opts.mem_size = 64;
 	if (spdk_env_init(&opts) < 0) {
 		fprintf(stderr, "Unable to initialize SPDK env\n");
 		return 1;

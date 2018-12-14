@@ -63,15 +63,6 @@ struct spdk_nvmf_poll_group;
 struct spdk_json_write_ctx;
 struct spdk_nvmf_transport;
 
-struct spdk_nvmf_tgt_opts {
-	uint16_t max_queue_depth;
-	uint16_t max_qpairs_per_ctrlr;
-	uint32_t in_capsule_data_size;
-	uint32_t max_io_size;
-	uint32_t max_subsystems;
-	uint32_t io_unit_size;
-};
-
 struct spdk_nvmf_transport_opts {
 	uint16_t max_queue_depth;
 	uint16_t max_qpairs_per_ctrlr;
@@ -82,20 +73,13 @@ struct spdk_nvmf_transport_opts {
 };
 
 /**
- * Initialize the default value of opts.
- *
- * \param opts Data structure where SPDK will initialize the default options.
- */
-void spdk_nvmf_tgt_opts_init(struct spdk_nvmf_tgt_opts *opts);
-
-/**
  * Construct an NVMe-oF target.
  *
- * \param opts Options.
+ * \param max_subsystems the maximum number of subsystems allowed by the target.
  *
  * \return a pointer to a NVMe-oF target on success, or NULL on failure.
  */
-struct spdk_nvmf_tgt *spdk_nvmf_tgt_create(struct spdk_nvmf_tgt_opts *opts);
+struct spdk_nvmf_tgt *spdk_nvmf_tgt_create(uint32_t max_subsystems);
 
 typedef void (spdk_nvmf_tgt_destroy_done_fn)(void *ctx, int status);
 
@@ -746,6 +730,43 @@ int spdk_nvmf_transport_destroy(struct spdk_nvmf_transport *transport);
  */
 struct spdk_nvmf_transport *spdk_nvmf_tgt_get_transport(struct spdk_nvmf_tgt *tgt,
 		enum spdk_nvme_transport_type type);
+
+/**
+ * Get the first transport registered with the given target
+ *
+ * \param tgt The NVMe-oF target
+ *
+ * \return The first transport registered on the target
+ */
+struct spdk_nvmf_transport *spdk_nvmf_transport_get_first(struct spdk_nvmf_tgt *tgt);
+
+/**
+ * Get the next transport in a target's list.
+ *
+ * \param transport A handle to a transport object
+ *
+ * \return The next transport associated with the NVMe-oF target
+ */
+struct spdk_nvmf_transport *spdk_nvmf_transport_get_next(struct spdk_nvmf_transport *transport);
+
+/**
+ * Get the opts for a given transport.
+ *
+ * \param transport The transport to query
+ *
+ * \return The opts associated with the given transport
+ */
+const struct spdk_nvmf_transport_opts *spdk_nvmf_get_transport_opts(struct spdk_nvmf_transport
+		*transport);
+
+/**
+ * Get the transport type for a given transport.
+ *
+ * \param transport The transport to query
+ *
+ * \return the transport type for the given transport
+ */
+spdk_nvme_transport_type_t spdk_nvmf_get_transport_type(struct spdk_nvmf_transport *transport);
 
 /**
  * Function to be called once transport add is complete

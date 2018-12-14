@@ -84,7 +84,7 @@ static bool g_hex_dump = false;
 
 static int g_shm_id = -1;
 
-static int g_dpdk_mem = 64;
+static int g_dpdk_mem = 0;
 
 static int g_master_core = 0;
 
@@ -405,25 +405,34 @@ get_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 {
 	const struct spdk_nvme_ctrlr_data *cdata;
 	outstanding_commands = 0;
+	bool is_discovery = spdk_nvme_ctrlr_is_discovery(ctrlr);
 
 	cdata = spdk_nvme_ctrlr_get_data(ctrlr);
 
-	if (get_error_log_page(ctrlr) == 0) {
-		outstanding_commands++;
-	} else {
-		printf("Get Error Log Page failed\n");
-	}
+	if (!is_discovery) {
+		/*
+		 * Only attempt to retrieve the following log pages
+		 * when the NVM subsystem that's being targeted is
+		 * NOT the Discovery Controller which only fields
+		 * a Discovery Log Page.
+		 */
+		if (get_error_log_page(ctrlr) == 0) {
+			outstanding_commands++;
+		} else {
+			printf("Get Error Log Page failed\n");
+		}
 
-	if (get_health_log_page(ctrlr) == 0) {
-		outstanding_commands++;
-	} else {
-		printf("Get Log Page (SMART/health) failed\n");
-	}
+		if (get_health_log_page(ctrlr) == 0) {
+			outstanding_commands++;
+		} else {
+			printf("Get Log Page (SMART/health) failed\n");
+		}
 
-	if (get_firmware_log_page(ctrlr) == 0) {
-		outstanding_commands++;
-	} else {
-		printf("Get Log Page (Firmware Slot Information) failed\n");
+		if (get_firmware_log_page(ctrlr) == 0) {
+			outstanding_commands++;
+		} else {
+			printf("Get Log Page (Firmware Slot Information) failed\n");
+		}
 	}
 
 	if (cdata->lpa.celp) {
@@ -459,7 +468,7 @@ get_log_pages(struct spdk_nvme_ctrlr *ctrlr)
 
 	}
 
-	if (get_discovery_log_page(ctrlr) == 0) {
+	if (is_discovery && (get_discovery_log_page(ctrlr) == 0)) {
 		outstanding_commands++;
 	}
 
@@ -867,7 +876,15 @@ print_controller(struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_transport
 	cap = spdk_nvme_ctrlr_get_regs_cap(ctrlr);
 	vs = spdk_nvme_ctrlr_get_regs_vs(ctrlr);
 
-	get_features(ctrlr);
+	if (!spdk_nvme_ctrlr_is_discovery(ctrlr)) {
+		/*
+		 * Discovery Controller only supports the
+		 * IDENTIFY and GET_LOG_PAGE cmd set, so only
+		 * attempt GET_FEATURES when NOT targeting a
+		 * Discovery Controller.
+		 */
+		get_features(ctrlr);
+	}
 	get_log_pages(ctrlr);
 
 	cdata = spdk_nvme_ctrlr_get_data(ctrlr);
@@ -1588,7 +1605,7 @@ usage(const char *program_name)
 	printf("     subnqn      Subsystem NQN (default: %s)\n", SPDK_NVMF_DISCOVERY_NQN);
 	printf("    Example: -r 'trtype:RDMA adrfam:IPv4 traddr:192.168.100.8 trsvcid:4420'\n");
 
-	spdk_tracelog_usage(stdout, "-L");
+	spdk_log_usage(stdout, "-L");
 
 	printf(" -i         shared memory group ID\n");
 	printf(" -p         core number in decimal to run this application which started from 0\n");
@@ -1632,7 +1649,7 @@ parse_args(int argc, char **argv)
 			g_hex_dump = true;
 			break;
 		case 'L':
-			rc = spdk_log_set_trace_flag(optarg);
+			rc = spdk_log_set_flag(optarg);
 			if (rc < 0) {
 				fprintf(stderr, "unknown flag\n");
 				usage(argv[0]);

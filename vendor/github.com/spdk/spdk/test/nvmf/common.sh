@@ -3,14 +3,10 @@
 NVMF_PORT=4420
 NVMF_IP_PREFIX="192.168.100"
 NVMF_IP_LEAST_ADDR=8
+NVMF_TCP_IP_ADDRESS="127.0.0.1"
 
-if [ -z "$NVMF_APP" ]; then
-	NVMF_APP=./app/nvmf_tgt/nvmf_tgt
-fi
-
-if [ -z "$NVMF_TEST_CORE_MASK" ]; then
-	NVMF_TEST_CORE_MASK=0xFF
-fi
+: ${NVMF_APP_SHM_ID="0"}; export NVMF_APP_SHM_ID
+: ${NVMF_APP="./app/nvmf_tgt/nvmf_tgt -i $NVMF_APP_SHM_ID -e 0xFFFF"}; export NVMF_APP
 
 function load_ib_rdma_modules()
 {
@@ -189,12 +185,29 @@ function check_ip_is_soft_roce()
 	IP=$1
 	if hash rxe_cfg; then
 		dev=$(ip -4 -o addr show | grep $IP | cut -d" " -f2)
-		if rxe_cfg | grep $dev; then
-			return 0
-		else
+		if [ -z $(rxe_cfg | grep $dev | awk '{print $4}') ]; then
 			return 1
+		else
+			return 0
 		fi
 	else
 		return 1
 	fi
+}
+
+function nvme_connect()
+{
+	local init_count=$(nvme list | wc -l)
+
+	nvme connect $@
+	if [ $? != 0 ]; then return $?; fi
+
+	for i in $(seq 1 10); do
+		if [ $(nvme list | wc -l) -gt $init_count ]; then
+			return 0
+		else
+			sleep 1s
+		fi
+	done
+	return 1
 }

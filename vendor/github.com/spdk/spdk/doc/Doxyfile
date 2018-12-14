@@ -815,17 +815,19 @@ INPUT                  += \
                          ioat.md \
                          iscsi.md \
                          jsonrpc.md \
+                         jsonrpc_proxy.md \
                          lvol.md \
                          memory.md \
                          nvme.md \
                          nvme-cli.md \
                          nvmf.md \
                          nvmf_tgt_pg.md \
-			 nvmf_tracing.md \
+                         nvmf_tracing.md \
                          peer_2_peer.md \
                          porting.md \
                          spdkcli.md \
                          ssd_internals.md \
+                         system_configuration.md \
                          userspace.md \
                          vagrant.md \
                          vhost.md \

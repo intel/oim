@@ -46,30 +46,30 @@ extern enum spdk_log_level g_spdk_log_level;
 extern enum spdk_log_level g_spdk_log_print_level;
 extern enum spdk_log_level g_spdk_log_backtrace_level;
 
-struct spdk_trace_flag {
-	TAILQ_ENTRY(spdk_trace_flag) tailq;
+struct spdk_log_flag {
+	TAILQ_ENTRY(spdk_log_flag) tailq;
 	const char *name;
 	bool enabled;
 };
 
-void spdk_log_register_trace_flag(const char *name, struct spdk_trace_flag *flag);
+void spdk_log_register_flag(const char *name, struct spdk_log_flag *flag);
 
-struct spdk_trace_flag *spdk_log_get_first_trace_flag(void);
-struct spdk_trace_flag *spdk_log_get_next_trace_flag(struct spdk_trace_flag *flag);
+struct spdk_log_flag *spdk_log_get_first_flag(void);
+struct spdk_log_flag *spdk_log_get_next_flag(struct spdk_log_flag *flag);
 
 #define SPDK_LOG_REGISTER_COMPONENT(str, flag) \
-struct spdk_trace_flag flag = { \
+struct spdk_log_flag flag = { \
 	.enabled = false, \
 	.name = str, \
 }; \
-__attribute__((constructor)) static void register_trace_flag_##flag(void) \
+__attribute__((constructor)) static void register_flag_##flag(void) \
 { \
-	spdk_log_register_trace_flag(str, &flag); \
+	spdk_log_register_flag(str, &flag); \
 }
 
 #define SPDK_INFOLOG(FLAG, ...)									\
 	do {											\
-		extern struct spdk_trace_flag FLAG;						\
+		extern struct spdk_log_flag FLAG;						\
 		if (FLAG.enabled) {								\
 			spdk_log(SPDK_LOG_INFO, __FILE__, __LINE__, __func__, __VA_ARGS__);	\
 		}										\
@@ -79,23 +79,23 @@ __attribute__((constructor)) static void register_trace_flag_##flag(void) \
 
 #define SPDK_DEBUGLOG(FLAG, ...)								\
 	do {											\
-		extern struct spdk_trace_flag FLAG;						\
+		extern struct spdk_log_flag FLAG;						\
 		if (FLAG.enabled) {								\
 			spdk_log(SPDK_LOG_DEBUG, __FILE__, __LINE__, __func__, __VA_ARGS__);	\
 		}										\
 	} while (0)
 
-#define SPDK_TRACEDUMP(FLAG, LABEL, BUF, LEN)						\
+#define SPDK_LOGDUMP(FLAG, LABEL, BUF, LEN)						\
 	do {										\
-		extern struct spdk_trace_flag FLAG;					\
+		extern struct spdk_log_flag FLAG;					\
 		if ((FLAG.enabled) && (LEN)) {						\
-			spdk_trace_dump(stderr, (LABEL), (BUF), (LEN));			\
+			spdk_log_dump(stderr, (LABEL), (BUF), (LEN));			\
 		}									\
 	} while (0)
 
 #else
 #define SPDK_DEBUGLOG(...) do { } while (0)
-#define SPDK_TRACEDUMP(...) do { } while (0)
+#define SPDK_LOGDUMP(...) do { } while (0)
 #endif
 
 #endif /* SPDK_INTERNAL_LOG_H */

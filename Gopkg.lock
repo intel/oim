@@ -644,13 +644,12 @@
   revision = "185b4288413d2a0dd0806f78c90dde719829e5ae"
 
 [[projects]]
-  branch = "rbd"
-  digest = "1:e59b43038786cbe9aaefb3be7bd2d6eaf9f023fd971d8cd70a75b587e7222bf2"
+  branch = "master"
+  digest = "1:b683b76a9871c156368b1682f9775ec48edaf20f5645f8d2f9d48466186117f7"
   name = "github.com/spdk/spdk"
   packages = ["go"]
   pruneopts = ""
-  revision = "0372b37b798a656c5b6665ee5c6caf2149095d66"
-  source = "github.com/pohly/spdk"
+  revision = "fdaea1fa5a586de874fc8b3a7a4ef1b067efa647"
 
 [[projects]]
   digest = "1:645cabccbb4fa8aab25a956cbcbdf6a6845ca736b2c64e197ca7cbb9d210b939"

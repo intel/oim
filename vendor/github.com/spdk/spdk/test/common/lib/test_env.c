@@ -40,6 +40,9 @@
 
 DEFINE_STUB(spdk_process_is_primary, bool, (void), true)
 DEFINE_STUB(spdk_memzone_lookup, void *, (const char *name), NULL)
+DEFINE_STUB(spdk_pci_nvme_get_driver, struct spdk_pci_driver *, (void), NULL)
+DEFINE_STUB(spdk_pci_ioat_get_driver, struct spdk_pci_driver *, (void), NULL)
+DEFINE_STUB(spdk_pci_virtio_get_driver, struct spdk_pci_driver *, (void), NULL)
 
 /*
  * These mocks don't use the DEFINE_STUB macros because
@@ -72,6 +75,11 @@ spdk_malloc(size_t size, size_t align, uint64_t *phys_addr, int socket_id, uint3
 	HANDLE_RETURN_MOCK(spdk_malloc);
 
 	void *buf = NULL;
+
+	if (align == 0) {
+		align = 8;
+	}
+
 	if (posix_memalign(&buf, align, size)) {
 		return NULL;
 	}
@@ -221,7 +229,7 @@ spdk_mempool_get(struct spdk_mempool *_mp)
 		return NULL;
 	}
 
-	if (posix_memalign(&buf, 64, 0x1000)) {
+	if (posix_memalign(&buf, 64, 0x10000)) {
 		return NULL;
 	} else {
 		if (mp) {

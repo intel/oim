@@ -518,7 +518,12 @@ spdk_nvme_probe_internal(const struct spdk_nvme_transport_id *trid, void *cb_ctx
 
 	nvme_robust_mutex_lock(&g_spdk_nvme_driver->lock);
 
-	nvme_transport_ctrlr_scan(trid, cb_ctx, probe_cb, remove_cb, direct_connect);
+	rc = nvme_transport_ctrlr_scan(trid, cb_ctx, probe_cb, remove_cb, direct_connect);
+	if (rc != 0) {
+		SPDK_ERRLOG("NVMe ctrlr scan failed\n");
+		nvme_robust_mutex_unlock(&g_spdk_nvme_driver->lock);
+		return -1;
+	}
 
 	/*
 	 * Probe controllers on the shared_attached_ctrlrs list
@@ -528,6 +533,11 @@ spdk_nvme_probe_internal(const struct spdk_nvme_transport_id *trid, void *cb_ctx
 			/* Do not attach other ctrlrs if user specify a valid trid */
 			if ((strlen(trid->traddr) != 0) &&
 			    (spdk_nvme_transport_id_compare(trid, &ctrlr->trid))) {
+				continue;
+			}
+
+			/* Do not attach if we failed to initialize it in this process */
+			if (spdk_nvme_ctrlr_get_current_process(ctrlr) == NULL) {
 				continue;
 			}
 
@@ -649,6 +659,8 @@ spdk_nvme_transport_id_parse_trtype(enum spdk_nvme_transport_type *trtype, const
 		*trtype = SPDK_NVME_TRANSPORT_RDMA;
 	} else if (strcasecmp(str, "FC") == 0) {
 		*trtype = SPDK_NVME_TRANSPORT_FC;
+	} else if (strcasecmp(str, "TCP") == 0) {
+		*trtype = SPDK_NVME_TRANSPORT_TCP;
 	} else {
 		return -ENOENT;
 	}
@@ -665,6 +677,8 @@ spdk_nvme_transport_id_trtype_str(enum spdk_nvme_transport_type trtype)
 		return "RDMA";
 	case SPDK_NVME_TRANSPORT_FC:
 		return "FC";
+	case SPDK_NVME_TRANSPORT_TCP:
+		return "TCP";
 	default:
 		return NULL;
 	}
@@ -797,6 +811,18 @@ spdk_nvme_transport_id_parse(struct spdk_nvme_transport_id *trid, const char *st
 				return -EINVAL;
 			}
 			memcpy(trid->subnqn, val, val_len + 1);
+		} else if (strcasecmp(key, "ns") == 0) {
+			/*
+			 * Special case.  The namespace id parameter may
+			 * optionally be passed in the transport id string
+			 * for an SPDK application (e.g. nvme/perf)
+			 * and additionally parsed therein to limit
+			 * targeting a specific namespace.  For this
+			 * scenario, just silently ignore this key
+			 * rather than letting it default to logging
+			 * it as an invalid key.
+			 */
+			continue;
 		} else {
 			SPDK_ERRLOG("Unknown transport ID key '%s'\n", key);
 		}

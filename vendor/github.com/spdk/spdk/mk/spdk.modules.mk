@@ -31,85 +31,55 @@
 #  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-LVOL_MODULES_LIST = vbdev_lvol
-# Modules below are added as dependency for vbdev_lvol
-LVOL_MODULES_LIST += blob blob_bdev lvol
-
-BLOCKDEV_MODULES_LIST = $(LVOL_MODULES_LIST)
-BLOCKDEV_MODULES_LIST += bdev_malloc bdev_null bdev_nvme nvme vbdev_passthru vbdev_error vbdev_gpt vbdev_split
-BLOCKDEV_MODULES_LIST += vbdev_raid
+BLOCKDEV_MODULES_LIST = bdev_lvol blobfs blob blob_bdev lvol
+BLOCKDEV_MODULES_LIST += bdev_malloc bdev_null bdev_nvme nvme bdev_passthru bdev_error bdev_gpt bdev_split
+BLOCKDEV_MODULES_LIST += bdev_raid
 
 ifeq ($(CONFIG_CRYPTO),y)
-BLOCKDEV_MODULES_LIST += vbdev_crypto
+BLOCKDEV_MODULES_LIST += bdev_crypto
 endif
 
 ifeq ($(CONFIG_RDMA),y)
-BLOCKDEV_MODULES_DEPS += -libverbs -lrdmacm
+SYS_LIBS += -libverbs -lrdmacm
 endif
 
 ifeq ($(OS),Linux)
 BLOCKDEV_MODULES_LIST += bdev_aio
-BLOCKDEV_MODULES_DEPS += -laio
+SYS_LIBS += -laio
 ifeq ($(CONFIG_VIRTIO),y)
 BLOCKDEV_MODULES_LIST += bdev_virtio virtio
 endif
 ifeq ($(CONFIG_ISCSI_INITIATOR),y)
 BLOCKDEV_MODULES_LIST += bdev_iscsi
 # Fedora installs libiscsi to /usr/lib64/iscsi for some reason.
-BLOCKDEV_MODULES_DEPS += -L/usr/lib64/iscsi -liscsi
+SYS_LIBS += -L/usr/lib64/iscsi -liscsi
 endif
 endif
 
 ifeq ($(CONFIG_RBD),y)
 BLOCKDEV_MODULES_LIST += bdev_rbd
-BLOCKDEV_MODULES_DEPS += -lrados -lrbd
+SYS_LIBS += -lrados -lrbd
 endif
 
 ifeq ($(CONFIG_PMDK),y)
 BLOCKDEV_MODULES_LIST += bdev_pmem
-BLOCKDEV_MODULES_DEPS += -lpmemblk
+SYS_LIBS += -lpmemblk
 endif
 
-SOCK_MODULES_LIST = sock
-SOCK_MODULES_LIST += sock_posix
+SOCK_MODULES_LIST = sock_posix
 
 ifeq ($(CONFIG_VPP),y)
+SYS_LIBS += -Wl,--whole-archive
 ifneq ($(CONFIG_VPP_DIR),)
-SOCK_MODULES_DEPS = -l:libvppinfra.a -l:libsvm.a -l:libvapiclient.a
-SOCK_MODULES_DEPS += -l:libvppcom.a -l:libvlibmemoryclient.a
+SYS_LIBS += -l:libvppinfra.a -l:libsvm.a -l:libvapiclient.a
+SYS_LIBS += -l:libvppcom.a -l:libvlibmemoryclient.a
 else
-SOCK_MODULES_DEPS = -lvppcom
+SYS_LIBS += -lvppcom
 endif
+SYS_LIBS += -Wl,--no-whole-archive
 SOCK_MODULES_LIST += sock_vpp
 endif
 
 COPY_MODULES_LIST = copy_ioat ioat
 
-BLOCKDEV_MODULES_LINKER_ARGS = -Wl,--whole-archive \
-			       $(BLOCKDEV_MODULES_LIST:%=-lspdk_%) \
-			       -Wl,--no-whole-archive \
-			       $(BLOCKDEV_MODULES_DEPS)
-
-BLOCKDEV_MODULES_FILES = $(call spdk_lib_list_to_static_libs,$(BLOCKDEV_MODULES_LIST))
-
-BLOCKDEV_NO_LVOL_MODULES_LIST = $(filter-out $(LVOL_MODULES_LIST),$(BLOCKDEV_MODULES_LIST))
-BLOCKDEV_NO_LVOL_MODULES_LINKER_ARGS = -Wl,--whole-archive \
-			       $(BLOCKDEV_NO_LVOL_MODULES_LIST:%=-lspdk_%) \
-			       -Wl,--no-whole-archive \
-			       $(BLOCKDEV_MODULES_DEPS)
-
-BLOCKDEV_NO_LVOL_MODULES_FILES = $(call spdk_lib_list_to_static_libs,$(BLOCKDEV_NO_LVOL_MODULES_LIST))
-
-COPY_MODULES_LINKER_ARGS = -Wl,--whole-archive \
-			   $(COPY_MODULES_LIST:%=-lspdk_%) \
-			   -Wl,--no-whole-archive \
-			   $(COPY_MODULES_DEPS)
-
-COPY_MODULES_FILES = $(call spdk_lib_list_to_static_libs,$(COPY_MODULES_LIST))
-
-SOCK_MODULES_LINKER_ARGS = -Wl,--whole-archive \
-			   $(SOCK_MODULES_LIST:%=-lspdk_%) \
-			   $(SOCK_MODULES_DEPS) \
-			   -Wl,--no-whole-archive
-
-SOCK_MODULES_FILES = $(call spdk_lib_list_to_static_libs,$(SOCK_MODULES_LIST))
+ALL_MODULES_LIST = $(BLOCKDEV_MODULES_LIST) $(COPY_MODULES_LIST) $(SOCK_MODULES_LIST)

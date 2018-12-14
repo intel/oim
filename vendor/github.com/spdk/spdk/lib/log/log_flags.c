@@ -35,7 +35,7 @@
 
 #include "spdk_internal/log.h"
 
-static TAILQ_HEAD(, spdk_trace_flag) g_trace_flags = TAILQ_HEAD_INITIALIZER(g_trace_flags);
+static TAILQ_HEAD(, spdk_log_flag) g_log_flags = TAILQ_HEAD_INITIALIZER(g_log_flags);
 
 enum spdk_log_level g_spdk_log_level = SPDK_LOG_NOTICE;
 enum spdk_log_level g_spdk_log_print_level = SPDK_LOG_NOTICE;
@@ -48,6 +48,8 @@ SPDK_LOG_REGISTER_COMPONENT("log", SPDK_LOG_LOG)
 void
 spdk_log_set_level(enum spdk_log_level level)
 {
+	assert(level >= SPDK_LOG_DISABLED);
+	assert(level <= SPDK_LOG_DEBUG);
 	g_spdk_log_level = level;
 }
 
@@ -59,6 +61,8 @@ spdk_log_get_level(void) {
 void
 spdk_log_set_print_level(enum spdk_log_level level)
 {
+	assert(level >= SPDK_LOG_DISABLED);
+	assert(level <= SPDK_LOG_DEBUG);
 	g_spdk_log_print_level = level;
 }
 
@@ -70,6 +74,8 @@ spdk_log_get_print_level(void) {
 void
 spdk_log_set_backtrace_level(enum spdk_log_level level)
 {
+	assert(level >= SPDK_LOG_DISABLED);
+	assert(level <= SPDK_LOG_DEBUG);
 	g_spdk_log_backtrace_level = level;
 }
 
@@ -78,12 +84,12 @@ spdk_log_get_backtrace_level(void) {
 	return g_spdk_log_backtrace_level;
 }
 
-static struct spdk_trace_flag *
-get_trace_flag(const char *name)
+static struct spdk_log_flag *
+get_log_flag(const char *name)
 {
-	struct spdk_trace_flag *flag;
+	struct spdk_log_flag *flag;
 
-	TAILQ_FOREACH(flag, &g_trace_flags, tailq) {
+	TAILQ_FOREACH(flag, &g_log_flags, tailq) {
 		if (strcasecmp(name, flag->name) == 0) {
 			return flag;
 		}
@@ -93,36 +99,36 @@ get_trace_flag(const char *name)
 }
 
 void
-spdk_log_register_trace_flag(const char *name, struct spdk_trace_flag *flag)
+spdk_log_register_flag(const char *name, struct spdk_log_flag *flag)
 {
-	struct spdk_trace_flag *iter;
+	struct spdk_log_flag *iter;
 
 	if (name == NULL || flag == NULL) {
-		SPDK_ERRLOG("missing spdk_trace_flag parameters\n");
+		SPDK_ERRLOG("missing spdk_log_flag parameters\n");
 		assert(false);
 		return;
 	}
 
-	if (get_trace_flag(name)) {
-		SPDK_ERRLOG("duplicate spdk_trace_flag '%s'\n", name);
+	if (get_log_flag(name)) {
+		SPDK_ERRLOG("duplicate spdk_log_flag '%s'\n", name);
 		assert(false);
 		return;
 	}
 
-	TAILQ_FOREACH(iter, &g_trace_flags, tailq) {
+	TAILQ_FOREACH(iter, &g_log_flags, tailq) {
 		if (strcasecmp(iter->name, flag->name) > 0) {
 			TAILQ_INSERT_BEFORE(iter, flag, tailq);
 			return;
 		}
 	}
 
-	TAILQ_INSERT_TAIL(&g_trace_flags, flag, tailq);
+	TAILQ_INSERT_TAIL(&g_log_flags, flag, tailq);
 }
 
 bool
-spdk_log_get_trace_flag(const char *name)
+spdk_log_get_flag(const char *name)
 {
-	struct spdk_trace_flag *flag = get_trace_flag(name);
+	struct spdk_log_flag *flag = get_log_flag(name);
 
 	if (flag && flag->enabled) {
 		return true;
@@ -132,18 +138,18 @@ spdk_log_get_trace_flag(const char *name)
 }
 
 static int
-set_trace_flag(const char *name, bool value)
+set_log_flag(const char *name, bool value)
 {
-	struct spdk_trace_flag *flag;
+	struct spdk_log_flag *flag;
 
 	if (strcasecmp(name, "all") == 0) {
-		TAILQ_FOREACH(flag, &g_trace_flags, tailq) {
+		TAILQ_FOREACH(flag, &g_log_flags, tailq) {
 			flag->enabled = value;
 		}
 		return 0;
 	}
 
-	flag = get_trace_flag(name);
+	flag = get_log_flag(name);
 	if (flag == NULL) {
 		return -1;
 	}
@@ -154,43 +160,43 @@ set_trace_flag(const char *name, bool value)
 }
 
 int
-spdk_log_set_trace_flag(const char *name)
+spdk_log_set_flag(const char *name)
 {
-	return set_trace_flag(name, true);
+	return set_log_flag(name, true);
 }
 
 int
-spdk_log_clear_trace_flag(const char *name)
+spdk_log_clear_flag(const char *name)
 {
-	return set_trace_flag(name, false);
+	return set_log_flag(name, false);
 }
 
-struct spdk_trace_flag *
-spdk_log_get_first_trace_flag(void)
+struct spdk_log_flag *
+spdk_log_get_first_flag(void)
 {
-	return TAILQ_FIRST(&g_trace_flags);
+	return TAILQ_FIRST(&g_log_flags);
 }
 
-struct spdk_trace_flag *
-spdk_log_get_next_trace_flag(struct spdk_trace_flag *flag)
+struct spdk_log_flag *
+spdk_log_get_next_flag(struct spdk_log_flag *flag)
 {
 	return TAILQ_NEXT(flag, tailq);
 }
 
 void
-spdk_tracelog_usage(FILE *f, const char *trace_arg)
+spdk_log_usage(FILE *f, const char *log_arg)
 {
 #ifdef DEBUG
-	struct spdk_trace_flag *flag;
-	fprintf(f, " %s, --traceflag <flag>    enable debug log flag (all", trace_arg);
+	struct spdk_log_flag *flag;
+	fprintf(f, " %s, --logflag <flag>    enable debug log flag (all", log_arg);
 
-	TAILQ_FOREACH(flag, &g_trace_flags, tailq) {
+	TAILQ_FOREACH(flag, &g_log_flags, tailq) {
 		fprintf(f, ", %s", flag->name);
 	}
 
 	fprintf(f, ")\n");
 #else
-	fprintf(f, " %s, --traceflag <flag>    enable debug log flag (not supported"
-		" - must rebuild with --enable-debug)\n", trace_arg);
+	fprintf(f, " %s, --logflag <flag>    enable debug log flag (not supported"
+		" - must rebuild with --enable-debug)\n", log_arg);
 #endif
 }

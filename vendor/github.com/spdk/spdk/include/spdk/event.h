@@ -105,6 +105,7 @@ struct spdk_app_opts {
 	bool			no_pci;
 	bool			hugepage_single_segments;
 	bool			unlink_hugepage;
+	const char		*hugedir;
 	enum spdk_log_level	print_level;
 	size_t			num_pci_addr;
 	struct spdk_pci_addr	*pci_blacklist;
@@ -121,6 +122,9 @@ struct spdk_app_opts {
 	 * when this flag is enabled.
 	 */
 	bool			delay_subsystem_init;
+
+	/* Number of trace entries allocated for each core */
+	uint64_t		num_entries;
 };
 
 struct spdk_reactor_tsc_stats {

@@ -50,6 +50,9 @@ DEFINE_STUB(spdk_bdev_module_claim_bdev,
 DEFINE_STUB_V(spdk_bdev_module_release_bdev,
 	      (struct spdk_bdev *bdev));
 
+DEFINE_STUB(spdk_bdev_get_block_size, uint32_t,
+	    (const struct spdk_bdev *bdev), 512);
+
 uint32_t
 spdk_env_get_current_core(void)
 {
@@ -214,12 +217,16 @@ test_discovery_log(void)
 	struct spdk_nvmf_tgt tgt = {};
 	struct spdk_nvmf_subsystem *subsystem;
 	uint8_t buffer[8192];
+	struct iovec iov;
 	struct spdk_nvmf_discovery_log_page *disc_log;
 	struct spdk_nvmf_discovery_log_page_entry *entry;
 	struct spdk_nvme_transport_id trid = {};
 
-	tgt.opts.max_subsystems = 1024;
-	tgt.subsystems = calloc(tgt.opts.max_subsystems, sizeof(struct spdk_nvmf_subsystem *));
+	iov.iov_base = buffer;
+	iov.iov_len = 8192;
+
+	tgt.max_subsystems = 1024;
+	tgt.subsystems = calloc(tgt.max_subsystems, sizeof(struct spdk_nvmf_subsystem *));
 	SPDK_CU_ASSERT_FATAL(tgt.subsystems != NULL);
 
 	/* Add one subsystem and verify that the discovery log contains it */
@@ -236,20 +243,20 @@ test_discovery_log(void)
 	/* Get only genctr (first field in the header) */
 	memset(buffer, 0xCC, sizeof(buffer));
 	disc_log = (struct spdk_nvmf_discovery_log_page *)buffer;
-	spdk_nvmf_get_discovery_log_page(&tgt, buffer, 0, sizeof(disc_log->genctr));
+	spdk_nvmf_get_discovery_log_page(&tgt, &iov, 1, 0, sizeof(disc_log->genctr));
 	CU_ASSERT(disc_log->genctr == 1); /* one added subsystem */
 
 	/* Get only the header, no entries */
 	memset(buffer, 0xCC, sizeof(buffer));
 	disc_log = (struct spdk_nvmf_discovery_log_page *)buffer;
-	spdk_nvmf_get_discovery_log_page(&tgt, buffer, 0, sizeof(*disc_log));
+	spdk_nvmf_get_discovery_log_page(&tgt, &iov, 1, 0, sizeof(*disc_log));
 	CU_ASSERT(disc_log->genctr == 1);
 	CU_ASSERT(disc_log->numrec == 1);
 
 	/* Offset 0, exact size match */
 	memset(buffer, 0xCC, sizeof(buffer));
 	disc_log = (struct spdk_nvmf_discovery_log_page *)buffer;
-	spdk_nvmf_get_discovery_log_page(&tgt, buffer, 0,
+	spdk_nvmf_get_discovery_log_page(&tgt, &iov, 1, 0,
 					 sizeof(*disc_log) + sizeof(disc_log->entries[0]));
 	CU_ASSERT(disc_log->genctr != 0);
 	CU_ASSERT(disc_log->numrec == 1);
@@ -258,7 +265,7 @@ test_discovery_log(void)
 	/* Offset 0, oversize buffer */
 	memset(buffer, 0xCC, sizeof(buffer));
 	disc_log = (struct spdk_nvmf_discovery_log_page *)buffer;
-	spdk_nvmf_get_discovery_log_page(&tgt, buffer, 0, sizeof(buffer));
+	spdk_nvmf_get_discovery_log_page(&tgt, &iov, 1, 0, sizeof(buffer));
 	CU_ASSERT(disc_log->genctr != 0);
 	CU_ASSERT(disc_log->numrec == 1);
 	CU_ASSERT(disc_log->entries[0].trtype == 42);
@@ -268,7 +275,8 @@ test_discovery_log(void)
 	/* Get just the first entry, no header */
 	memset(buffer, 0xCC, sizeof(buffer));
 	entry = (struct spdk_nvmf_discovery_log_page_entry *)buffer;
-	spdk_nvmf_get_discovery_log_page(&tgt, buffer,
+	spdk_nvmf_get_discovery_log_page(&tgt, &iov,
+					 1,
 					 offsetof(struct spdk_nvmf_discovery_log_page, entries[0]),
 					 sizeof(*entry));
 	CU_ASSERT(entry->trtype == 42);

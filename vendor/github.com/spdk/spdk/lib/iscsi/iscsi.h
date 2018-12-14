@@ -51,8 +51,9 @@
 #define SPDK_ISCSI_DEFAULT_NODEBASE "iqn.2016-06.io.spdk"
 
 #define DEFAULT_MAXR2T 4
-#define MAX_INITIATOR_NAME 256
-#define MAX_TARGET_NAME 256
+#define MAX_INITIATOR_PORT_NAME 256
+#define MAX_INITIATOR_NAME 223
+#define MAX_TARGET_NAME 223
 
 #define MAX_PORTAL 1024
 #define MAX_INITIATOR 256
@@ -424,7 +425,8 @@ int spdk_iscsi_sess_params_init(struct iscsi_param **params);
 
 void spdk_free_sess(struct spdk_iscsi_sess *sess);
 void spdk_clear_all_transfer_task(struct spdk_iscsi_conn *conn,
-				  struct spdk_scsi_lun *lun);
+				  struct spdk_scsi_lun *lun,
+				  struct spdk_iscsi_pdu *pdu);
 void spdk_del_transfer_task(struct spdk_iscsi_conn *conn, uint32_t CmdSN);
 bool spdk_iscsi_is_deferred_free_pdu(struct spdk_iscsi_pdu *pdu);
 
@@ -435,11 +437,15 @@ int spdk_iscsi_copy_param2var(struct spdk_iscsi_conn *conn);
 
 void spdk_iscsi_task_cpl(struct spdk_scsi_task *scsi_task);
 void spdk_iscsi_task_mgmt_cpl(struct spdk_scsi_task *scsi_task);
+uint32_t spdk_iscsi_pdu_calc_header_digest(struct spdk_iscsi_pdu *pdu);
+uint32_t spdk_iscsi_pdu_calc_data_digest(struct spdk_iscsi_pdu *pdu);
 
 /* Memory management */
 void spdk_put_pdu(struct spdk_iscsi_pdu *pdu);
 struct spdk_iscsi_pdu *spdk_get_pdu(void);
 int spdk_iscsi_conn_handle_queued_datain_tasks(struct spdk_iscsi_conn *conn);
+void spdk_iscsi_op_abort_task_set(struct spdk_iscsi_task *task,
+				  uint8_t function);
 
 static inline int
 spdk_get_immediate_data_buffer_size(void)

@@ -88,36 +88,24 @@ static struct rte_pci_id ioat_driver_id[] = {
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
-static struct spdk_pci_enum_ctx g_ioat_pci_drv = {
+static struct spdk_pci_driver g_ioat_pci_drv = {
 	.driver = {
 		.drv_flags	= RTE_PCI_DRV_NEED_MAPPING,
 		.id_table	= ioat_driver_id,
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
 		.probe		= spdk_pci_device_init,
 		.remove		= spdk_pci_device_fini,
 		.driver.name	= "spdk_ioat",
-#else
-		.devinit	= spdk_pci_device_init,
-		.devuninit	= spdk_pci_device_fini,
-		.name		= "spdk_ioat",
-#endif
 	},
 
 	.cb_fn = NULL,
 	.cb_arg = NULL,
-	.mtx = PTHREAD_MUTEX_INITIALIZER,
 	.is_registered = false,
 };
 
-int
-spdk_pci_ioat_device_attach(spdk_pci_enum_cb enum_cb, void *enum_ctx,
-			    struct spdk_pci_addr *pci_address)
+struct spdk_pci_driver *
+spdk_pci_ioat_get_driver(void)
 {
-	return spdk_pci_device_attach(&g_ioat_pci_drv, enum_cb, enum_ctx, pci_address);
+	return &g_ioat_pci_drv;
 }
 
-int
-spdk_pci_ioat_enumerate(spdk_pci_enum_cb enum_cb, void *enum_ctx)
-{
-	return spdk_pci_enumerate(&g_ioat_pci_drv, enum_cb, enum_ctx);
-}
+SPDK_PMD_REGISTER_PCI(g_ioat_pci_drv);

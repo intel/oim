@@ -6,6 +6,14 @@ cd $BASEDIR
 # exit on errors
 set -e
 
+if ! hash nproc 2>/dev/null; then
+
+function nproc() {
+	echo 8
+}
+
+fi
+
 rc=0
 
 echo -n "Checking file permissions..."
@@ -55,30 +63,31 @@ if hash astyle; then
 	echo -n "Checking coding style..."
 	if [ "$(astyle -V)" \< "Artistic Style Version 3" ]
 	then
-		echo -n " Your astyle version is too old. This may cause failure on patch verification performed by CI. Please update astyle to at least 3.0.1 version..."
-	fi
-	rm -f astyle.log
-	touch astyle.log
-	# Exclude rte_vhost code imported from DPDK - we want to keep the original code
-	#  as-is to enable ongoing work to synch with a generic upstream DPDK vhost library,
-	#  rather than making diffs more complicated by a lot of changes to follow SPDK
-	#  coding standards.
-	git ls-files '*.[ch]' '*.cpp' '*.cc' '*.cxx' '*.hh' '*.hpp' | \
-		grep -v rte_vhost | grep -v cpp_headers | \
-		xargs astyle --options=.astylerc >> astyle.log
-	if grep -q "^Formatted" astyle.log; then
-		echo " errors detected"
-		git diff
-		sed -i -e 's/  / /g' astyle.log
-		grep --color=auto "^Formatted.*" astyle.log
-		echo "Incorrect code style detected in one or more files."
-		echo "The files have been automatically formatted."
-		echo "Remember to add the files to your commit."
-		rc=1
+		echo -n " Your astyle version is too old so skipping coding style checks. Please update astyle to at least 3.0.1 version..."
 	else
-		echo " OK"
+		rm -f astyle.log
+		touch astyle.log
+		# Exclude rte_vhost code imported from DPDK - we want to keep the original code
+		#  as-is to enable ongoing work to synch with a generic upstream DPDK vhost library,
+		#  rather than making diffs more complicated by a lot of changes to follow SPDK
+		#  coding standards.
+		git ls-files '*.[ch]' '*.cpp' '*.cc' '*.cxx' '*.hh' '*.hpp' | \
+			grep -v rte_vhost | grep -v cpp_headers | \
+			xargs -P$(nproc) -n10 astyle --options=.astylerc >> astyle.log
+		if grep -q "^Formatted" astyle.log; then
+			echo " errors detected"
+			git diff
+			sed -i -e 's/  / /g' astyle.log
+			grep --color=auto "^Formatted.*" astyle.log
+			echo "Incorrect code style detected in one or more files."
+			echo "The files have been automatically formatted."
+			echo "Remember to add the files to your commit."
+			rc=1
+		else
+			echo " OK"
+		fi
+		rm -f astyle.log
 	fi
-	rm -f astyle.log
 else
 	echo "You do not have astyle installed so your code style is not being checked!"
 fi
@@ -88,6 +97,8 @@ echo -n "Checking comment style..."
 git grep --line-number -e '/[*][^ *-]' -- '*.[ch]' > comment.log || true
 git grep --line-number -e '[^ ][*]/' -- '*.[ch]' ':!lib/vhost/rte_vhost*/*' >> comment.log || true
 git grep --line-number -e '^[*]' -- '*.[ch]' >> comment.log || true
+git grep --line-number -e '\s//' -- '*.[ch]' >> comment.log || true
+git grep --line-number -e '^//' -- '*.[ch]' >> comment.log || true
 
 if [ -s comment.log ]; then
 	echo " Incorrect comment formatting detected"
@@ -149,7 +160,7 @@ rm -f badcunit.log
 echo -n "Checking blank lines at end of file..."
 
 if ! git grep -I -l -e . -z | \
-	xargs -0 -P8 -n1 scripts/eofnl > eofnl.log; then
+	xargs -0 -P$(nproc) -n1 scripts/eofnl > eofnl.log; then
 	echo " Incorrect end-of-file formatting detected"
 	cat eofnl.log
 	rc=1
@@ -181,7 +192,7 @@ if [ ! -z ${PEP8} ]; then
 	PEP8_ARGS+=" --max-line-length=140"
 
 	error=0
-	git ls-files '*.py' | xargs -n1 $PEP8 $PEP8_ARGS > pep8.log || error=1
+	git ls-files '*.py' | xargs -P$(nproc) -n1 $PEP8 $PEP8_ARGS > pep8.log || error=1
 	if [ $error -ne 0 ]; then
 		echo " Python formatting errors detected"
 		cat pep8.log

@@ -39,7 +39,7 @@
 
 #include "common/lib/test_env.c"
 
-struct spdk_trace_flag SPDK_LOG_NVME = {
+struct spdk_log_flag SPDK_LOG_NVME = {
 	.name = "nvme",
 	.enabled = false,
 };
@@ -419,6 +419,11 @@ nvme_ns_construct(struct spdk_nvme_ns *ns, uint32_t id,
 		  struct spdk_nvme_ctrlr *ctrlr)
 {
 	return 0;
+}
+
+void
+spdk_pci_device_detach(struct spdk_pci_device *device)
+{
 }
 
 #define DECLARE_AND_CONSTRUCT_CTRLR()	\
@@ -1501,6 +1506,7 @@ test_ctrlr_get_default_ctrlr_opts(void)
 	CU_ASSERT(strlen(opts.hostnqn) == 0);
 	CU_ASSERT(strlen(opts.src_addr) == 0);
 	CU_ASSERT(strlen(opts.src_svcid) == 0);
+	CU_ASSERT_EQUAL(opts.admin_timeout_ms, 0);
 
 	/* set a consistent opts_size */
 	spdk_nvme_ctrlr_get_default_ctrlr_opts(&opts, sizeof(opts));
@@ -1519,6 +1525,7 @@ test_ctrlr_get_default_ctrlr_opts(void)
 			 sizeof(opts.extended_host_id)) == 0);
 	CU_ASSERT(strlen(opts.src_addr) == 0);
 	CU_ASSERT(strlen(opts.src_svcid) == 0);
+	CU_ASSERT_EQUAL(opts.admin_timeout_ms, NVME_MAX_TIMEOUT_PERIOD * 1000);
 }
 
 static void

@@ -109,20 +109,15 @@ of the new script `scripts/config_converter.py`.
 
 ### Using RPCs {#nvmf_config_rpc}
 
-Start the nvmf_tgt application with elevated privileges and instruct it to wait for RPCs.
-The set_nvmf_target_options RPC can then be used to configure basic target parameters.
-Below is an example where the target is configured with an I/O unit size of 8192,
-4 max qpairs per controller, and an in capsule data size of 0. The parameters controlled
-by set_nvmf_target_options may only be modified before the SPDK NVMe-oF subsystem is initialized.
-Once the target options are configured. You need to start the NVMe-oF subsystem with start_subsystem_init.
+Start the nvmf_tgt application with elevated privileges. Once the target is started,
+the nvmf_create_transport rpc can be used to initialize a given transport. Below is an
+example where the target is started and the RDMA transport is configured with an I/O
+unit size of 8192 bytes, 4 max qpairs per controller, and an in capsule data size of 0 bytes.
 
 ~~~{.sh}
-app/nvmf_tgt/nvmf_tgt --wait-for-rpc
-scripts/rpc.py set_nvmf_target_options -u 8192 -p 4 -c 0
-scripts/rpc.py start_subsystem_init
+app/nvmf_tgt/nvmf_tgt
+scripts/rpc.py nvmf_create_transport -t RDMA -u 8192 -p 4 -c 0
 ~~~
-
-Note: The start_subsystem_init rpc is referring to SPDK application subsystems and not the NVMe over Fabrics concept.
 
 Below is an example of creating a malloc bdev and assigning it to a subsystem. Adjust the bdevs,
 NQN, serial number, and IP address to your own circumstances.
@@ -224,3 +219,15 @@ nvme disconnect -n "nqn.2016-06.io.spdk:cnode1"
 
 SPDK has a tracing framework for capturing low-level event information at runtime.
 @ref nvmf_tgt_tracepoints enable analysis of both performance and application crashes.
+
+## RDMA Limitations {#nvmf_rdma_limitations}
+
+As RDMA NICs put a limitation on the number of memory regions registered, the SPDK NVMe-oF
+target application may eventually start failing to allocate more DMA-able memory. This is
+an imperfection of the DPDK dynamic memory management and is most likely to occur with too
+many 2MB hugepages reserved at runtime. Some of our NICs report as many as 2048 for the
+maximum number of memory regions, meaning that exactly that many pages can be allocated.
+With 2MB hugepages, this gives us a 4GB memory limit. It can be overcome by using 1GB
+hugepages or by pre-reserving memory at application startup with `--mem-size` or `-s`
+option. All pre-reserved memory will be registered as a single region, but won't be
+returned to the system until the SPDK application is terminated.

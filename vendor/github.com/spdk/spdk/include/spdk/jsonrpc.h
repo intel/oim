@@ -67,6 +67,13 @@ struct spdk_jsonrpc_request;
 struct spdk_jsonrpc_client;
 struct spdk_jsonrpc_client_request;
 
+struct spdk_jsonrpc_client_response {
+	struct spdk_json_val *version;
+	struct spdk_json_val *id;
+	struct spdk_json_val *result;
+	struct spdk_json_val *error;
+};
+
 /**
  * User callback to handle a single JSON-RPC request.
  *
@@ -185,8 +192,7 @@ void spdk_jsonrpc_send_error_response_fmt(struct spdk_jsonrpc_request *request,
  * \param id ID index for the request. If < 0 skip ID.
  * \param method Name of the RPC method. If NULL caller will have to create "method" key.
  *
- * \return JSON write context to write the parameter object to, or NULL if no
- * parameter is necessary.
+ * \return JSON write context or NULL in case of error.
  */
 struct spdk_json_write_ctx *
 spdk_jsonrpc_begin_request(struct spdk_jsonrpc_client_request *request, int32_t id,
@@ -204,59 +210,97 @@ void spdk_jsonrpc_end_request(struct spdk_jsonrpc_client_request *request,
 /**
  * Connect to the specified RPC server.
  *
- * \param rpc_sock_addr RPC socket address.
+ * \param addr RPC socket address.
  * \param addr_family Protocol families of address.
  *
- * \return JSON-RPC client on success, NULL on failure.
+ * \return JSON-RPC client on success, NULL on failure and errno set to indicate
+ * the cause of the error.
  */
-struct spdk_jsonrpc_client *spdk_jsonrpc_client_connect(const char *rpc_sock_addr,
-		int addr_family);
+struct spdk_jsonrpc_client *spdk_jsonrpc_client_connect(const char *addr, int addr_family);
 
 /**
- * Close the JSON-RPC client.
+ * Close JSON-RPC connection and free \c client object.
+ *
+ * This function is not thread safe and should only be called from one thread at
+ * a time while no other threads are actively \c client object.
  *
  * \param client JSON-RPC client.
  */
 void spdk_jsonrpc_client_close(struct spdk_jsonrpc_client *client);
 
 /**
- * Create one JSON-RPC request
+ * Create one JSON-RPC request. Returned request must be passed to
+ * \c spdk_jsonrpc_client_send_request when done or to \c spdk_jsonrpc_client_free_request
+ * if discaded.
  *
- * \return Created JSON-RPC request.
+ * \return pointer to JSON-RPC request object.
  */
 struct spdk_jsonrpc_client_request *spdk_jsonrpc_client_create_request(void);
 
 /**
- * free one JSON-RPC request
+ * Free one JSON-RPC request.
  *
- * \param req Created JSON-RPC request.
+ * \param req pointer to JSON-RPC request object.
  */
-void spdk_jsonrpc_client_free_request(
-	struct spdk_jsonrpc_client_request *req);
+void spdk_jsonrpc_client_free_request(struct spdk_jsonrpc_client_request *req);
 
 /**
- * Send the JSON-RPC request in JSON-RPC client.
+ * Send the JSON-RPC request in JSON-RPC client. Library takes ownership of the
+ * request object and will free it when done.
+ *
+ * This function is not thread safe and should only be called from one thread at
+ * a time while no other threads are actively \c client object.
  *
  * \param client JSON-RPC client.
  * \param req JSON-RPC request.
  *
- * \return 0 on success.
+ * \return 0 on success or negative error code.
+ * -ENOSPC - no space left to queue another request. Try again later.
  */
 int spdk_jsonrpc_client_send_request(struct spdk_jsonrpc_client *client,
 				     struct spdk_jsonrpc_client_request *req);
 
 /**
- * Receive the JSON-RPC response in JSON-RPC client.
+ * Poll the JSON-RPC client. When any response is available use
+ * \c spdk_jsonrpc_client_get_response to retrieve it.
+ *
+ * This function is not thread safe and should only be called from one thread at
+ * a time while no other threads are actively \c client object.
  *
  * \param client JSON-RPC client.
- * \param parser_fn Specific function used to parse the result inside response.
- * \param parser_ctx Parameter for parser_fn.
+ * \param timeout Time in miliseconds this function will block. -1 block forever, 0 don't block.
  *
- * \return 0 on success.
+ * \return If no error occurred, this function returns a non-negative number indicating how
+ * many ready responses can be retrieved. If an error occurred, this function returns one of
+ * the following negated errno values:
+ *  -ENOTCONN - not connected yet. Try again later.
+ *  -EINVAL - response is detected to be invalid. Client connection should be terminated.
+ *  -ENOSPC - no space to receive another response. User need to retrieve waiting responses.
+ *  -EIO - connection terminated (or other critical error). Client connection should be terminated.
+ *  -ENOMEM - out of memory
  */
-int spdk_jsonrpc_client_recv_response(struct spdk_jsonrpc_client *client,
-				      spdk_jsonrpc_client_response_parser parser_fn,
-				      void *parser_ctx);
+int spdk_jsonrpc_client_poll(struct spdk_jsonrpc_client *client, int timeout);
+
+/**
+ * Return JSON RPC response object representing next available response from client connection.
+ * Returned pointer must be freed using \c spdk_jsonrpc_client_free_response
+ *
+ * This function is not thread safe and should only be called from one thread at
+ * a time while no other threads are actively \c client object.
+ *
+ * \param client
+ * \return pointer to JSON RPC response object or NULL if no response available.
+ */
+struct spdk_jsonrpc_client_response *spdk_jsonrpc_client_get_response(struct spdk_jsonrpc_client
+		*client);
+
+/**
+ * Free response object obtained from \c spdk_jsonrpc_client_get_response
+ *
+ * \param resp pointer to JSON RPC response object. If NULL no operation is performed.
+ */
+void spdk_jsonrpc_client_free_response(struct spdk_jsonrpc_client_response *resp);
+
 
 #ifdef __cplusplus
 }

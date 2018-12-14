@@ -44,6 +44,7 @@
 extern "C" {
 #endif
 
+#include "spdk/config.h"
 #include "spdk/env.h"
 #include "spdk/nvme_spec.h"
 #include "spdk/nvmf_spec.h"
@@ -155,7 +156,41 @@ struct spdk_nvme_ctrlr_opts {
 	 * command set is used.
 	 */
 	enum spdk_nvme_cc_css command_set;
+
+	/**
+	 * Admin commands timeout in milliseconds (0 = no timeout).
+	 *
+	 * The timeout value is used for admin commands submitted internally
+	 * by the nvme driver during initialization, before the user is able
+	 * to call spdk_nvme_ctrlr_register_timeout_callback(). By default,
+	 * this is set to 120 seconds, users can change it in the probing
+	 * callback.
+	 */
+	uint32_t admin_timeout_ms;
+
+	/**
+	 * It is used for TCP transport.
+	 *
+	 * Set to true, means having header digest for the header in the NVMe/TCP PDU
+	 */
+	bool header_digest;
+
+	/**
+	 * It is used for TCP transport.
+	 *
+	 * Set to true, means having data digest for the data in the NVMe/TCP PDU
+	 */
+	bool data_digest;
 };
+
+/**
+ * Indicate whether a ctrlr handle is associated with a Discovery controller.
+ *
+ * \param ctrlr Opaque handle to NVMe controller.
+ *
+ * \return true if a discovery controller, else false.
+ */
+bool spdk_nvme_ctrlr_is_discovery(struct spdk_nvme_ctrlr *ctrlr);
 
 /**
  * Get the default options for the creation of a specific NVMe controller.
@@ -190,7 +225,15 @@ enum spdk_nvme_transport_type {
 	 * Fibre Channel (FC) Transport
 	 */
 	SPDK_NVME_TRANSPORT_FC = SPDK_NVMF_TRTYPE_FC,
+
+	/**
+	 * TCP Transport
+	 */
+	SPDK_NVME_TRANSPORT_TCP = SPDK_NVMF_TRTYPE_TCP,
 };
+
+/* typedef added for coding style reasons */
+typedef enum spdk_nvme_transport_type spdk_nvme_transport_type_t;
 
 /**
  * NVMe transport identifier.
@@ -2035,6 +2078,53 @@ void spdk_nvme_qpair_remove_cmd_error_injection(struct spdk_nvme_ctrlr *ctrlr,
 		struct spdk_nvme_qpair *qpair,
 		uint8_t opc);
 
+#ifdef SPDK_CONFIG_RDMA
+struct ibv_context;
+struct ibv_pd;
+struct ibv_mr;
+
+/**
+ * RDMA Transport Hooks
+ */
+struct spdk_nvme_rdma_hooks {
+	/**
+	 * \brief Get an InfiniBand Verbs protection domain.
+	 *
+	 * \param trid the transport id
+	 * \param verbs Infiniband verbs context
+	 *
+	 * \return pd of the nvme ctrlr
+	 */
+	struct ibv_pd *(*get_ibv_pd)(const struct spdk_nvme_transport_id *trid,
+				     struct ibv_context *verbs);
+
+	/**
+	 * \brief Get an InfiniBand Verbs memory region for a buffer.
+	 *
+	 * \param pd The protection domain returned from get_ibv_pd
+	 * \param buf Memory buffer for which an rkey should be returned.
+	 * \param size size of buf
+	 *
+	 * \return Infiniband remote key (rkey) for this buf
+	 */
+	uint64_t (*get_rkey)(struct ibv_pd *pd, void *buf, size_t size);
+};
+
+/**
+ * \brief Set the global hooks for the RDMA transport, if necessary.
+ *
+ * This call is optional and must be performed prior to probing for
+ * any devices. By default, the RDMA transport will use the ibverbs
+ * library to create protection domains and register memory. This
+ * is a mechanism to subvert that and use an existing registration.
+ *
+ * This function may only be called one time per process.
+ *
+ * \param hooks for initializing global hooks
+ */
+void spdk_nvme_rdma_init_hooks(struct spdk_nvme_rdma_hooks *hooks);
+
+#endif
 
 #ifdef __cplusplus
 }

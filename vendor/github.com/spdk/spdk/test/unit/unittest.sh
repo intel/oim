@@ -87,7 +87,7 @@ $valgrind $testdir/lib/nvme/nvme_ns_ocssd_cmd.c/nvme_ns_ocssd_cmd_ut
 $valgrind $testdir/lib/nvme/nvme_qpair.c/nvme_qpair_ut
 $valgrind $testdir/lib/nvme/nvme_pcie.c/nvme_pcie_ut
 $valgrind $testdir/lib/nvme/nvme_quirks.c/nvme_quirks_ut
-if grep -q '#define SPDK_CONFIG_RDMA 1' $rootdir/config.h; then
+if grep -q '#define SPDK_CONFIG_RDMA 1' $rootdir/include/spdk/config.h; then
 	$valgrind $testdir/lib/nvme/nvme_rdma.c/nvme_rdma_ut
 fi
 
@@ -104,8 +104,12 @@ $valgrind $testdir/lib/log/log.c/log_ut
 $valgrind $testdir/lib/nvmf/ctrlr.c/ctrlr_ut
 $valgrind $testdir/lib/nvmf/ctrlr_bdev.c/ctrlr_bdev_ut
 $valgrind $testdir/lib/nvmf/ctrlr_discovery.c/ctrlr_discovery_ut
+if grep -q '#define SPDK_CONFIG_RDMA 1' $rootdir/include/spdk/config.h; then
+	$valgrind $testdir/lib/nvmf/rdma.c/rdma_ut
+fi
 $valgrind $testdir/lib/nvmf/request.c/request_ut
 $valgrind $testdir/lib/nvmf/subsystem.c/subsystem_ut
+$valgrind $testdir/lib/nvmf/tcp.c/tcp_ut
 
 $valgrind $testdir/lib/scsi/dev.c/dev_ut
 $valgrind $testdir/lib/scsi/lun.c/lun_ut
@@ -120,6 +124,10 @@ $valgrind $testdir/lib/iscsi/tgt_node.c/tgt_node_ut $testdir/lib/iscsi/tgt_node.
 $valgrind $testdir/lib/iscsi/iscsi.c/iscsi_ut
 $valgrind $testdir/lib/iscsi/init_grp.c/init_grp_ut $testdir/lib/iscsi/init_grp.c/init_grp.conf
 $valgrind $testdir/lib/iscsi/portal_grp.c/portal_grp_ut $testdir/lib/iscsi/portal_grp.c/portal_grp.conf
+
+if grep -q '#define SPDK_CONFIG_REDUCE 1' $rootdir/config.h; then
+	$valgrind $testdir/lib/reduce/reduce.c/reduce_ut
+fi
 
 $valgrind $testdir/lib/thread/thread.c/thread_ut
 

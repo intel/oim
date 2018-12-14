@@ -130,12 +130,12 @@ spdk_bdev_part_free(struct spdk_bdev_part *part)
 }
 
 void
-spdk_bdev_part_base_hotremove(struct spdk_bdev *base_bdev, struct bdev_part_tailq *tailq)
+spdk_bdev_part_base_hotremove(struct spdk_bdev_part_base *part_base, struct bdev_part_tailq *tailq)
 {
 	struct spdk_bdev_part *part, *tmp;
 
 	TAILQ_FOREACH_SAFE(part, tailq, tailq, tmp) {
-		if (part->internal.base->bdev == base_bdev) {
+		if (part->internal.base == part_base) {
 			spdk_bdev_unregister(&part->internal.bdev, NULL, NULL);
 		}
 	}
@@ -307,7 +307,7 @@ struct spdk_bdev_part_base *
 	base->ch_create_cb = ch_create_cb;
 	base->ch_destroy_cb = ch_destroy_cb;
 
-	rc = spdk_bdev_open(bdev, false, remove_cb, bdev, &base->desc);
+	rc = spdk_bdev_open(bdev, false, remove_cb, base, &base->desc);
 	if (rc) {
 		spdk_bdev_part_base_free(base);
 		SPDK_ERRLOG("could not open bdev %s\n", spdk_bdev_get_name(bdev));
@@ -327,7 +327,7 @@ spdk_bdev_part_construct(struct spdk_bdev_part *part, struct spdk_bdev_part_base
 	part->internal.offset_blocks = offset_blocks;
 
 	part->internal.bdev.write_cache = base->bdev->write_cache;
-	part->internal.bdev.need_aligned_buffer = base->bdev->need_aligned_buffer;
+	part->internal.bdev.required_alignment = base->bdev->required_alignment;
 	part->internal.bdev.ctxt = part;
 	part->internal.bdev.module = base->module;
 	part->internal.bdev.fn_table = base->fn_table;

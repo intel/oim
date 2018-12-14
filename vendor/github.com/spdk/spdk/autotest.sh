@@ -14,6 +14,10 @@ fi
 if [ $(uname -s) = Linux ]; then
 	# set core_pattern to a known value to avoid ABRT, systemd-coredump, etc.
 	echo "core" > /proc/sys/kernel/core_pattern
+
+	# make sure nbd (network block device) driver is loaded if it is available
+	# this ensures that when tests need to use nbd, it will be fully initialized
+	modprobe nbd || true
 fi
 
 trap "process_core; autotest_cleanup; exit 1" SIGINT SIGTERM EXIT
@@ -52,19 +56,22 @@ fi
 timing_enter cleanup
 # Remove old domain socket pathname just in case
 rm -f /var/tmp/spdk*.sock
+
+# Load the kernel driver
+./scripts/setup.sh reset
+
+# Let the kernel discover any filesystems or partitions
+sleep 10
+
+# Delete all leftover lvols and gpt partitions
+# Matches both /dev/nvmeXnY on Linux and /dev/nvmeXnsY on BSD
+for dev in $(ls /dev/nvme*n* | grep -v p || true); do
+	dd if=/dev/zero of="$dev" bs=1M count=1
+done
+
+sync
+
 if [ $(uname -s) = Linux ]; then
-	# Load the kernel driver
-	./scripts/setup.sh reset
-
-	# Let the kernel discover any filesystems or partitions
-	sleep 10
-
-	# Delete all partitions on NVMe devices
-	devs=`lsblk -l -o NAME | grep nvme | grep -v p` || true
-	for dev in $devs; do
-		parted -s /dev/$dev mklabel msdos
-	done
-
 	# Load RAM disk driver if available
 	modprobe brd || true
 fi
@@ -196,13 +203,15 @@ if [ $SPDK_TEST_VHOST -eq 1 ]; then
 		run_test suite ./test/vhost/spdk_vhost.sh --integrity-lvol-blk-nightly
 		timing_exit integrity_lvol_blk_nightly
 
-		timing_enter vhost_migration
-		run_test suite ./test/vhost/spdk_vhost.sh --migration
-		timing_exit vhost_migration
-
 		# timing_enter readonly
 		# run_test suite ./test/vhost/spdk_vhost.sh --readonly
 		# timing_exit readonly
+	fi
+
+	if [ $RUN_NIGHTLY_FAILING -eq 1 ]; then
+		timing_enter vhost_migration
+		run_test suite ./test/vhost/spdk_vhost.sh --migration
+		timing_exit vhost_migration
 	fi
 
 	timing_enter integrity_lvol_scsi
@@ -234,10 +243,12 @@ if [ $SPDK_TEST_LVOL -eq 1 ]; then
 fi
 
 if [ $SPDK_TEST_VHOST_INIT -eq 1 ]; then
+	timing_enter vhost_initiator
 	run_test suite ./test/vhost/initiator/blockdev.sh
 	run_test suite ./test/vhost/initiator/json_config.sh
 	run_test suite ./test/spdkcli/virtio.sh
 	report_test_completion "vhost_initiator"
+	timing_exit vhost_initiator
 fi
 
 if [ $SPDK_TEST_PMDK -eq 1 ]; then

@@ -16,16 +16,6 @@ def print_array(a):
     print(" ".join((quote(v) for v in a)))
 
 
-def call_cmd(func):
-    def rpc_cmd(*args, **kwargs):
-        try:
-            func(*args, **kwargs)
-        except JSONRPCException as ex:
-            print(ex.message)
-            exit(1)
-    return rpc_cmd
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='SPDK RPC command line interface')
@@ -41,14 +31,18 @@ if __name__ == "__main__":
                         help='Verbose mode', action='store_true')
     subparsers = parser.add_subparsers(help='RPC methods')
 
-    @call_cmd
     def start_subsystem_init(args):
         rpc.start_subsystem_init(args.client)
 
     p = subparsers.add_parser('start_subsystem_init', help='Start initialization of subsystems')
     p.set_defaults(func=start_subsystem_init)
 
-    @call_cmd
+    def wait_subsystem_init(args):
+        rpc.wait_subsystem_init(args.client)
+
+    p = subparsers.add_parser('wait_subsystem_init', help='Block until subsystems have been initialized')
+    p.set_defaults(func=wait_subsystem_init)
+
     def get_rpc_methods(args):
         print_dict(rpc.get_rpc_methods(args.client,
                                        current=args.current))
@@ -57,7 +51,6 @@ if __name__ == "__main__":
     p.add_argument('-c', '--current', help='Get list of RPC methods only callable in the current state.', action='store_true')
     p.set_defaults(func=get_rpc_methods)
 
-    @call_cmd
     def save_config(args):
         rpc.save_config(args.client,
                         sys.stdout,
@@ -69,14 +62,12 @@ if __name__ == "__main__":
     """, type=int, default=2)
     p.set_defaults(func=save_config)
 
-    @call_cmd
     def load_config(args):
         rpc.load_config(args.client, sys.stdin)
 
     p = subparsers.add_parser('load_config', help="""Configure SPDK subsystems and targets using JSON RPC read from stdin.""")
     p.set_defaults(func=load_config)
 
-    @call_cmd
     def save_subsystem_config(args):
         rpc.save_subsystem_config(args.client,
                                   sys.stdout,
@@ -90,7 +81,6 @@ if __name__ == "__main__":
     p.add_argument('-n', '--name', help='Name of subsystem', required=True)
     p.set_defaults(func=save_subsystem_config)
 
-    @call_cmd
     def load_subsystem_config(args):
         rpc.load_subsystem_config(args.client,
                                   sys.stdin)
@@ -99,7 +89,6 @@ if __name__ == "__main__":
     p.set_defaults(func=load_subsystem_config)
 
     # app
-    @call_cmd
     def kill_instance(args):
         rpc.app.kill_instance(args.client,
                               sig_name=args.sig_name)
@@ -108,7 +97,6 @@ if __name__ == "__main__":
     p.add_argument('sig_name', help='signal will be sent to server.')
     p.set_defaults(func=kill_instance)
 
-    @call_cmd
     def context_switch_monitor(args):
         enabled = None
         if args.enable:
@@ -124,7 +112,6 @@ if __name__ == "__main__":
     p.set_defaults(func=context_switch_monitor)
 
     # bdev
-    @call_cmd
     def set_bdev_options(args):
         rpc.bdev.set_bdev_options(args.client,
                                   bdev_io_pool_size=args.bdev_io_pool_size,
@@ -135,7 +122,6 @@ if __name__ == "__main__":
     p.add_argument('-c', '--bdev-io-cache-size', help='Maximum number of bdev_io structures cached per thread', type=int)
     p.set_defaults(func=set_bdev_options)
 
-    @call_cmd
     def construct_crypto_bdev(args):
         print(rpc.bdev.construct_crypto_bdev(args.client,
                                              base_bdev_name=args.base_bdev_name,
@@ -150,7 +136,6 @@ if __name__ == "__main__":
     p.add_argument('-k', '--key', help="Key")
     p.set_defaults(func=construct_crypto_bdev)
 
-    @call_cmd
     def delete_crypto_bdev(args):
         rpc.bdev.delete_crypto_bdev(args.client,
                                     name=args.name)
@@ -159,7 +144,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='crypto bdev name')
     p.set_defaults(func=delete_crypto_bdev)
 
-    @call_cmd
     def construct_malloc_bdev(args):
         num_blocks = (args.total_size * 1024 * 1024) // args.block_size
         print(rpc.bdev.construct_malloc_bdev(args.client,
@@ -176,7 +160,6 @@ if __name__ == "__main__":
     p.add_argument('block_size', help='Block size for this bdev', type=int)
     p.set_defaults(func=construct_malloc_bdev)
 
-    @call_cmd
     def delete_malloc_bdev(args):
         rpc.bdev.delete_malloc_bdev(args.client,
                                     name=args.name)
@@ -185,7 +168,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='malloc bdev name')
     p.set_defaults(func=delete_malloc_bdev)
 
-    @call_cmd
     def construct_null_bdev(args):
         num_blocks = (args.total_size * 1024 * 1024) // args.block_size
         print(rpc.bdev.construct_null_bdev(args.client,
@@ -203,7 +185,6 @@ if __name__ == "__main__":
     p.add_argument('block_size', help='Block size for this bdev', type=int)
     p.set_defaults(func=construct_null_bdev)
 
-    @call_cmd
     def delete_null_bdev(args):
         rpc.bdev.delete_null_bdev(args.client,
                                   name=args.name)
@@ -212,7 +193,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='null bdev name')
     p.set_defaults(func=delete_null_bdev)
 
-    @call_cmd
     def construct_aio_bdev(args):
         print(rpc.bdev.construct_aio_bdev(args.client,
                                           filename=args.filename,
@@ -226,7 +206,6 @@ if __name__ == "__main__":
     p.add_argument('block_size', help='Block size for this bdev', type=int, nargs='?', default=0)
     p.set_defaults(func=construct_aio_bdev)
 
-    @call_cmd
     def delete_aio_bdev(args):
         rpc.bdev.delete_aio_bdev(args.client,
                                  name=args.name)
@@ -235,7 +214,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='aio bdev name')
     p.set_defaults(func=delete_aio_bdev)
 
-    @call_cmd
     def set_bdev_nvme_options(args):
         rpc.bdev.set_bdev_nvme_options(args.client,
                                        action_on_timeout=args.action_on_timeout,
@@ -255,7 +233,6 @@ if __name__ == "__main__":
                    help='How often the admin queue is polled for asynchronous events', type=int)
     p.set_defaults(func=set_bdev_nvme_options)
 
-    @call_cmd
     def set_bdev_nvme_hotplug(args):
         rpc.bdev.set_bdev_nvme_hotplug(args.client, enable=args.enable, period_us=args.period_us)
 
@@ -267,7 +244,6 @@ if __name__ == "__main__":
                    help='How often the hotplug is processed for insert and remove events', type=int)
     p.set_defaults(func=set_bdev_nvme_hotplug)
 
-    @call_cmd
     def construct_nvme_bdev(args):
         print_array(rpc.bdev.construct_nvme_bdev(args.client,
                                                  name=args.name,
@@ -278,8 +254,8 @@ if __name__ == "__main__":
                                                  subnqn=args.subnqn))
 
     p = subparsers.add_parser('construct_nvme_bdev',
-                              help='Add bdev with nvme backend')
-    p.add_argument('-b', '--name', help="Name of the bdev", required=True)
+                              help='Add bdevs with nvme backend')
+    p.add_argument('-b', '--name', help="Name of the NVMe controller, prefix for each bdev name", required=True)
     p.add_argument('-t', '--trtype',
                    help='NVMe-oF target trtype: e.g., rdma, pcie', required=True)
     p.add_argument('-a', '--traddr',
@@ -291,7 +267,6 @@ if __name__ == "__main__":
     p.add_argument('-n', '--subnqn', help='NVMe-oF target subnqn')
     p.set_defaults(func=construct_nvme_bdev)
 
-    @call_cmd
     def get_nvme_controllers(args):
         print_dict(rpc.nvme.get_nvme_controllers(args.client,
                                                  name=args.name))
@@ -301,7 +276,6 @@ if __name__ == "__main__":
     p.add_argument('-n', '--name', help="Name of the NVMe controller. Example: Nvme0", required=False)
     p.set_defaults(func=get_nvme_controllers)
 
-    @call_cmd
     def delete_nvme_controller(args):
         rpc.bdev.delete_nvme_controller(args.client,
                                         name=args.name)
@@ -311,7 +285,6 @@ if __name__ == "__main__":
     p.add_argument('name', help="Name of the controller")
     p.set_defaults(func=delete_nvme_controller)
 
-    @call_cmd
     def construct_rbd_bdev(args):
         config = None
         if args.config:
@@ -340,7 +313,6 @@ if __name__ == "__main__":
     p.add_argument('block_size', help='rbd block size', type=int)
     p.set_defaults(func=construct_rbd_bdev)
 
-    @call_cmd
     def delete_rbd_bdev(args):
         rpc.bdev.delete_rbd_bdev(args.client,
                                  name=args.name)
@@ -349,7 +321,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='rbd bdev name')
     p.set_defaults(func=delete_rbd_bdev)
 
-    @call_cmd
     def construct_error_bdev(args):
         print(rpc.bdev.construct_error_bdev(args.client,
                                             base_name=args.base_name))
@@ -359,7 +330,6 @@ if __name__ == "__main__":
     p.add_argument('base_name', help='base bdev name')
     p.set_defaults(func=construct_error_bdev)
 
-    @call_cmd
     def delete_error_bdev(args):
         rpc.bdev.delete_error_bdev(args.client,
                                    name=args.name)
@@ -368,7 +338,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='error bdev name')
     p.set_defaults(func=delete_error_bdev)
 
-    @call_cmd
     def construct_iscsi_bdev(args):
         print(rpc.bdev.construct_iscsi_bdev(args.client,
                                             name=args.name,
@@ -382,7 +351,6 @@ if __name__ == "__main__":
     p.add_argument('--url', help="iSCSI Lun URL", required=True)
     p.set_defaults(func=construct_iscsi_bdev)
 
-    @call_cmd
     def delete_iscsi_bdev(args):
         rpc.bdev.delete_iscsi_bdev(args.client,
                                    name=args.name)
@@ -391,7 +359,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='iSCSI bdev name')
     p.set_defaults(func=delete_iscsi_bdev)
 
-    @call_cmd
     def construct_pmem_bdev(args):
         print(rpc.bdev.construct_pmem_bdev(args.client,
                                            pmem_file=args.pmem_file,
@@ -402,7 +369,6 @@ if __name__ == "__main__":
     p.add_argument('-n', '--name', help='Block device name', required=True)
     p.set_defaults(func=construct_pmem_bdev)
 
-    @call_cmd
     def delete_pmem_bdev(args):
         rpc.bdev.delete_pmem_bdev(args.client,
                                   name=args.name)
@@ -411,19 +377,17 @@ if __name__ == "__main__":
     p.add_argument('name', help='pmem bdev name')
     p.set_defaults(func=delete_pmem_bdev)
 
-    @call_cmd
     def construct_passthru_bdev(args):
         print(rpc.bdev.construct_passthru_bdev(args.client,
                                                base_bdev_name=args.base_bdev_name,
-                                               passthru_bdev_name=args.passthru_bdev_name))
+                                               name=args.name))
 
     p = subparsers.add_parser('construct_passthru_bdev',
                               help='Add a pass through bdev on existing bdev')
     p.add_argument('-b', '--base-bdev-name', help="Name of the existing bdev", required=True)
-    p.add_argument('-p', '--passthru-bdev-name', help="Name of the pass through bdev", required=True)
+    p.add_argument('-p', '--name', help="Name of the pass through bdev", required=True)
     p.set_defaults(func=construct_passthru_bdev)
 
-    @call_cmd
     def delete_passthru_bdev(args):
         rpc.bdev.delete_passthru_bdev(args.client,
                                       name=args.name)
@@ -432,7 +396,6 @@ if __name__ == "__main__":
     p.add_argument('name', help='pass through bdev name')
     p.set_defaults(func=delete_passthru_bdev)
 
-    @call_cmd
     def get_bdevs(args):
         print_dict(rpc.bdev.get_bdevs(args.client,
                                       name=args.name))
@@ -442,7 +405,6 @@ if __name__ == "__main__":
     p.add_argument('-b', '--name', help="Name of the Blockdev. Example: Nvme0n1", required=False)
     p.set_defaults(func=get_bdevs)
 
-    @call_cmd
     def get_bdevs_iostat(args):
         print_dict(rpc.bdev.get_bdevs_iostat(args.client,
                                              name=args.name))
@@ -452,7 +414,6 @@ if __name__ == "__main__":
     p.add_argument('-b', '--name', help="Name of the Blockdev. Example: Nvme0n1", required=False)
     p.set_defaults(func=get_bdevs_iostat)
 
-    @call_cmd
     def delete_bdev(args):
         rpc.bdev.delete_bdev(args.client,
                              bdev_name=args.bdev_name)
@@ -462,7 +423,6 @@ if __name__ == "__main__":
         'bdev_name', help='Blockdev name to be deleted. Example: Malloc0.')
     p.set_defaults(func=delete_bdev)
 
-    @call_cmd
     def set_bdev_qd_sampling_period(args):
         rpc.bdev.set_bdev_qd_sampling_period(args.client,
                                              name=args.name,
@@ -475,7 +435,6 @@ if __name__ == "__main__":
                    type=int)
     p.set_defaults(func=set_bdev_qd_sampling_period)
 
-    @call_cmd
     def set_bdev_qos_limit(args):
         rpc.bdev.set_bdev_qos_limit(args.client,
                                     name=args.name,
@@ -492,7 +451,6 @@ if __name__ == "__main__":
                    type=int, required=False)
     p.set_defaults(func=set_bdev_qos_limit)
 
-    @call_cmd
     def bdev_inject_error(args):
         rpc.bdev.bdev_inject_error(args.client,
                                    name=args.name,
@@ -508,7 +466,6 @@ if __name__ == "__main__":
         '-n', '--num', help='the number of commands you want to fail', type=int, default=1)
     p.set_defaults(func=bdev_inject_error)
 
-    @call_cmd
     def apply_firmware(args):
         print_dict(rpc.bdev.apply_firmware(args.client,
                                            bdev_name=args.bdev_name,
@@ -520,7 +477,6 @@ if __name__ == "__main__":
     p.set_defaults(func=apply_firmware)
 
     # iSCSI
-    @call_cmd
     def set_iscsi_options(args):
         rpc.iscsi.set_iscsi_options(
             args.client,
@@ -567,7 +523,6 @@ if __name__ == "__main__":
     p.add_argument('-u', '--min-connections-per-core', help='Allocation unit of connections per core', type=int)
     p.set_defaults(func=set_iscsi_options)
 
-    @call_cmd
     def set_iscsi_discovery_auth(args):
         rpc.iscsi.set_iscsi_discovery_auth(
             args.client,
@@ -600,7 +555,6 @@ if __name__ == "__main__":
 Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 msecret:ms2'""", required=False)
     p.set_defaults(func=add_iscsi_auth_group)
 
-    @call_cmd
     def delete_iscsi_auth_group(args):
         rpc.iscsi.delete_iscsi_auth_group(args.client, tag=args.tag)
 
@@ -608,7 +562,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('tag', help='Authentication group tag', type=int)
     p.set_defaults(func=delete_iscsi_auth_group)
 
-    @call_cmd
     def add_secret_to_iscsi_auth_group(args):
         rpc.iscsi.add_secret_to_iscsi_auth_group(
             args.client,
@@ -626,7 +579,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-r', '--msecret', help='Secret for mutual CHAP authentication')
     p.set_defaults(func=add_secret_to_iscsi_auth_group)
 
-    @call_cmd
     def delete_secret_from_iscsi_auth_group(args):
         rpc.iscsi.delete_secret_from_iscsi_auth_group(args.client, tag=args.tag, user=args.user)
 
@@ -635,7 +587,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-u', '--user', help='User name for one-way CHAP authentication', required=True)
     p.set_defaults(func=delete_secret_from_iscsi_auth_group)
 
-    @call_cmd
     def get_iscsi_auth_groups(args):
         print_dict(rpc.iscsi.get_iscsi_auth_groups(args.client))
 
@@ -643,7 +594,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                               help='Display current authentication group configuration')
     p.set_defaults(func=get_iscsi_auth_groups)
 
-    @call_cmd
     def get_portal_groups(args):
         print_dict(rpc.iscsi.get_portal_groups(args.client))
 
@@ -651,7 +601,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
         'get_portal_groups', help='Display current portal group configuration')
     p.set_defaults(func=get_portal_groups)
 
-    @call_cmd
     def get_initiator_groups(args):
         print_dict(rpc.iscsi.get_initiator_groups(args.client))
 
@@ -659,14 +608,12 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                               help='Display current initiator group configuration')
     p.set_defaults(func=get_initiator_groups)
 
-    @call_cmd
     def get_target_nodes(args):
         print_dict(rpc.iscsi.get_target_nodes(args.client))
 
     p = subparsers.add_parser('get_target_nodes', help='Display target nodes')
     p.set_defaults(func=get_target_nodes)
 
-    @call_cmd
     def construct_target_node(args):
         luns = []
         for u in args.bdev_name_id_pairs.strip().split(" "):
@@ -722,7 +669,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    help='Data Digest should be required for this target node.', action='store_true')
     p.set_defaults(func=construct_target_node)
 
-    @call_cmd
     def target_node_add_lun(args):
         rpc.iscsi.target_node_add_lun(
             args.client,
@@ -738,7 +684,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     *** If LUN ID is omitted or -1, the lowest free one is assigned ***""", type=int, required=False)
     p.set_defaults(func=target_node_add_lun)
 
-    @call_cmd
     def set_iscsi_target_node_auth(args):
         rpc.iscsi.set_iscsi_target_node_auth(
             args.client,
@@ -760,7 +705,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    action='store_true')
     p.set_defaults(func=set_iscsi_target_node_auth)
 
-    @call_cmd
     def add_pg_ig_maps(args):
         pg_ig_maps = []
         for u in args.pg_ig_mappings.strip().split(" "):
@@ -780,7 +724,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     *** The Portal/Initiator Groups must be precreated ***""")
     p.set_defaults(func=add_pg_ig_maps)
 
-    @call_cmd
     def delete_pg_ig_maps(args):
         pg_ig_maps = []
         for u in args.pg_ig_mappings.strip().split(" "):
@@ -798,7 +741,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     *** The Portal/Initiator Groups must be precreated ***""")
     p.set_defaults(func=delete_pg_ig_maps)
 
-    @call_cmd
     def add_portal_group(args):
         portals = []
         for p in args.portal_list:
@@ -824,7 +766,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     Example: '192.168.100.100:3260' '192.168.100.100:3261' '192.168.100.100:3262@0x1""")
     p.set_defaults(func=add_portal_group)
 
-    @call_cmd
     def add_initiator_group(args):
         initiators = []
         netmasks = []
@@ -848,7 +789,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     Example: '255.255.0.0 255.248.0.0' etc""")
     p.set_defaults(func=add_initiator_group)
 
-    @call_cmd
     def add_initiators_to_initiator_group(args):
         initiators = None
         netmasks = None
@@ -876,7 +816,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     This parameter can be omitted.  Example: '255.255.0.0 255.248.0.0' etc""", required=False)
     p.set_defaults(func=add_initiators_to_initiator_group)
 
-    @call_cmd
     def delete_initiators_from_initiator_group(args):
         initiators = None
         netmasks = None
@@ -904,7 +843,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     This parameter can be omitted.  Example: '255.255.0.0 255.248.0.0' etc""", required=False)
     p.set_defaults(func=delete_initiators_from_initiator_group)
 
-    @call_cmd
     def delete_target_node(args):
         rpc.iscsi.delete_target_node(
             args.client, target_node_name=args.target_node_name)
@@ -915,7 +853,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    help='Target node name to be deleted. Example: iqn.2016-06.io.spdk:disk1.')
     p.set_defaults(func=delete_target_node)
 
-    @call_cmd
     def delete_portal_group(args):
         rpc.iscsi.delete_portal_group(args.client, tag=args.tag)
 
@@ -925,7 +862,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
         'tag', help='Portal group tag (unique, integer > 0)', type=int)
     p.set_defaults(func=delete_portal_group)
 
-    @call_cmd
     def delete_initiator_group(args):
         rpc.iscsi.delete_initiator_group(args.client, tag=args.tag)
 
@@ -935,7 +871,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
         'tag', help='Initiator group tag (unique, integer > 0)', type=int)
     p.set_defaults(func=delete_initiator_group)
 
-    @call_cmd
     def get_iscsi_connections(args):
         print_dict(rpc.iscsi.get_iscsi_connections(args.client))
 
@@ -943,14 +878,12 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                               help='Display iSCSI connections')
     p.set_defaults(func=get_iscsi_connections)
 
-    @call_cmd
     def get_iscsi_global_params(args):
         print_dict(rpc.iscsi.get_iscsi_global_params(args.client))
 
     p = subparsers.add_parser('get_iscsi_global_params', help='Display iSCSI global parameters')
     p.set_defaults(func=get_iscsi_global_params)
 
-    @call_cmd
     def get_scsi_devices(args):
         print_dict(rpc.iscsi.get_scsi_devices(args.client))
 
@@ -958,8 +891,16 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=get_scsi_devices)
 
     # log
-    @call_cmd
+    def set_log_flag(args):
+        rpc.log.set_log_flag(args.client, flag=args.flag)
+
+    p = subparsers.add_parser('set_log_flag', help='set log flag')
+    p.add_argument(
+        'flag', help='log flag we want to set. (for example "nvme").')
+    p.set_defaults(func=set_log_flag)
+
     def set_trace_flag(args):
+        print("set_trace_flag is deprecated - use set_log_flag instead")
         rpc.log.set_trace_flag(args.client, flag=args.flag)
 
     p = subparsers.add_parser('set_trace_flag', help='set trace flag')
@@ -967,8 +908,16 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
         'flag', help='trace mask we want to set. (for example "nvme").')
     p.set_defaults(func=set_trace_flag)
 
-    @call_cmd
+    def clear_log_flag(args):
+        rpc.log.clear_log_flag(args.client, flag=args.flag)
+
+    p = subparsers.add_parser('clear_log_flag', help='clear log flag')
+    p.add_argument(
+        'flag', help='log flag we want to clear. (for example "nvme").')
+    p.set_defaults(func=clear_log_flag)
+
     def clear_trace_flag(args):
+        print("clear_trace_flag is deprecated - use clear_log_flag instead")
         rpc.log.clear_trace_flag(args.client, flag=args.flag)
 
     p = subparsers.add_parser('clear_trace_flag', help='clear trace flag')
@@ -976,14 +925,19 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
         'flag', help='trace mask we want to clear. (for example "nvme").')
     p.set_defaults(func=clear_trace_flag)
 
-    @call_cmd
+    def get_log_flags(args):
+        print_dict(rpc.log.get_log_flags(args.client))
+
+    p = subparsers.add_parser('get_log_flags', help='get log flags')
+    p.set_defaults(func=get_log_flags)
+
     def get_trace_flags(args):
+        print("get_trace_flags is deprecated - use get_log_flags instead")
         print_dict(rpc.log.get_trace_flags(args.client))
 
     p = subparsers.add_parser('get_trace_flags', help='get trace flags')
     p.set_defaults(func=get_trace_flags)
 
-    @call_cmd
     def set_log_level(args):
         rpc.log.set_log_level(args.client, level=args.level)
 
@@ -991,14 +945,12 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('level', help='log level we want to set. (for example "DEBUG").')
     p.set_defaults(func=set_log_level)
 
-    @call_cmd
     def get_log_level(args):
         print_dict(rpc.log.get_log_level(args.client))
 
     p = subparsers.add_parser('get_log_level', help='get log level')
     p.set_defaults(func=get_log_level)
 
-    @call_cmd
     def set_log_print_level(args):
         rpc.log.set_log_print_level(args.client, level=args.level)
 
@@ -1006,7 +958,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('level', help='log print level we want to set. (for example "DEBUG").')
     p.set_defaults(func=set_log_print_level)
 
-    @call_cmd
     def get_log_print_level(args):
         print_dict(rpc.log.get_log_print_level(args.client))
 
@@ -1014,7 +965,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=get_log_print_level)
 
     # lvol
-    @call_cmd
     def construct_lvol_store(args):
         print(rpc.lvol.construct_lvol_store(args.client,
                                             bdev_name=args.bdev_name,
@@ -1027,7 +977,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-c', '--cluster-sz', help='size of cluster (in bytes)', type=int, required=False)
     p.set_defaults(func=construct_lvol_store)
 
-    @call_cmd
     def rename_lvol_store(args):
         rpc.lvol.rename_lvol_store(args.client,
                                    old_name=args.old_name,
@@ -1038,7 +987,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('new_name', help='new name')
     p.set_defaults(func=rename_lvol_store)
 
-    @call_cmd
     def construct_lvol_bdev(args):
         print(rpc.lvol.construct_lvol_bdev(args.client,
                                            lvol_name=args.lvol_name,
@@ -1055,7 +1003,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('size', help='size in MiB for this bdev', type=int)
     p.set_defaults(func=construct_lvol_bdev)
 
-    @call_cmd
     def snapshot_lvol_bdev(args):
         print(rpc.lvol.snapshot_lvol_bdev(args.client,
                                           lvol_name=args.lvol_name,
@@ -1066,7 +1013,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('snapshot_name', help='lvol snapshot name')
     p.set_defaults(func=snapshot_lvol_bdev)
 
-    @call_cmd
     def clone_lvol_bdev(args):
         print(rpc.lvol.clone_lvol_bdev(args.client,
                                        snapshot_name=args.snapshot_name,
@@ -1077,7 +1023,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('clone_name', help='lvol clone name')
     p.set_defaults(func=clone_lvol_bdev)
 
-    @call_cmd
     def rename_lvol_bdev(args):
         rpc.lvol.rename_lvol_bdev(args.client,
                                   old_name=args.old_name,
@@ -1088,7 +1033,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('new_name', help='new lvol name')
     p.set_defaults(func=rename_lvol_bdev)
 
-    @call_cmd
     def inflate_lvol_bdev(args):
         rpc.lvol.inflate_lvol_bdev(args.client,
                                    name=args.name)
@@ -1097,7 +1041,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='lvol bdev name')
     p.set_defaults(func=inflate_lvol_bdev)
 
-    @call_cmd
     def decouple_parent_lvol_bdev(args):
         rpc.lvol.decouple_parent_lvol_bdev(args.client,
                                            name=args.name)
@@ -1106,7 +1049,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='lvol bdev name')
     p.set_defaults(func=decouple_parent_lvol_bdev)
 
-    @call_cmd
     def resize_lvol_bdev(args):
         rpc.lvol.resize_lvol_bdev(args.client,
                                   name=args.name,
@@ -1117,7 +1059,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('size', help='new size in MiB for this bdev', type=int)
     p.set_defaults(func=resize_lvol_bdev)
 
-    @call_cmd
     def destroy_lvol_bdev(args):
         rpc.lvol.destroy_lvol_bdev(args.client,
                                    name=args.name)
@@ -1126,7 +1067,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='lvol bdev name')
     p.set_defaults(func=destroy_lvol_bdev)
 
-    @call_cmd
     def destroy_lvol_store(args):
         rpc.lvol.destroy_lvol_store(args.client,
                                     uuid=args.uuid,
@@ -1137,7 +1077,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-l', '--lvs-name', help='lvol store name', required=False)
     p.set_defaults(func=destroy_lvol_store)
 
-    @call_cmd
     def get_lvol_stores(args):
         print_dict(rpc.lvol.get_lvol_stores(args.client,
                                             uuid=args.uuid,
@@ -1148,7 +1087,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-l', '--lvs-name', help='lvol store name', required=False)
     p.set_defaults(func=get_lvol_stores)
 
-    @call_cmd
     def get_raid_bdevs(args):
         print_array(rpc.bdev.get_raid_bdevs(args.client,
                                             category=args.category))
@@ -1161,7 +1099,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('category', help='all or online or configuring or offline')
     p.set_defaults(func=get_raid_bdevs)
 
-    @call_cmd
     def construct_raid_bdev(args):
         base_bdevs = []
         for u in args.base_bdevs.strip().split(" "):
@@ -1179,7 +1116,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-b', '--base-bdevs', help='base bdevs name, whitespace separated list in quotes', required=True)
     p.set_defaults(func=construct_raid_bdev)
 
-    @call_cmd
     def destroy_raid_bdev(args):
         rpc.bdev.destroy_raid_bdev(args.client,
                                    name=args.name)
@@ -1188,7 +1124,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=destroy_raid_bdev)
 
     # split
-    @call_cmd
     def construct_split_vbdev(args):
         print_array(rpc.bdev.construct_split_vbdev(args.client,
                                                    base_bdev=args.base_bdev,
@@ -1204,7 +1139,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     exceed the base bdev size.""", type=int)
     p.set_defaults(func=construct_split_vbdev)
 
-    @call_cmd
     def destruct_split_vbdev(args):
         rpc.bdev.destruct_split_vbdev(args.client,
                                       base_bdev=args.base_bdev)
@@ -1214,7 +1148,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=destruct_split_vbdev)
 
     # nbd
-    @call_cmd
     def start_nbd_disk(args):
         print(rpc.nbd.start_nbd_disk(args.client,
                                      bdev_name=args.bdev_name,
@@ -1225,7 +1158,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('nbd_device', help='Nbd device name to be assigned. Example: /dev/nbd0.')
     p.set_defaults(func=start_nbd_disk)
 
-    @call_cmd
     def stop_nbd_disk(args):
         rpc.nbd.stop_nbd_disk(args.client,
                               nbd_device=args.nbd_device)
@@ -1234,7 +1166,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('nbd_device', help='Nbd device name to be stopped. Example: /dev/nbd0.')
     p.set_defaults(func=stop_nbd_disk)
 
-    @call_cmd
     def get_nbd_disks(args):
         print_dict(rpc.nbd.get_nbd_disks(args.client,
                                          nbd_device=args.nbd_device))
@@ -1244,7 +1175,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=get_nbd_disks)
 
     # net
-    @call_cmd
     def add_ip_address(args):
         rpc.net.add_ip_address(args.client, ifc_index=args.ifc_index, ip_addr=args.ip_addr)
 
@@ -1253,7 +1183,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('ip_addr', help='ip address will be added.')
     p.set_defaults(func=add_ip_address)
 
-    @call_cmd
     def delete_ip_address(args):
         rpc.net.delete_ip_address(args.client, ifc_index=args.ifc_index, ip_addr=args.ip_addr)
 
@@ -1262,7 +1191,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('ip_addr', help='ip address will be deleted.')
     p.set_defaults(func=delete_ip_address)
 
-    @call_cmd
     def get_interfaces(args):
         print_dict(rpc.net.get_interfaces(args.client))
 
@@ -1271,7 +1199,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=get_interfaces)
 
     # NVMe-oF
-    @call_cmd
     def set_nvmf_target_options(args):
         rpc.nvmf.set_nvmf_target_options(args.client,
                                          max_queue_depth=args.max_queue_depth,
@@ -1290,7 +1217,14 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-u', '--io-unit-size', help='I/O unit size (bytes)', type=int)
     p.set_defaults(func=set_nvmf_target_options)
 
-    @call_cmd
+    def set_nvmf_target_max_subsystems(args):
+        rpc.nvmf.set_nvmf_target_max_subsystems(args.client,
+                                                max_subsystems=args.max_subsystems)
+
+    p = subparsers.add_parser('set_nvmf_target_max_subsystems', help='Set the maximum number of NVMf target subsystems')
+    p.add_argument('-x', '--max-subsystems', help='Max number of NVMf subsystems', type=int, required=True)
+    p.set_defaults(func=set_nvmf_target_max_subsystems)
+
     def set_nvmf_target_config(args):
         rpc.nvmf.set_nvmf_target_config(args.client,
                                         acceptor_poll_rate=args.acceptor_poll_rate,
@@ -1304,7 +1238,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     robin manner""")
     p.set_defaults(func=set_nvmf_target_config)
 
-    @call_cmd
     def nvmf_create_transport(args):
         rpc.nvmf.nvmf_create_transport(args.client,
                                        trtype=args.trtype,
@@ -1325,7 +1258,13 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-a', '--max-aq-depth', help='Max number of admin cmds per AQ', type=int)
     p.set_defaults(func=nvmf_create_transport)
 
-    @call_cmd
+    def get_nvmf_transports(args):
+        print_dict(rpc.nvmf.get_nvmf_transports(args.client))
+
+    p = subparsers.add_parser('get_nvmf_transports',
+                              help='Display nvmf transports')
+    p.set_defaults(func=get_nvmf_transports)
+
     def get_nvmf_subsystems(args):
         print_dict(rpc.nvmf.get_nvmf_subsystems(args.client))
 
@@ -1333,7 +1272,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                               help='Display nvmf subsystems')
     p.set_defaults(func=get_nvmf_subsystems)
 
-    @call_cmd
     def construct_nvmf_subsystem(args):
         listen_addresses = None
         hosts = None
@@ -1395,7 +1333,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    type=int, default=0)
     p.set_defaults(func=construct_nvmf_subsystem)
 
-    @call_cmd
     def nvmf_subsystem_create(args):
         rpc.nvmf.nvmf_subsystem_create(args.client,
                                        nqn=args.nqn,
@@ -1413,7 +1350,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    type=int, default=0)
     p.set_defaults(func=nvmf_subsystem_create)
 
-    @call_cmd
     def delete_nvmf_subsystem(args):
         rpc.nvmf.delete_nvmf_subsystem(args.client,
                                        nqn=args.subsystem_nqn)
@@ -1424,7 +1360,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                    help='subsystem nqn to be deleted. Example: nqn.2016-06.io.spdk:cnode1.')
     p.set_defaults(func=delete_nvmf_subsystem)
 
-    @call_cmd
     def nvmf_subsystem_add_listener(args):
         rpc.nvmf.nvmf_subsystem_add_listener(args.client,
                                              nqn=args.nqn,
@@ -1441,7 +1376,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-s', '--trsvcid', help='NVMe-oF transport service id: e.g., a port number')
     p.set_defaults(func=nvmf_subsystem_add_listener)
 
-    @call_cmd
     def nvmf_subsystem_remove_listener(args):
         rpc.nvmf.nvmf_subsystem_remove_listener(args.client,
                                                 nqn=args.nqn,
@@ -1458,7 +1392,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-s', '--trsvcid', help='NVMe-oF transport service id: e.g., a port number')
     p.set_defaults(func=nvmf_subsystem_remove_listener)
 
-    @call_cmd
     def nvmf_subsystem_add_ns(args):
         rpc.nvmf.nvmf_subsystem_add_ns(args.client,
                                        nqn=args.nqn,
@@ -1477,7 +1410,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-u', '--uuid', help='Namespace UUID (optional)')
     p.set_defaults(func=nvmf_subsystem_add_ns)
 
-    @call_cmd
     def nvmf_subsystem_remove_ns(args):
         rpc.nvmf.nvmf_subsystem_remove_ns(args.client,
                                           nqn=args.nqn,
@@ -1488,7 +1420,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('nsid', help='The requested NSID', type=int)
     p.set_defaults(func=nvmf_subsystem_remove_ns)
 
-    @call_cmd
     def nvmf_subsystem_add_host(args):
         rpc.nvmf.nvmf_subsystem_add_host(args.client,
                                          nqn=args.nqn,
@@ -1499,7 +1430,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('host', help='Host NQN to allow')
     p.set_defaults(func=nvmf_subsystem_add_host)
 
-    @call_cmd
     def nvmf_subsystem_remove_host(args):
         rpc.nvmf.nvmf_subsystem_remove_host(args.client,
                                             nqn=args.nqn,
@@ -1510,7 +1440,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('host', help='Host NQN to remove')
     p.set_defaults(func=nvmf_subsystem_remove_host)
 
-    @call_cmd
     def nvmf_subsystem_allow_any_host(args):
         rpc.nvmf.nvmf_subsystem_allow_any_host(args.client,
                                                nqn=args.nqn,
@@ -1523,7 +1452,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=nvmf_subsystem_allow_any_host)
 
     # pmem
-    @call_cmd
     def create_pmem_pool(args):
         num_blocks = int((args.total_size * 1024 * 1024) / args.block_size)
         rpc.pmem.create_pmem_pool(args.client,
@@ -1537,7 +1465,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('block_size', help='Block size for this pmem pool', type=int)
     p.set_defaults(func=create_pmem_pool)
 
-    @call_cmd
     def pmem_pool_info(args):
         print_dict(rpc.pmem.pmem_pool_info(args.client,
                                            pmem_file=args.pmem_file))
@@ -1546,7 +1473,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('pmem_file', help='Path to pmemblk pool file')
     p.set_defaults(func=pmem_pool_info)
 
-    @call_cmd
     def delete_pmem_pool(args):
         rpc.pmem.delete_pmem_pool(args.client,
                                   pmem_file=args.pmem_file)
@@ -1556,7 +1482,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=delete_pmem_pool)
 
     # subsystem
-    @call_cmd
     def get_subsystems(args):
         print_dict(rpc.subsystem.get_subsystems(args.client))
 
@@ -1564,7 +1489,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     entry contain (unsorted) array of subsystems it depends on.""")
     p.set_defaults(func=get_subsystems)
 
-    @call_cmd
     def get_subsystem_config(args):
         print_dict(rpc.subsystem.get_subsystem_config(args.client, args.name))
 
@@ -1573,7 +1497,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=get_subsystem_config)
 
     # vhost
-    @call_cmd
     def set_vhost_controller_coalescing(args):
         rpc.vhost.set_vhost_controller_coalescing(args.client,
                                                   ctrlr=args.ctrlr,
@@ -1586,7 +1509,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('iops_threshold', help='IOPS threshold when coalescing is enabled', type=int)
     p.set_defaults(func=set_vhost_controller_coalescing)
 
-    @call_cmd
     def construct_vhost_scsi_controller(args):
         rpc.vhost.construct_vhost_scsi_controller(args.client,
                                                   ctrlr=args.ctrlr,
@@ -1598,7 +1520,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--cpumask', help='cpu mask for this controller')
     p.set_defaults(func=construct_vhost_scsi_controller)
 
-    @call_cmd
     def add_vhost_scsi_lun(args):
         rpc.vhost.add_vhost_scsi_lun(args.client,
                                      ctrlr=args.ctrlr,
@@ -1612,7 +1533,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('bdev_name', help='bdev name')
     p.set_defaults(func=add_vhost_scsi_lun)
 
-    @call_cmd
     def remove_vhost_scsi_target(args):
         rpc.vhost.remove_vhost_scsi_target(args.client,
                                            ctrlr=args.ctrlr,
@@ -1623,7 +1543,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('scsi_target_num', help='scsi_target_num', type=int)
     p.set_defaults(func=remove_vhost_scsi_target)
 
-    @call_cmd
     def construct_vhost_blk_controller(args):
         rpc.vhost.construct_vhost_blk_controller(args.client,
                                                  ctrlr=args.ctrlr,
@@ -1638,7 +1557,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument("-r", "--readonly", action='store_true', help='Set controller as read-only')
     p.set_defaults(func=construct_vhost_blk_controller)
 
-    @call_cmd
     def construct_vhost_nvme_controller(args):
         rpc.vhost.construct_vhost_nvme_controller(args.client,
                                                   ctrlr=args.ctrlr,
@@ -1651,7 +1569,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--cpumask', help='cpu mask for this controller')
     p.set_defaults(func=construct_vhost_nvme_controller)
 
-    @call_cmd
     def add_vhost_nvme_ns(args):
         rpc.vhost.add_vhost_nvme_ns(args.client,
                                     ctrlr=args.ctrlr,
@@ -1662,7 +1579,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('bdev_name', help='block device name for a new Namespace')
     p.set_defaults(func=add_vhost_nvme_ns)
 
-    @call_cmd
     def get_vhost_controllers(args):
         print_dict(rpc.vhost.get_vhost_controllers(args.client, args.name))
 
@@ -1670,7 +1586,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-n', '--name', help="Name of vhost controller", required=False)
     p.set_defaults(func=get_vhost_controllers)
 
-    @call_cmd
     def remove_vhost_controller(args):
         rpc.vhost.remove_vhost_controller(args.client,
                                           ctrlr=args.ctrlr)
@@ -1679,7 +1594,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('ctrlr', help='controller name')
     p.set_defaults(func=remove_vhost_controller)
 
-    @call_cmd
     def construct_virtio_dev(args):
         print_array(rpc.vhost.construct_virtio_dev(args.client,
                                                    name=args.name,
@@ -1703,7 +1617,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--vq-size', help='Size of each queue', type=int)
     p.set_defaults(func=construct_virtio_dev)
 
-    @call_cmd
     def construct_virtio_user_scsi_bdev(args):
         print_array(rpc.vhost.construct_virtio_user_scsi_bdev(args.client,
                                                               path=args.path,
@@ -1721,7 +1634,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--vq-size', help='Size of each queue', type=int)
     p.set_defaults(func=construct_virtio_user_scsi_bdev)
 
-    @call_cmd
     def construct_virtio_pci_scsi_bdev(args):
         print_array(rpc.vhost.construct_virtio_pci_scsi_bdev(args.client,
                                                              pci_address=args.pci_address,
@@ -1735,14 +1647,12 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     It will be inhereted by all created bdevs, which are named n the following format: <name>t<target_id>""")
     p.set_defaults(func=construct_virtio_pci_scsi_bdev)
 
-    @call_cmd
     def get_virtio_scsi_devs(args):
         print_dict(rpc.vhost.get_virtio_scsi_devs(args.client))
 
     p = subparsers.add_parser('get_virtio_scsi_devs', help='List all Virtio-SCSI devices.')
     p.set_defaults(func=get_virtio_scsi_devs)
 
-    @call_cmd
     def remove_virtio_scsi_bdev(args):
         rpc.vhost.remove_virtio_scsi_bdev(args.client,
                                           name=args.name)
@@ -1752,7 +1662,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='Virtio device name. E.g. VirtioUser0')
     p.set_defaults(func=remove_virtio_scsi_bdev)
 
-    @call_cmd
     def remove_virtio_bdev(args):
         rpc.vhost.remove_virtio_bdev(args.client,
                                      name=args.name)
@@ -1762,7 +1671,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='Virtio device name. E.g. VirtioUser0')
     p.set_defaults(func=remove_virtio_bdev)
 
-    @call_cmd
     def construct_virtio_user_blk_bdev(args):
         print(rpc.vhost.construct_virtio_user_blk_bdev(args.client,
                                                        path=args.path,
@@ -1777,7 +1685,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--vq-size', help='Size of each queue', type=int)
     p.set_defaults(func=construct_virtio_user_blk_bdev)
 
-    @call_cmd
     def construct_virtio_pci_blk_bdev(args):
         print(rpc.vhost.construct_virtio_pci_blk_bdev(args.client,
                                                       pci_address=args.pci_address,
@@ -1790,7 +1697,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=construct_virtio_pci_blk_bdev)
 
     # ioat
-    @call_cmd
     def scan_ioat_copy_engine(args):
         pci_whitelist = []
         if args.pci_whitelist:
@@ -1804,7 +1710,6 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=scan_ioat_copy_engine)
 
     # send_nvme_cmd
-    @call_cmd
     def send_nvme_cmd(args):
         print_dict(rpc.nvme.send_nvme_cmd(args.client,
                                           name=args.nvme_name,
@@ -1834,7 +1739,8 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
 
     try:
         args.client = rpc.client.JSONRPCClient(args.server_addr, args.port, args.verbose, args.timeout)
+        args.func(args)
     except JSONRPCException as ex:
+        print("Exception:")
         print(ex.message)
         exit(1)
-    args.func(args)

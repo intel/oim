@@ -49,7 +49,7 @@ static struct nvme_driver _g_nvme_driver = {
 static struct nvme_request *g_request = NULL;
 
 int
-spdk_pci_nvme_enumerate(spdk_pci_enum_cb enum_cb, void *enum_ctx)
+spdk_pci_enumerate(struct spdk_pci_driver *driver, spdk_pci_enum_cb enum_cb, void *enum_ctx)
 {
 	return -1;
 }
@@ -90,6 +90,9 @@ void
 nvme_ctrlr_destruct(struct spdk_nvme_ctrlr *ctrlr)
 {
 }
+
+DEFINE_STUB(spdk_nvme_ctrlr_get_current_process, struct spdk_nvme_ctrlr_process *,
+	    (struct spdk_nvme_ctrlr *ctrlr), NULL)
 
 int
 nvme_ctrlr_add_process(struct spdk_nvme_ctrlr *ctrlr, void *devhandle)

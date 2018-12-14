@@ -79,9 +79,12 @@ _spdk_add_lvs_to_list(struct spdk_lvol_store *lvs)
 static void
 _spdk_lvs_free(struct spdk_lvol_store *lvs)
 {
+	pthread_mutex_lock(&g_lvol_stores_mutex);
 	if (lvs->on_list) {
 		TAILQ_REMOVE(&g_lvol_stores, lvs, link);
 	}
+	pthread_mutex_unlock(&g_lvol_stores_mutex);
+
 	free(lvs);
 }
 
@@ -712,13 +715,16 @@ spdk_lvs_rename(struct spdk_lvol_store *lvs, const char *new_name,
 	}
 
 	/* Check if new or new_name is already used in other lvs */
+	pthread_mutex_lock(&g_lvol_stores_mutex);
 	TAILQ_FOREACH(tmp, &g_lvol_stores, link) {
 		if (!strncmp(new_name, tmp->name, SPDK_LVS_NAME_MAX) ||
 		    !strncmp(new_name, tmp->new_name, SPDK_LVS_NAME_MAX)) {
+			pthread_mutex_unlock(&g_lvol_stores_mutex);
 			cb_fn(cb_arg, -EEXIST);
 			return;
 		}
 	}
+	pthread_mutex_unlock(&g_lvol_stores_mutex);
 
 	req = calloc(1, sizeof(*req));
 	if (!req) {
@@ -1425,8 +1431,7 @@ void
 spdk_lvol_inflate(struct spdk_lvol *lvol, spdk_lvol_op_complete cb_fn, void *cb_arg)
 {
 	struct spdk_lvol_req *req;
-	struct spdk_blob *blob = lvol->blob;
-	spdk_blob_id blob_id = spdk_blob_get_id(blob);
+	spdk_blob_id blob_id;
 
 	assert(cb_fn != NULL);
 
@@ -1453,6 +1458,7 @@ spdk_lvol_inflate(struct spdk_lvol *lvol, spdk_lvol_op_complete cb_fn, void *cb_
 		return;
 	}
 
+	blob_id = spdk_blob_get_id(lvol->blob);
 	spdk_bs_inflate_blob(lvol->lvol_store->blobstore, req->channel, blob_id, _spdk_lvol_inflate_cb,
 			     req);
 }
@@ -1461,8 +1467,7 @@ void
 spdk_lvol_decouple_parent(struct spdk_lvol *lvol, spdk_lvol_op_complete cb_fn, void *cb_arg)
 {
 	struct spdk_lvol_req *req;
-	struct spdk_blob *blob = lvol->blob;
-	spdk_blob_id blob_id = spdk_blob_get_id(blob);
+	spdk_blob_id blob_id;
 
 	assert(cb_fn != NULL);
 
@@ -1489,6 +1494,7 @@ spdk_lvol_decouple_parent(struct spdk_lvol *lvol, spdk_lvol_op_complete cb_fn, v
 		return;
 	}
 
+	blob_id = spdk_blob_get_id(lvol->blob);
 	spdk_bs_blob_decouple_parent(lvol->lvol_store->blobstore, req->channel, blob_id,
 				     _spdk_lvol_inflate_cb, req);
 }

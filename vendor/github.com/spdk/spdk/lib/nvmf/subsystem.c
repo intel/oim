@@ -253,12 +253,12 @@ spdk_nvmf_subsystem_create(struct spdk_nvmf_tgt *tgt,
 	}
 
 	/* Find a free subsystem id (sid) */
-	for (sid = 0; sid < tgt->opts.max_subsystems; sid++) {
+	for (sid = 0; sid < tgt->max_subsystems; sid++) {
 		if (tgt->subsystems[sid] == NULL) {
 			break;
 		}
 	}
-	if (sid >= tgt->opts.max_subsystems) {
+	if (sid >= tgt->max_subsystems) {
 		return NULL;
 	}
 
@@ -559,7 +559,7 @@ spdk_nvmf_subsystem_get_first(struct spdk_nvmf_tgt *tgt)
 	struct spdk_nvmf_subsystem	*subsystem;
 	uint32_t sid;
 
-	for (sid = 0; sid < tgt->opts.max_subsystems; sid++) {
+	for (sid = 0; sid < tgt->max_subsystems; sid++) {
 		subsystem = tgt->subsystems[sid];
 		if (subsystem) {
 			return subsystem;
@@ -581,7 +581,7 @@ spdk_nvmf_subsystem_get_next(struct spdk_nvmf_subsystem *subsystem)
 
 	tgt = subsystem->tgt;
 
-	for (sid = subsystem->id + 1; sid < tgt->opts.max_subsystems; sid++) {
+	for (sid = subsystem->id + 1; sid < tgt->max_subsystems; sid++) {
 		subsystem = tgt->subsystems[sid];
 		if (subsystem) {
 			return subsystem;
@@ -995,6 +995,12 @@ spdk_nvmf_subsystem_add_ns(struct spdk_nvmf_subsystem *subsystem, struct spdk_bd
 		return 0;
 	}
 
+	if (spdk_bdev_get_block_size(bdev) % 512) {
+		SPDK_ERRLOG("Block size %u for Bdev %s is not supported now\n",
+			    spdk_bdev_get_block_size(bdev), spdk_bdev_get_name(bdev));
+		return 0;
+	}
+
 	spdk_nvmf_ns_opts_get_defaults(&opts, sizeof(opts));
 	if (user_opts) {
 		memcpy(&opts, user_opts, spdk_min(sizeof(opts), opts_size));
@@ -1174,7 +1180,7 @@ spdk_nvmf_subsystem_set_sn(struct spdk_nvmf_subsystem *subsystem, const char *sn
 
 	if (!spdk_nvmf_valid_ascii_string(sn, len)) {
 		SPDK_DEBUGLOG(SPDK_LOG_NVMF, "Non-ASCII sn\n");
-		SPDK_TRACEDUMP(SPDK_LOG_NVMF, "sn", sn, len);
+		SPDK_LOGDUMP(SPDK_LOG_NVMF, "sn", sn, len);
 		return -1;
 	}
 

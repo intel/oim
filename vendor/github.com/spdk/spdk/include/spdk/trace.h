@@ -45,7 +45,7 @@
 extern "C" {
 #endif
 
-#define SPDK_TRACE_SIZE	 (32 * 1024)
+#define SPDK_DEFAULT_NUM_TRACE_ENTRIES	 (32 * 1024)
 
 struct spdk_trace_entry {
 	uint64_t	tsc;
@@ -92,13 +92,8 @@ struct spdk_trace_history {
 	/** Logical core number associated with this structure instance. */
 	int				lcore;
 
-	/**
-	 * Circular buffer of spdk_trace_entry structures for tracing
-	 *  tpoints on this core.  Debug tool spdk_trace reads this
-	 *  buffer from shared memory to post-process the tpoint entries and
-	 *  display in a human-readable format.
-	 */
-	struct spdk_trace_entry		entries[SPDK_TRACE_SIZE];
+	/** Number of trace_entries contained in each trace_history. */
+	uint64_t			num_entries;
 
 	/**
 	 * Running count of number of occurrences of each tracepoint on this
@@ -110,6 +105,13 @@ struct spdk_trace_history {
 	/** Index to next spdk_trace_entry to fill in the circular buffer. */
 	uint32_t			next_entry;
 
+	/**
+	 * Circular buffer of spdk_trace_entry structures for tracing
+	 *  tpoints on this core.  Debug tool spdk_trace reads this
+	 *  buffer from shared memory to post-process the tpoint entries and
+	 *  display in a human-readable format.
+	 */
+	struct spdk_trace_entry		entries[0];
 };
 
 #define SPDK_TRACE_MAX_LCORE		128
@@ -120,6 +122,11 @@ struct spdk_trace_flags {
 	struct spdk_trace_owner		owner[UCHAR_MAX + 1];
 	struct spdk_trace_object	object[UCHAR_MAX + 1];
 	struct spdk_trace_tpoint	tpoint[SPDK_TRACE_MAX_TPOINT_ID];
+
+	/** Offset of each trace_history from the beginning of this data structure.
+	 * The last one is the offset of the file end.
+	 */
+	uint64_t			lcore_history_offsets[SPDK_TRACE_MAX_LCORE + 1];
 };
 extern struct spdk_trace_flags *g_trace_flags;
 extern struct spdk_trace_histories *g_trace_histories;
@@ -127,8 +134,42 @@ extern struct spdk_trace_histories *g_trace_histories;
 
 struct spdk_trace_histories {
 	struct spdk_trace_flags flags;
-	struct spdk_trace_history	per_lcore_history[SPDK_TRACE_MAX_LCORE];
+
+	/**
+	 * struct spdk_trace_history has a dynamic size determined by num_entries
+	 * in spdk_trace_init. Mark array size of per_lcore_history to be 0 in uint8_t
+	 * as a reminder that each per_lcore_history pointer should be gotten by
+	 * proper API, instead of directly referencing by struct element.
+	 */
+	uint8_t	per_lcore_history[0];
 };
+
+static inline uint64_t
+spdk_get_trace_history_size(uint64_t num_entries)
+{
+	return sizeof(struct spdk_trace_history) + num_entries * sizeof(struct spdk_trace_entry);
+}
+
+static inline uint64_t
+spdk_get_trace_histories_size(struct spdk_trace_histories *trace_histories)
+{
+	return trace_histories->flags.lcore_history_offsets[SPDK_TRACE_MAX_LCORE];
+}
+
+static inline struct spdk_trace_history *
+spdk_get_per_lcore_history(struct spdk_trace_histories *trace_histories, unsigned lcore)
+{
+	char *lcore_history_offset;
+
+	if (lcore >= SPDK_TRACE_MAX_LCORE) {
+		return NULL;
+	}
+
+	lcore_history_offset = (char *)trace_histories;
+	lcore_history_offset += trace_histories->flags.lcore_history_offsets[lcore];
+
+	return (struct spdk_trace_history *)lcore_history_offset;
+}
 
 void _spdk_trace_record(uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id,
 			uint32_t size, uint64_t object_id, uint64_t arg1);
@@ -154,6 +195,7 @@ void spdk_trace_record(uint16_t tpoint_id, uint16_t poller_id, uint32_t size,
 	 *  within the group, the remaining upper bits determine the tracepoint group.  Each
 	 *  tracepoint group has its own tracepoint mask.
 	 */
+	assert(tpoint_id < SPDK_TRACE_MAX_TPOINT_ID);
 	if (g_trace_histories == NULL ||
 	    !((1ULL << (tpoint_id & 0x3F)) & g_trace_histories->flags.tpoint_mask[tpoint_id >> 6])) {
 		return;
@@ -183,6 +225,7 @@ void spdk_trace_record_tsc(uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id,
 	 *  within the group, the remaining upper bits determine the tracepoint group.  Each
 	 *  tracepoint group has its own tracepoint mask.
 	 */
+	assert(tpoint_id < SPDK_TRACE_MAX_TPOINT_ID);
 	if (g_trace_histories == NULL ||
 	    !((1ULL << (tpoint_id & 0x3F)) & g_trace_histories->flags.tpoint_mask[tpoint_id >> 6])) {
 		return;
@@ -238,9 +281,10 @@ void spdk_trace_set_tpoint_group_mask(uint64_t tpoint_group_mask);
  * human-readable format.
  *
  * \param shm_name Name of shared memory.
+ * \param num_entries Number of trace entries per lcore.
  * \return 0 on success, else non-zero indicates a failure.
  */
-int spdk_trace_init(const char *shm_name);
+int spdk_trace_init(const char *shm_name, uint64_t num_entries);
 
 /**
  * Unmap global trace memory structs.
@@ -288,7 +332,17 @@ void spdk_trace_register_description(const char *name, const char *short_name,
 				     uint8_t object_type, uint8_t new_object,
 				     uint8_t arg1_is_ptr, const char *arg1_name);
 
+/**
+ * Show trace mask and its usage.
+ *
+ * \param f File to hold the mask's information.
+ * \param tmask_arg Command line option to set the trace group mask.
+ */
+void spdk_trace_mask_usage(FILE *f, const char *tmask_arg);
+
 struct spdk_trace_register_fn {
+	const char *name;
+	uint8_t tgroup_id;
 	void (*reg_fn)(void);
 	struct spdk_trace_register_fn *next;
 };
@@ -300,9 +354,11 @@ struct spdk_trace_register_fn {
  */
 void spdk_trace_add_register_fn(struct spdk_trace_register_fn *reg_fn);
 
-#define SPDK_TRACE_REGISTER_FN(fn)				\
+#define SPDK_TRACE_REGISTER_FN(fn, name_str, _tgroup_id)	\
 	static void fn(void);					\
 	struct spdk_trace_register_fn reg_ ## fn = {		\
+		.name = name_str,				\
+		.tgroup_id = _tgroup_id,			\
 		.reg_fn = fn,					\
 		.next = NULL,					\
 	};							\

@@ -41,6 +41,8 @@
 #include "scsi/dev.c"
 #include "scsi/port.c"
 
+#include "spdk_internal/mock.h"
+
 /* Unit test bdev mockup */
 struct spdk_bdev {
 	char name[100];
@@ -111,33 +113,26 @@ spdk_bdev_get_by_name(const char *bdev_name)
 	return NULL;
 }
 
-int
-spdk_scsi_lun_task_mgmt_execute(struct spdk_scsi_task *task, enum spdk_scsi_task_func func)
-{
-	return 0;
-}
+DEFINE_STUB_V(spdk_scsi_lun_append_mgmt_task,
+	      (struct spdk_scsi_lun *lun, struct spdk_scsi_task *task));
 
-void
-spdk_scsi_lun_execute_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task)
-{
-}
+DEFINE_STUB_V(spdk_scsi_lun_execute_mgmt_task, (struct spdk_scsi_lun *lun));
 
-int
-_spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun)
-{
-	return 0;
-}
+DEFINE_STUB(spdk_scsi_lun_has_pending_mgmt_tasks, bool,
+	    (const struct spdk_scsi_lun *lun), false);
 
-void
-_spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun)
-{
-}
+DEFINE_STUB_V(spdk_scsi_lun_append_task,
+	      (struct spdk_scsi_lun *lun, struct spdk_scsi_task *task));
 
-bool
-spdk_scsi_lun_has_pending_tasks(const struct spdk_scsi_lun *lun)
-{
-	return false;
-}
+DEFINE_STUB_V(spdk_scsi_lun_execute_tasks, (struct spdk_scsi_lun *lun));
+
+DEFINE_STUB(_spdk_scsi_lun_allocate_io_channel, int,
+	    (struct spdk_scsi_lun *lun), 0);
+
+DEFINE_STUB_V(_spdk_scsi_lun_free_io_channel, (struct spdk_scsi_lun *lun));
+
+DEFINE_STUB(spdk_scsi_lun_has_pending_tasks, bool,
+	    (const struct spdk_scsi_lun *lun), false);
 
 static void
 dev_destruct_null_dev(void)
@@ -297,7 +292,8 @@ dev_queue_mgmt_task_success(void)
 
 	task = spdk_get_task(NULL);
 
-	spdk_scsi_dev_queue_mgmt_task(dev, task, SPDK_SCSI_TASK_FUNC_LUN_RESET);
+	task->function = SPDK_SCSI_TASK_FUNC_LUN_RESET;
+	spdk_scsi_dev_queue_mgmt_task(dev, task);
 
 	spdk_scsi_task_put(task);
 
@@ -341,7 +337,8 @@ dev_stop_success(void)
 	task_mgmt = spdk_get_task(NULL);
 
 	/* Enqueue the tasks into dev->task_mgmt_submit_queue */
-	spdk_scsi_dev_queue_mgmt_task(&dev, task_mgmt, SPDK_SCSI_TASK_FUNC_LUN_RESET);
+	task->function = SPDK_SCSI_TASK_FUNC_LUN_RESET;
+	spdk_scsi_dev_queue_mgmt_task(&dev, task_mgmt);
 
 	spdk_scsi_task_put(task);
 	spdk_scsi_task_put(task_mgmt);

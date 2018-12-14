@@ -121,7 +121,7 @@ spdk_bdev_rbd_dup_config(const char *const *config)
 		return NULL;
 	}
 	for (count = 0; config[count]; count++) {}
-	copy = calloc(sizeof(*copy), count + 1);
+	copy = calloc(count + 1, sizeof(*copy));
 	if (!copy) {
 		return NULL;
 	}
@@ -652,6 +652,7 @@ bdev_rbd_write_config_json(struct spdk_bdev *bdev, struct spdk_json_write_ctx *w
 	if (rbd->user_id) {
 		spdk_json_write_named_string(w, "user_id", rbd->user_id);
 	}
+
 	if (rbd->config) {
 		char **entry = rbd->config;
 
@@ -663,12 +664,11 @@ bdev_rbd_write_config_json(struct spdk_bdev *bdev, struct spdk_json_write_ctx *w
 		}
 		spdk_json_write_object_end(w);
 	}
+
 	spdk_json_write_object_end(w);
 
 	spdk_json_write_object_end(w);
 }
-
-
 
 static const struct spdk_bdev_fn_table rbd_fn_table = {
 	.destruct		= bdev_rbd_destruct,
@@ -717,6 +717,7 @@ spdk_bdev_rbd_create(const char *name, const char *user_id, const char *pool_nam
 		bdev_rbd_free(rbd);
 		return NULL;
 	}
+
 	if (config && !(rbd->config = spdk_bdev_rbd_dup_config(config))) {
 		bdev_rbd_free(rbd);
 		return NULL;
@@ -831,7 +832,7 @@ bdev_rbd_library_init(void)
 			}
 		}
 
-		// TODO(?): user_id and rbd config values
+		/* TODO(?): user_id and rbd config values */
 		if (spdk_bdev_rbd_create(NULL, NULL, pool_name, NULL, rbd_name, block_size) == NULL) {
 			rc = -1;
 			goto end;

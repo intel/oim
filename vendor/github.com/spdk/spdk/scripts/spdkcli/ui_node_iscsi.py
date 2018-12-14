@@ -24,7 +24,10 @@ class UIISCSIGlobalParams(UINode):
 
     def refresh(self):
         self._children = set([])
-        for param, val in self.get_root().get_iscsi_global_params().items():
+        iscsi_global_params = self.get_root().get_iscsi_global_params()
+        if not iscsi_global_params:
+            return
+        for param, val in iscsi_global_params.items():
             UIISCSIGlobalParam("%s: %s" % (param, val), self)
 
     def ui_command_set_auth(self, g=None, d=None, r=None, m=None):
@@ -57,6 +60,7 @@ class UIISCSIGlobalParam(UINode):
 class UIISCSIDevices(UINode):
     def __init__(self, parent):
         UINode.__init__(self, "target_nodes", parent)
+        self.scsi_devices = list()
         self.refresh()
 
     def refresh(self):
@@ -68,6 +72,12 @@ class UIISCSIDevices(UINode):
                 if hasattr(device, "device_name") and node['name'] \
                         == device.device_name:
                     UIISCSIDevice(device, node, self)
+
+    def delete(self, name):
+        try:
+            self.get_root().delete_target_node(target_node_name=name)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
 
     def ui_command_create(self, name, alias_name, bdev_name_id_pairs,
                           pg_ig_mappings, queue_depth, g=None, d=None, r=None,
@@ -123,18 +133,13 @@ class UIISCSIDevices(UINode):
         Arguments:
            name - Target node name.
         """
-        if name is None:
-            for device in self.devices:
-                try:
-                    self.get_root().delete_target_node(
-                        target_node_name=device.device_name)
-                except JSONRPCException as e:
-                    self.shell.log.error(e.message)
-        else:
-            try:
-                self.get_root().delete_target_node(target_node_name=name)
-            except JSONRPCException as e:
-                self.shell.log.error(e.message)
+        self.delete(name)
+        self.refresh()
+
+    def ui_command_delete_all(self):
+        """Delete all target nodes"""
+        for device in self.scsi_devices:
+            self.delete(device.device_name)
         self.refresh()
 
     def ui_command_add_lun(self, name, bdev_name, lun_id=None):
@@ -309,6 +314,12 @@ class UIPortalGroups(UINode):
         UINode.__init__(self, "portal_groups", parent)
         self.refresh()
 
+    def delete(self, tag):
+        try:
+            self.get_root().delete_portal_group(tag=tag)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, tag, portal_list):
         """Add a portal group.
 
@@ -317,7 +328,6 @@ class UIPortalGroups(UINode):
            tag: Portal group tag (unique, integer > 0)
         """
         portals = []
-        print("portal_list: %s" % portal_list)
         for portal in portal_list.strip().split(" "):
             host = portal
             cpumask = None
@@ -338,11 +348,13 @@ class UIPortalGroups(UINode):
     def ui_command_delete(self, tag):
         """Delete a portal group with given tag (unique, integer > 0))"""
         tag = self.ui_eval_param(tag, "number", None)
-        try:
-            self.get_root().delete_portal_group(tag=tag)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(tag)
+        self.refresh()
 
+    def ui_command_delete_all(self):
+        """Delete all portal groups"""
+        for pg in self.pgs:
+            self.delete(pg.tag)
         self.refresh()
 
     def refresh(self):
@@ -382,6 +394,12 @@ class UIInitiatorGroups(UINode):
         UINode.__init__(self, "initiator_groups", parent)
         self.refresh()
 
+    def delete(self, tag):
+        try:
+            self.get_root().delete_initiator_group(tag=tag)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, tag, initiator_list, netmask_list):
         """Add an initiator group.
 
@@ -409,11 +427,13 @@ class UIInitiatorGroups(UINode):
            tag: Initiator group tag (unique, integer > 0)
         """
         tag = self.ui_eval_param(tag, "number", None)
-        try:
-            self.get_root().delete_initiator_group(tag=tag)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(tag)
+        self.refresh()
 
+    def ui_command_delete_all(self):
+        """Delete all initiator groups"""
+        for ig in self.igs:
+            self.delete(ig.tag)
         self.refresh()
 
     def ui_command_add_initiator(self, tag, initiators, netmasks):
@@ -537,6 +557,19 @@ class UIISCSIAuthGroups(UINode):
         for ag in self.iscsi_auth_groups:
             UIISCSIAuthGroup(ag, self)
 
+    def delete(self, tag):
+        try:
+            self.get_root().delete_iscsi_auth_group(tag=tag)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
+    def delete_secret(self, tag, user):
+        try:
+            self.get_root().delete_secret_from_iscsi_auth_group(
+                tag=tag, user=user)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, tag, secrets=None):
         """Add authentication group for CHAP authentication.
 
@@ -564,11 +597,13 @@ class UIISCSIAuthGroups(UINode):
            tag: Authentication group tag (unique, integer > 0)
         """
         tag = self.ui_eval_param(tag, "number", None)
-        try:
-            self.get_root().delete_iscsi_auth_group(tag=tag)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(tag)
+        self.refresh()
 
+    def ui_command_delete_all(self):
+        """Delete all authentication groups."""
+        for iscsi_auth_group in self.iscsi_auth_groups:
+            self.delete(iscsi_auth_group['tag'])
         self.refresh()
 
     def ui_command_add_secret(self, tag, user, secret,
@@ -600,11 +635,20 @@ class UIISCSIAuthGroups(UINode):
            user: User name for one-way CHAP authentication
         """
         tag = self.ui_eval_param(tag, "number", None)
-        try:
-            self.get_root().delete_secret_from_iscsi_auth_group(
-                tag=tag, user=user)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete_secret(tag, user)
+        self.refresh()
+
+    def ui_command_delete_secret_all(self, tag):
+        """Delete all secrets from an authentication group.
+
+        Args:
+           tag: Authentication group tag (unique, integer > 0)
+        """
+        tag = self.ui_eval_param(tag, "number", None)
+        for ag in self.iscsi_auth_groups:
+            if ag['tag'] == tag:
+                for secret in ag['secrets']:
+                    self.delete_secret(tag, secret['user'])
         self.refresh()
 
     def summary(self):
@@ -628,8 +672,10 @@ class UIISCSIAuthGroup(UINode):
 
 class UISCSIAuthSecret(UINode):
     def __init__(self, secret, parent):
-        info = ", ".join("%s=%s" % (key, val)
-                         for key, val in secret.items())
+        info_list = ["%s=%s" % (key, val)
+                     for key, val in secret.items()]
+        info_list.sort(reverse=True)
+        info = ", ".join(info_list)
         UINode.__init__(self, info, parent)
         self.secret = secret
         self.refresh()

@@ -11,7 +11,6 @@ set -e
 export ASAN_OPTIONS=new_delete_type_mismatch=0
 
 PS4=' \t	\$ '
-ulimit -c unlimited
 
 : ${RUN_NIGHTLY:=0}
 export RUN_NIGHTLY
@@ -56,6 +55,7 @@ fi
 : ${SPDK_TEST_PMDK=1}; export SPDK_TEST_PMDK
 : ${SPDK_TEST_LVOL=1}; export SPDK_TEST_LVOL
 : ${SPDK_TEST_JSON=1}; export SPDK_TEST_JSON
+: ${SPDK_TEST_REDUCE=1}; export SPDK_TEST_REDUCE
 : ${SPDK_RUN_ASAN=1}; export SPDK_RUN_ASAN
 : ${SPDK_RUN_UBSAN=1}; export SPDK_RUN_UBSAN
 : ${SPDK_RUN_INSTALLED_DPDK=1}; export SPDK_RUN_INSTALLED_DPDK
@@ -152,6 +152,14 @@ else
 	SPDK_TEST_PMDK=0; export SPDK_TEST_PMDK
 fi
 
+if [ -f /usr/include/libpmem.h ]; then
+	config_params+=' --with-reduce'
+else
+	# PMDK not installed so disable any reduce tests explicitly here
+	#  since reduce depends on libpmem
+	SPDK_TEST_REDUCE=0; export SPDK_TEST_REDUCE
+fi
+
 if [ -d /usr/src/fio ]; then
 	config_params+=' --with-fio=/usr/src/fio'
 fi
@@ -213,15 +221,17 @@ function timing() {
 }
 
 function timing_enter() {
+	local shell_restore_x="$( [[ "$-" =~ x ]] && echo 'set -x' )"
 	set +x
 	timing "enter" "$1"
-	set -x
+	$shell_restore_x
 }
 
 function timing_exit() {
+	local shell_restore_x="$( [[ "$-" =~ x ]] && echo 'set -x' )"
 	set +x
 	timing "exit" "$1"
-	set -x
+	$shell_restore_x
 }
 
 function timing_finish() {
@@ -295,40 +305,74 @@ function waitforlisten() {
 		exit 1
 	fi
 
-	rpc_addr="${2:-$DEFAULT_RPC_ADDR}"
+	local rpc_addr="${2:-$DEFAULT_RPC_ADDR}"
+
+	if hash ip; then
+		local have_ip_cmd=true
+	else
+		local have_ip_cmd=false
+	fi
+
+	if hash ss; then
+		local have_ss_cmd=true
+	else
+		local have_ss_cmd=false
+	fi
 
 	echo "Waiting for process to start up and listen on UNIX domain socket $rpc_addr..."
 	# turn off trace for this loop
+	local shell_restore_x="$( [[ "$-" =~ x ]] && echo 'set -x' )"
 	set +x
-	ret=1
-	while [ $ret -ne 0 ]; do
+	local ret=0
+	local i
+	for (( i = 40; i != 0; i-- )); do
 		# if the process is no longer running, then exit the script
 		#  since it means the application crashed
 		if ! kill -s 0 $1; then
-			exit 1
+			echo "ERROR: process (pid: $1) is no longer running"
+			ret=1
+			break
 		fi
 
-		namespace=$(ip netns identify $1)
-		if [ -n "$namespace" ]; then
-			ns_cmd="ip netns exec $namespace"
+		# FIXME: don't know how to fix this for FreeBSD
+		if $have_ip_cmd; then
+			namespace=$(ip netns identify $1)
+			if [ -n "$namespace" ]; then
+				ns_cmd="ip netns exec $namespace"
+			fi
 		fi
 
-		if hash ss; then
-			if $ns_cmd ss -lx | grep -q $rpc_addr; then
-				ret=0
+		if $have_ss_cmd; then
+			if $ns_cmd ss -ln | egrep -q "\s+$rpc_addr\s+"; then
+				break
+			fi
+		elif [[ "$(uname -s)" == "Linux" ]]; then
+			# For Linux, if system doesn't have ss, just assume it has netstat
+			if $ns_cmd netstat -an | grep -iw LISTENING | egrep -q "\s+$rpc_addr\$"; then
+				break
 			fi
 		else
-			# if system doesn't have ss, just assume it has netstat
-			if $ns_cmd netstat -an -x | grep -iw LISTENING | grep -q $rpc_addr; then
-				ret=0
+			# On FreeBSD netstat output 'State' column is missing for Unix sockets.
+			# To workaround this issue just try to use provided address.
+			# XXX: This solution could be used for other distros.
+			if $rootdir/scripts/rpc.py -t 1 -s "$rpc_addr" get_rpc_methods 1>&2 2>/dev/null; then
+				break
 			fi
 		fi
+		sleep 0.5
 	done
-	set -x
+
+	$shell_restore_x
+	if (( i == 0 )); then
+		echo "ERROR: timeout while waiting for process (pid: $1) to start listening on '$rpc_addr'"
+		ret=1
+	fi
+	return $ret
 }
 
 function waitfornbd() {
-	nbd_name=$1
+	local nbd_name=$1
+	local i
 
 	for ((i=1; i<=20; i++)); do
 		if grep -q -w $nbd_name /proc/partitions; then
@@ -452,19 +496,20 @@ function kill_stub() {
 }
 
 function run_test() {
+	local shell_restore_x="$( [[ "$-" =~ x ]] && echo 'set -x' )"
 	set +x
 	local test_type="$(echo $1 | tr 'a-z' 'A-Z')"
 	shift
 	echo "************************************"
 	echo "START TEST $test_type $@"
 	echo "************************************"
-	set -x
+	$shell_restore_x
 	time "$@"
 	set +x
 	echo "************************************"
 	echo "END TEST $test_type $@"
 	echo "************************************"
-	set -x
+	$shell_restore_x
 }
 
 function print_backtrace() {
@@ -518,7 +563,7 @@ function part_dev_by_gpt () {
 		waitforlisten $nbd_pid $rpc_server
 
 		# Start bdev as a nbd device
-		$rootdir/scripts/rpc.py -s "$rpc_server" start_nbd_disk $devname $nbd_path
+		nbd_start_disks "$rpc_server" $devname $nbd_path
 
 		waitfornbd ${nbd_path:5}
 
@@ -536,7 +581,7 @@ function part_dev_by_gpt () {
 			dd if=/dev/zero of=$nbd_path bs=4096 count=8 oflag=direct
 		fi
 
-		$rootdir/scripts/rpc.py -s "$rpc_server" stop_nbd_disk $nbd_path
+		nbd_stop_disks "$rpc_server" $nbd_path
 
 		killprocess $nbd_pid
 		rm -f ${conf}.gpt

@@ -33,41 +33,29 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
 
 APP = spdk_tgt
 
 C_SRCS := spdk_tgt.c
 
-SPDK_LIB_LIST = event_bdev event_copy event_iscsi event_net event_scsi event_nvmf event
-SPDK_LIB_LIST += nvmf trace log conf thread util bdev iscsi scsi copy rpc jsonrpc json
-SPDK_LIB_LIST += app_rpc log_rpc bdev_rpc net
+SPDK_LIB_LIST = $(ALL_MODULES_LIST)
 
 ifeq ($(OS),Linux)
-SPDK_LIB_LIST += event_nbd nbd
-
 ifeq ($(CONFIG_VHOST),y)
 SPDK_LIB_LIST += vhost rte_vhost event_vhost
 endif
-
 endif
 
-LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS) \
-	$(COPY_MODULES_LINKER_ARGS) \
-	$(SOCK_MODULES_LINKER_ARGS) \
-	$(SPDK_LIB_LINKER_ARGS) $(ENV_LINKER_ARGS)
+SPDK_LIB_LIST += event_bdev event_copy event_iscsi event_net event_scsi event_nvmf event
+SPDK_LIB_LIST += nvmf trace log conf thread util bdev iscsi scsi copy rpc jsonrpc json
+SPDK_LIB_LIST += app_rpc log_rpc bdev_rpc net sock
 
-all: $(APP)
-	@:
+ifeq ($(OS),Linux)
+SPDK_LIB_LIST += event_nbd nbd
+endif
 
-$(APP): $(OBJS) $(SPDK_LIB_FILES) $(SPDK_WHOLE_LIBS) $(BLOCKDEV_MODULES_FILES) $(COPY_MODULES_FILES) $(SOCK_MODULES_FILES) $(LINKER_MODULES) $(ENV_LIBS)
-	$(LINK_C)
-
-clean:
-	$(CLEAN_C) $(APP)
+include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 
 install: $(APP)
 	$(INSTALL_APP)
-
-include $(SPDK_ROOT_DIR)/mk/spdk.deps.mk

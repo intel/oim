@@ -59,7 +59,6 @@ enum spdk_nvmf_subsystem_state {
 
 enum spdk_nvmf_qpair_state {
 	SPDK_NVMF_QPAIR_UNINITIALIZED = 0,
-	SPDK_NVMF_QPAIR_INACTIVE,
 	SPDK_NVMF_QPAIR_ACTIVATING,
 	SPDK_NVMF_QPAIR_ACTIVE,
 	SPDK_NVMF_QPAIR_DEACTIVATING,
@@ -69,9 +68,9 @@ enum spdk_nvmf_qpair_state {
 typedef void (*spdk_nvmf_state_change_done)(void *cb_arg, int status);
 
 struct spdk_nvmf_tgt {
-	struct spdk_nvmf_tgt_opts		opts;
-
 	uint64_t				discovery_genctr;
+
+	uint32_t				max_subsystems;
 
 	/* Array of subsystem pointers of size max_subsystems indexed by sid */
 	struct spdk_nvmf_subsystem		**subsystems;
@@ -152,7 +151,7 @@ struct spdk_nvmf_request {
 	void				*data;
 	union nvmf_h2c_msg		*cmd;
 	union nvmf_c2h_msg		*rsp;
-	struct iovec			iov[SPDK_NVMF_MAX_SGL_ENTRIES];
+	struct iovec			iov[SPDK_NVMF_MAX_SGL_ENTRIES * 2];
 	uint32_t			iovcnt;
 	struct spdk_bdev_io_wait_entry	bdev_io_wait;
 
@@ -217,7 +216,7 @@ struct spdk_nvmf_ctrlr {
 
 	struct spdk_nvmf_request *aer_req;
 	union spdk_nvme_async_event_completion notice_event;
-	uint8_t hostid[16];
+	struct spdk_uuid  hostid;
 
 	uint16_t changed_ns_list_count;
 	struct spdk_nvme_ns_list changed_ns_list;
@@ -276,9 +275,8 @@ void spdk_nvmf_request_exec(struct spdk_nvmf_request *req);
 int spdk_nvmf_request_free(struct spdk_nvmf_request *req);
 int spdk_nvmf_request_complete(struct spdk_nvmf_request *req);
 
-void spdk_nvmf_get_discovery_log_page(struct spdk_nvmf_tgt *tgt,
-				      void *buffer, uint64_t offset,
-				      uint32_t length);
+void spdk_nvmf_get_discovery_log_page(struct spdk_nvmf_tgt *tgt, struct iovec *iov,
+				      uint32_t iovcnt, uint64_t offset, uint32_t length);
 
 void spdk_nvmf_ctrlr_destruct(struct spdk_nvmf_ctrlr *ctrlr);
 int spdk_nvmf_ctrlr_process_fabrics_cmd(struct spdk_nvmf_request *req);

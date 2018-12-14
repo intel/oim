@@ -593,7 +593,7 @@ raid_bdev_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_i
 		break;
 
 	case SPDK_BDEV_IO_TYPE_FLUSH:
-		// TODO: support flush if requirement comes
+		/* TODO: support flush if requirement comes */
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 		break;
 
@@ -960,7 +960,7 @@ raid_bdev_parse_raid(struct spdk_conf_section *conf_section)
 
 	raid_name = spdk_conf_section_get_val(conf_section, "Name");
 	if (raid_name == NULL) {
-		SPDK_ERRLOG("raid_name %s is null\n", raid_name);
+		SPDK_ERRLOG("raid_name is null\n");
 		return -EINVAL;
 	}
 
@@ -1273,6 +1273,7 @@ raid_bdev_create(struct raid_bdev_config *raid_cfg)
 	raid_bdev_gen->ctxt = raid_bdev;
 	raid_bdev_gen->fn_table = &g_raid_bdev_fn_table;
 	raid_bdev_gen->module = &g_raid_if;
+	raid_bdev_gen->write_cache = 0;
 
 	TAILQ_INSERT_TAIL(&g_spdk_raid_bdev_configuring_list, raid_bdev, state_link);
 	TAILQ_INSERT_TAIL(&g_spdk_raid_bdev_list, raid_bdev, global_link);
@@ -1364,15 +1365,12 @@ raid_bdev_configure(struct raid_bdev *raid_bdev)
 		}
 	}
 
-	raid_bdev_gen = &raid_bdev->bdev;
-	raid_bdev_gen->write_cache = 0;
-	raid_bdev_gen->blocklen = blocklen;
-	raid_bdev_gen->ctxt = raid_bdev;
-	raid_bdev_gen->fn_table = &g_raid_bdev_fn_table;
-	raid_bdev_gen->module = &g_raid_if;
 	raid_bdev->strip_size = (raid_bdev->strip_size * 1024) / blocklen;
 	raid_bdev->strip_size_shift = spdk_u32log2(raid_bdev->strip_size);
 	raid_bdev->blocklen_shift = spdk_u32log2(blocklen);
+
+	raid_bdev_gen = &raid_bdev->bdev;
+	raid_bdev_gen->blocklen = blocklen;
 	if (raid_bdev->num_base_bdevs > 1) {
 		raid_bdev_gen->optimal_io_boundary = raid_bdev->strip_size;
 		raid_bdev_gen->split_on_optimal_io_boundary = true;
@@ -1458,10 +1456,9 @@ raid_bdev_deconfigure(struct raid_bdev *raid_bdev)
 void
 raid_bdev_remove_base_bdev(void *ctx)
 {
-	struct    spdk_bdev       *base_bdev = ctx;
-	struct    raid_bdev       *raid_bdev;
-	uint16_t                  i;
-	bool                      found = false;
+	struct spdk_bdev	*base_bdev = ctx;
+	struct raid_bdev	*raid_bdev;
+	uint16_t		i;
 
 	SPDK_DEBUGLOG(SPDK_LOG_BDEV_RAID, "raid_bdev_remove_base_bdev\n");
 
@@ -1469,41 +1466,31 @@ raid_bdev_remove_base_bdev(void *ctx)
 	TAILQ_FOREACH(raid_bdev, &g_spdk_raid_bdev_list, global_link) {
 		for (i = 0; i < raid_bdev->num_base_bdevs; i++) {
 			if (raid_bdev->base_bdev_info[i].bdev == base_bdev) {
-				found = true;
-				break;
+
+				assert(raid_bdev->base_bdev_info[i].desc);
+				raid_bdev->base_bdev_info[i].remove_scheduled = true;
+
+				if (raid_bdev->destruct_called == true ||
+				    raid_bdev->state == RAID_BDEV_STATE_CONFIGURING) {
+					/*
+					 * As raid bdev is not registered yet or already unregistered,
+					 * so cleanup should be done here itself.
+					 */
+					raid_bdev_free_base_bdev_resource(raid_bdev, i);
+					if (raid_bdev->num_base_bdevs_discovered == 0) {
+						/* There is no base bdev for this raid, so free the raid device. */
+						raid_bdev_cleanup(raid_bdev);
+						return;
+					}
+				}
+
+				raid_bdev_deconfigure(raid_bdev);
+				return;
 			}
 		}
-		if (found == true) {
-			break;
-		}
 	}
 
-	if (found == false) {
-		SPDK_ERRLOG("bdev to remove '%s' not found\n", base_bdev->name);
-		return;
-	}
-
-	assert(raid_bdev != NULL);
-	assert(raid_bdev->base_bdev_info[i].bdev);
-	assert(raid_bdev->base_bdev_info[i].desc);
-	raid_bdev->base_bdev_info[i].remove_scheduled = true;
-
-	if ((raid_bdev->destruct_called == true ||
-	     raid_bdev->state == RAID_BDEV_STATE_CONFIGURING) &&
-	    raid_bdev->base_bdev_info[i].bdev != NULL) {
-		/*
-		 * As raid bdev is not registered yet or already unregistered, so cleanup
-		 * should be done here itself
-		 */
-		raid_bdev_free_base_bdev_resource(raid_bdev, i);
-		if (raid_bdev->num_base_bdevs_discovered == 0) {
-			/* Since there is no base bdev for this raid, so free the raid device */
-			raid_bdev_cleanup(raid_bdev);
-			return;
-		}
-	}
-
-	raid_bdev_deconfigure(raid_bdev);
+	SPDK_ERRLOG("bdev to remove '%s' not found\n", base_bdev->name);
 }
 
 /*
@@ -1528,7 +1515,7 @@ raid_bdev_add_base_device(struct raid_bdev_config *raid_cfg, struct spdk_bdev *b
 
 	raid_bdev = raid_cfg->raid_bdev;
 	if (!raid_bdev) {
-		SPDK_ERRLOG("Raid bdev is not created yet '%s'\n", bdev->name);
+		SPDK_ERRLOG("Raid bdev '%s' is not created yet\n", raid_cfg->name);
 		return -ENODEV;
 	}
 

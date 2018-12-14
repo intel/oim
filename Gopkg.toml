@@ -50,8 +50,7 @@ ignored = [
 [[constraint]]
   name = "github.com/spdk/spdk"
   # Because we need https://review.gerrithub.io/c/spdk/spdk/+/430460/ for RBD.
-  source = "github.com/pohly/spdk"
-  branch = "rbd"
+  branch = "master"
 
 # We are based on CSI v0.3.0 and must pull in the right version of the spec
 # and the corresponding csi-test.

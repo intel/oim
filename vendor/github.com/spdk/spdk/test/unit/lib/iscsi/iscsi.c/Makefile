@@ -33,7 +33,6 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../../../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 
 SPDK_LIB_LIST = trace conf util
 
@@ -41,7 +40,7 @@ SCSI_OBJS = port
 ISCSI_OBJS = md5 param
 LIBS += $(SCSI_OBJS:%=$(SPDK_ROOT_DIR)/lib/scsi/%.o)
 LIBS += $(ISCSI_OBJS:%=$(SPDK_ROOT_DIR)/lib/iscsi/%.o)
-LIBS += -lcunit $(ENV_LINKER_ARGS)
+LIBS += -lcunit
 
 TEST_FILE = iscsi_ut.c
 

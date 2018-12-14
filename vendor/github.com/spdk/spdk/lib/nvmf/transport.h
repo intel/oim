@@ -110,6 +110,12 @@ struct spdk_nvmf_transport_ops {
 			      struct spdk_nvmf_qpair *qpair);
 
 	/**
+	 * Remove a qpair from a poll group
+	 */
+	int (*poll_group_remove)(struct spdk_nvmf_transport_poll_group *group,
+				 struct spdk_nvmf_qpair *qpair);
+
+	/**
 	 * Poll the group to process I/O
 	 */
 	int (*poll_group_poll)(struct spdk_nvmf_transport_poll_group *group);
@@ -153,6 +159,11 @@ struct spdk_nvmf_transport_ops {
 	 */
 	int (*qpair_get_listen_trid)(struct spdk_nvmf_qpair *qpair,
 				     struct spdk_nvme_transport_id *trid);
+
+	/*
+	 * set the submission queue size of the queue pair
+	 */
+	int (*qpair_set_sqsize)(struct spdk_nvmf_qpair *qpair);
 };
 
 
@@ -173,6 +184,9 @@ void spdk_nvmf_transport_poll_group_destroy(struct spdk_nvmf_transport_poll_grou
 int spdk_nvmf_transport_poll_group_add(struct spdk_nvmf_transport_poll_group *group,
 				       struct spdk_nvmf_qpair *qpair);
 
+int spdk_nvmf_transport_poll_group_remove(struct spdk_nvmf_transport_poll_group *group,
+		struct spdk_nvmf_qpair *qpair);
+
 int spdk_nvmf_transport_poll_group_poll(struct spdk_nvmf_transport_poll_group *group);
 
 int spdk_nvmf_transport_req_free(struct spdk_nvmf_request *req);
@@ -191,10 +205,12 @@ int spdk_nvmf_transport_qpair_get_local_trid(struct spdk_nvmf_qpair *qpair,
 
 int spdk_nvmf_transport_qpair_get_listen_trid(struct spdk_nvmf_qpair *qpair,
 		struct spdk_nvme_transport_id *trid);
+int spdk_nvmf_transport_qpair_set_sqsize(struct spdk_nvmf_qpair *qpair);
 
 bool spdk_nvmf_transport_opts_init(enum spdk_nvme_transport_type type,
 				   struct spdk_nvmf_transport_opts *opts);
 
 extern const struct spdk_nvmf_transport_ops spdk_nvmf_transport_rdma;
+extern const struct spdk_nvmf_transport_ops spdk_nvmf_transport_tcp;
 
 #endif /* SPDK_NVMF_TRANSPORT_H */

@@ -246,13 +246,12 @@ spdk_scsi_dev_construct(const char *name, const char *bdev_name_list[],
 
 void
 spdk_scsi_dev_queue_mgmt_task(struct spdk_scsi_dev *dev,
-			      struct spdk_scsi_task *task,
-			      enum spdk_scsi_task_func func)
+			      struct spdk_scsi_task *task)
 {
 	assert(task != NULL);
 
-	task->function = func;
-	spdk_scsi_lun_task_mgmt_execute(task, func);
+	spdk_scsi_lun_append_mgmt_task(task->lun, task);
+	spdk_scsi_lun_execute_mgmt_task(task->lun);
 }
 
 void
@@ -261,7 +260,8 @@ spdk_scsi_dev_queue_task(struct spdk_scsi_dev *dev,
 {
 	assert(task != NULL);
 
-	spdk_scsi_lun_execute_task(task->lun, task);
+	spdk_scsi_lun_append_task(task->lun, task);
+	spdk_scsi_lun_execute_tasks(task->lun);
 }
 
 static struct spdk_scsi_port *
@@ -406,7 +406,9 @@ spdk_scsi_dev_has_pending_tasks(const struct spdk_scsi_dev *dev)
 	int i;
 
 	for (i = 0; i < SPDK_SCSI_DEV_MAX_LUN; ++i) {
-		if (dev->lun[i] && spdk_scsi_lun_has_pending_tasks(dev->lun[i])) {
+		if (dev->lun[i] &&
+		    (spdk_scsi_lun_has_pending_tasks(dev->lun[i]) ||
+		     spdk_scsi_lun_has_pending_mgmt_tasks(dev->lun[i]))) {
 			return true;
 		}
 	}

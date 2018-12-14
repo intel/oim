@@ -33,10 +33,8 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 
-LIBS += $(ENV_LINKER_ARGS)
+UNIT_TEST_LINK_ENV = 1
 TEST_FILE = vtophys.c
 
-ADDITIONAL_LIBS += $(ENV_LIBS)
 include $(SPDK_ROOT_DIR)/mk/spdk.unittest.mk

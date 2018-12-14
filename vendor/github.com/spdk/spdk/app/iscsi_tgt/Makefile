@@ -33,7 +33,6 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
 
 APP = iscsi_tgt
@@ -44,27 +43,13 @@ CFLAGS += -I$(SPDK_ROOT_DIR)/lib
 
 C_SRCS := iscsi_tgt.c
 
-SPDK_LIB_LIST = event_bdev event_copy event_iscsi event_net event_scsi event
+SPDK_LIB_LIST = $(ALL_MODULES_LIST)
+SPDK_LIB_LIST += event_bdev event_copy event_iscsi event_net event_scsi event
 SPDK_LIB_LIST += jsonrpc json rpc bdev_rpc bdev iscsi scsi copy trace conf
-SPDK_LIB_LIST += thread util log log_rpc app_rpc net
+SPDK_LIB_LIST += thread util log log_rpc app_rpc net sock
 
 ifeq ($(OS),Linux)
 SPDK_LIB_LIST += event_nbd nbd
 endif
 
-LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS) \
-	$(COPY_MODULES_LINKER_ARGS) \
-	$(SOCK_MODULES_LINKER_ARGS)
-LIBS += $(SPDK_LIB_LINKER_ARGS)
-LIBS += $(ENV_LINKER_ARGS)
-
-all : $(APP)
-	@:
-
-$(APP) : $(OBJS) $(SPDK_LIB_FILES) $(ENV_LIBS) $(BLOCKDEV_MODULES_FILES) $(COPY_MODULES_FILES) $(SOCK_MODULES_FILES)
-	$(LINK_C)
-
-clean :
-	$(CLEAN_C) $(APP)
-
-include $(SPDK_ROOT_DIR)/mk/spdk.deps.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.app.mk

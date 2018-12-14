@@ -61,6 +61,7 @@ extern "C" {
 #define SPDK_SCSI_DEV_MAX_NAME			255
 
 #define SPDK_SCSI_PORT_MAX_NAME_LENGTH		255
+#define SPDK_SCSI_MAX_TRANSPORT_ID_LENGTH	255
 
 enum spdk_scsi_data_dir {
 	SPDK_SCSI_DIR_NONE = 0,
@@ -247,13 +248,13 @@ void spdk_scsi_dev_destruct(struct spdk_scsi_dev *dev);
  * Execute the SCSI management task.
  *
  * The task can be constructed by the function spdk_scsi_task_construct().
+ * Code of task management function to be executed is set before calling this API.
  *
  * \param dev SCSI device.
  * \param task SCSI task to be executed.
- * \param func Task management function to be executed.
  */
-void spdk_scsi_dev_queue_mgmt_task(struct spdk_scsi_dev *dev, struct spdk_scsi_task *task,
-				   enum spdk_scsi_task_func func);
+void spdk_scsi_dev_queue_mgmt_task(struct spdk_scsi_dev *dev, struct spdk_scsi_task *task);
+
 /**
  * Execute the SCSI task.
  *
@@ -472,6 +473,13 @@ void spdk_scsi_task_copy_status(struct spdk_scsi_task *dst, struct spdk_scsi_tas
 void spdk_scsi_task_process_null_lun(struct spdk_scsi_task *task);
 
 /**
+ * Process the aborted SCSI task.
+ *
+ * \param task SCSI task.
+ */
+void spdk_scsi_task_process_abort(struct spdk_scsi_task *task);
+
+/**
  * Open a logical unit for I/O operations.
  *
  * The registered callback function must get all tasks from the upper layer
@@ -510,6 +518,16 @@ int spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_desc *desc);
  */
 void spdk_scsi_lun_free_io_channel(struct spdk_scsi_desc *desc);
 
+
+/**
+ * Set iSCSI Initiator port TransportID
+ *
+ * \param port SCSI initiator port.
+ * \param iscsi_name Initiator name.
+ * \param isid Session ID.
+ */
+void spdk_scsi_port_set_iscsi_transport_id(struct spdk_scsi_port *port,
+		char *iscsi_name, uint64_t isid);
 #ifdef __cplusplus
 }
 #endif

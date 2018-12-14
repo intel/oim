@@ -54,6 +54,8 @@ struct spdk_scsi_port {
 	uint8_t			is_used;
 	uint64_t		id;
 	uint16_t		index;
+	uint16_t		transport_id_len;
+	char			transport_id[SPDK_SCSI_MAX_TRANSPORT_ID_LENGTH];
 	char			name[SPDK_SCSI_PORT_MAX_NAME_LENGTH];
 };
 
@@ -113,8 +115,20 @@ struct spdk_scsi_lun {
 	/** List of open descriptors for this LUN. */
 	TAILQ_HEAD(, spdk_scsi_desc) open_descs;
 
-	/** pending tasks */
+	/** submitted tasks */
 	TAILQ_HEAD(tasks, spdk_scsi_task) tasks;
+
+	/** pending tasks */
+	TAILQ_HEAD(pending_tasks, spdk_scsi_task) pending_tasks;
+
+	/** submitted management tasks */
+	TAILQ_HEAD(mgmt_tasks, spdk_scsi_task) mgmt_tasks;
+
+	/** pending management tasks */
+	TAILQ_HEAD(pending_mgmt_tasks, spdk_scsi_task) pending_mgmt_tasks;
+
+	/** poller to check completion of tasks prior to reset */
+	struct spdk_poller *reset_poller;
 };
 
 struct spdk_lun_db_entry {
@@ -134,10 +148,13 @@ _spdk_scsi_lun *spdk_scsi_lun_construct(struct spdk_bdev *bdev,
 					void *hotremove_ctx);
 void spdk_scsi_lun_destruct(struct spdk_scsi_lun *lun);
 
-void spdk_scsi_lun_execute_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
-int spdk_scsi_lun_task_mgmt_execute(struct spdk_scsi_task *task, enum spdk_scsi_task_func func);
+void spdk_scsi_lun_append_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
+void spdk_scsi_lun_execute_tasks(struct spdk_scsi_lun *lun);
+void spdk_scsi_lun_append_mgmt_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
+void spdk_scsi_lun_execute_mgmt_task(struct spdk_scsi_lun *lun);
+bool spdk_scsi_lun_has_pending_mgmt_tasks(const struct spdk_scsi_lun *lun);
 void spdk_scsi_lun_complete_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
-void spdk_scsi_lun_complete_mgmt_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
+void spdk_scsi_lun_complete_reset_task(struct spdk_scsi_lun *lun, struct spdk_scsi_task *task);
 bool spdk_scsi_lun_has_pending_tasks(const struct spdk_scsi_lun *lun);
 int _spdk_scsi_lun_allocate_io_channel(struct spdk_scsi_lun *lun);
 void _spdk_scsi_lun_free_io_channel(struct spdk_scsi_lun *lun);

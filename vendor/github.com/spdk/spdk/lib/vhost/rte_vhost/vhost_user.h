@@ -91,6 +91,7 @@ typedef enum VhostUserRequest {
 	VHOST_USER_NVME_GET_CAP = 82,
 	VHOST_USER_NVME_START_STOP = 83,
 	VHOST_USER_NVME_IO_CMD = 84,
+	VHOST_USER_NVME_SET_BAR_MR = 85,
 	VHOST_USER_MAX
 } VhostUserRequest;
 
@@ -126,17 +127,6 @@ typedef struct VhostUserConfig {
 	uint8_t region[VHOST_USER_MAX_CONFIG_SIZE];
 } VhostUserConfig;
 
-enum VhostUserNvmeQueueTypes {
-	VHOST_USER_NVME_SUBMISSION_QUEUE = 1,
-	VHOST_USER_NVME_COMPLETION_QUEUE = 2,
-};
-
-typedef struct VhostUserNvmeIO {
-	enum VhostUserNvmeQueueTypes queue_type;
-	uint32_t qid;
-	uint32_t tail_head;
-} VhostUserNvmeIO;
-
 typedef struct VhostUserMsg {
 	VhostUserRequest request;
 
@@ -161,7 +151,6 @@ typedef struct VhostUserMsg {
 			} cmd;
 			uint8_t buf[4096];
 		} nvme;
-		struct VhostUserNvmeIO nvme_io;
 	} payload;
 	int fds[VHOST_MEMORY_MAX_NREGIONS];
 } __attribute((packed)) VhostUserMsg;

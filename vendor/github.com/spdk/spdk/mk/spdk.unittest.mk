@@ -32,7 +32,7 @@
 #
 
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.app_vars.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.mock.unittest.mk
 
 C_SRCS = $(TEST_FILE)
@@ -40,16 +40,22 @@ C_SRCS = $(TEST_FILE)
 CFLAGS += -I$(SPDK_ROOT_DIR)/lib
 CFLAGS += -I$(SPDK_ROOT_DIR)/test
 
-SPDK_LIB_LIST += thread util log spdk_mock sock
+SPDK_LIB_LIST += thread util log sock
 
 LIBS += -lcunit $(SPDK_STATIC_LIB_LINKER_ARGS)
 
 APP = $(TEST_FILE:.c=)
 
+ifneq ($(UNIT_TEST_LINK_ENV),1)
+ENV_LINKER_ARGS =
+endif
+
+install: all
+
 all: $(APP)
 	@:
 
-$(APP) : $(OBJS) $(SPDK_LIB_FILES) $(ADDITIONAL_LIBS)
+$(APP) : $(OBJS) $(SPDK_LIB_FILES) $(ENV_LIBS)
 	$(LINK_C)
 
 clean:

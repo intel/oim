@@ -2,6 +2,39 @@
 # Please run this script as root.
 
 set -e
+
+function usage()
+{
+	echo ""
+	echo "This script is intended to automate the installation of package dependencies to build SPDK."
+	echo "Please run this script as root user."
+	echo ""
+	echo "$0"
+	echo "  -h --help"
+	echo "  -i --install-crypto Install ipsec dependencies"
+	echo ""
+	exit 0
+}
+
+INSTALL_CRYPTO=false
+
+while getopts 'hi-:' optchar; do
+	case "$optchar" in
+		-)
+		case "$OPTARG" in
+			help) usage;;
+			install-crypto) INSTALL_CRYPTO=true;;
+			*) echo "Invalid argument '$OPTARG'"
+			usage;;
+		esac
+		;;
+	h) usage;;
+	i) INSTALL_CRYPTO=true;;
+	*) echo "Invalid argument '$OPTARG'"
+	usage;;
+	esac
+done
+
 trap 'set +e; trap - ERR; echo "Error!"; exit 1;' ERR
 
 scriptsdir=$(readlink -f $(dirname $0))
@@ -53,10 +86,10 @@ elif [ -f /etc/debian_version ]; then
 	apt-get install -y libnuma-dev nasm
 	# Additional dependencies for building docs
 	apt-get install -y doxygen mscgen graphviz
-	# Additional dependencies for SPDK CLI
-	apt-get install -y python-pip python3-pip
-	pip install configshell_fb pexpect
-	pip3 install configshell_fb pexpect
+	# Additional dependencies for SPDK CLI - not available on older Ubuntus
+	if [[ $(lsb_release -rs) > "16.01" ]]; then
+		apt-get install -y python3-configshell-fb python3-pexpect
+	fi
 elif [ -f /etc/SuSE-release ]; then
 	zypper install -y gcc gcc-c++ make cunit-devel libaio-devel libopenssl-devel \
 		git-core lcov python-base python-pep8 libuuid-devel sg3_utils pciutils
@@ -81,21 +114,25 @@ else
 fi
 
 # Only crypto needs nasm and this lib but because the lib requires root to
-# install we do it here.
-nasm_ver=$(nasm -v | sed 's/[^0-9]*//g' | awk '{print substr ($0, 0, 5)}')
-if [ $nasm_ver -lt "21202" ]; then
-		echo Crypto requires NASM version 2.12.02 or newer.  Please install
-		echo or upgrade and re-run this script if you are going to use Crypto.
-else
-	ipsec="$(find /usr -name intel-ipsec-mb.h 2>/dev/null)"
-	if [ "$ipsec" == "" ]; then
-		ipsec_submodule_cloned="$(find $rootdir/intel-ipsec-mb -name intel-ipsec-mb.h 2>/dev/null)"
-		if [ "$ipsec_submodule_cloned" != "" ]; then
-			su - $SUDO_USER -c "make -C $rootdir/intel-ipsec-mb"
-			make -C $rootdir/intel-ipsec-mb install
-		else
-			echo "The intel-ipsec-mb submodule has not been cloned and will not be installed."
-			echo "To enable crypto, run 'git submodule update --init' and then run this script again."
+# install we do it here - when asked.
+
+if $INSTALL_CRYPTO; then
+
+	nasm_ver=$(nasm -v | sed 's/[^0-9]*//g' | awk '{print substr ($0, 0, 5)}')
+	if [ $nasm_ver -lt "21202" ]; then
+			echo Crypto requires NASM version 2.12.02 or newer.  Please install
+			echo or upgrade and re-run this script if you are going to use Crypto.
+	else
+		ipsec="$(find /usr -xdev -name intel-ipsec-mb.h 2>/dev/null)"
+		if [ "$ipsec" == "" ]; then
+			ipsec_submodule_cloned="$(find $rootdir/intel-ipsec-mb -name intel-ipsec-mb.h 2>/dev/null)"
+			if [ "$ipsec_submodule_cloned" != "" ]; then
+				su - $SUDO_USER -c "make -C $rootdir/intel-ipsec-mb"
+				make -C $rootdir/intel-ipsec-mb install
+			else
+				echo "The intel-ipsec-mb submodule has not been cloned and will not be installed."
+				echo "To enable crypto, run 'git submodule update --init' and then run this script again."
+			fi
 		fi
 	fi
 fi

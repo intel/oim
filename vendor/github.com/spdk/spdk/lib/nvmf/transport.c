@@ -46,6 +46,7 @@ static const struct spdk_nvmf_transport_ops *const g_transport_ops[] = {
 #ifdef SPDK_CONFIG_RDMA
 	&spdk_nvmf_transport_rdma,
 #endif
+	&spdk_nvmf_transport_tcp,
 };
 
 #define NUM_TRANSPORTS (SPDK_COUNTOF(g_transport_ops))
@@ -60,6 +61,18 @@ spdk_nvmf_get_transport_ops(enum spdk_nvme_transport_type type)
 		}
 	}
 	return NULL;
+}
+
+const struct spdk_nvmf_transport_opts *
+spdk_nvmf_get_transport_opts(struct spdk_nvmf_transport *transport)
+{
+	return &transport->opts;
+}
+
+spdk_nvme_transport_type_t
+spdk_nvmf_get_transport_type(struct spdk_nvmf_transport *transport)
+{
+	return transport->ops->type;
 }
 
 struct spdk_nvmf_transport *
@@ -98,6 +111,18 @@ spdk_nvmf_transport_create(enum spdk_nvme_transport_type type,
 	transport->opts = *opts;
 
 	return transport;
+}
+
+struct spdk_nvmf_transport *
+spdk_nvmf_transport_get_first(struct spdk_nvmf_tgt *tgt)
+{
+	return TAILQ_FIRST(&tgt->transports);
+}
+
+struct spdk_nvmf_transport *
+spdk_nvmf_transport_get_next(struct spdk_nvmf_transport *transport)
+{
+	return TAILQ_NEXT(transport, link);
 }
 
 int
@@ -168,6 +193,20 @@ spdk_nvmf_transport_poll_group_add(struct spdk_nvmf_transport_poll_group *group,
 }
 
 int
+spdk_nvmf_transport_poll_group_remove(struct spdk_nvmf_transport_poll_group *group,
+				      struct spdk_nvmf_qpair *qpair)
+{
+	int rc = ENOTSUP;
+
+	assert(qpair->transport == group->transport);
+	if (group->transport->ops->poll_group_remove) {
+		rc = group->transport->ops->poll_group_remove(group, qpair);
+	}
+
+	return rc;
+}
+
+int
 spdk_nvmf_transport_poll_group_poll(struct spdk_nvmf_transport_poll_group *group)
 {
 	return group->transport->ops->poll_group_poll(group);
@@ -233,4 +272,14 @@ spdk_nvmf_transport_opts_init(enum spdk_nvme_transport_type type,
 
 	ops->opts_init(opts);
 	return true;
+}
+
+int
+spdk_nvmf_transport_qpair_set_sqsize(struct spdk_nvmf_qpair *qpair)
+{
+	if (qpair->transport->ops->qpair_set_sqsize) {
+		return qpair->transport->ops->qpair_set_sqsize(qpair);
+	}
+
+	return 0;
 }

@@ -156,6 +156,8 @@ function create_bdev_subsystem_config() {
 			$rpc_py construct_crypto_bdev -b Malloc3 -c CryMalloc3 -d crypto_qat -k 0123456789123456
 		fi
 	fi
+	$rpc_py construct_malloc_bdev 8 1024 --name Malloc4
+	$rpc_py construct_passthru_bdev -b Malloc4 -p PTMalloc4
 	$rpc_py construct_error_bdev Malloc2
 	if [ $(uname -s) = Linux ]; then
 		dd if=/dev/zero of=/tmp/sample_aio bs=2048 count=5000
@@ -179,6 +181,8 @@ function create_nvmf_subsystem_config() {
 
 	bdevs="$($rpc_py construct_malloc_bdev 64 512) "
 	bdevs+="$($rpc_py construct_malloc_bdev 64 512)"
+
+	$rpc_py nvmf_create_transport -t RDMA -u 8192 -p 4 -c 0
 	$rpc_py nvmf_subsystem_create nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001
 	for bdev in $bdevs; do
 		$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 $bdev

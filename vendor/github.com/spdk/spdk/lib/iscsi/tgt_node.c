@@ -792,6 +792,11 @@ spdk_check_iscsi_name(const char *name)
 	const unsigned char *up = (const unsigned char *) name;
 	size_t n;
 
+	/* valid iSCSI name no larger than 223 bytes */
+	if (strlen(name) > MAX_TARGET_NAME) {
+		return -1;
+	}
+
 	/* valid iSCSI name? */
 	for (n = 0; up[n] != 0; n++) {
 		if (up[n] > 0x00U && up[n] <= 0x2cU) {
@@ -1276,7 +1281,7 @@ spdk_iscsi_tgt_node_cleanup_luns(struct spdk_iscsi_conn *conn,
 		task->scsi.initiator_port = conn->initiator_port;
 		task->scsi.lun = lun;
 
-		spdk_scsi_dev_queue_mgmt_task(target->dev, &task->scsi, SPDK_SCSI_TASK_FUNC_LUN_RESET);
+		spdk_iscsi_op_abort_task_set(task, SPDK_SCSI_TASK_FUNC_LUN_RESET);
 	}
 
 	return 0;

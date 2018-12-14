@@ -24,7 +24,7 @@ VM_SETUP_PATH=$(readlink -f ${BASH_SOURCE%/*})
 
 UPGRADE=false
 INSTALL=false
-CONF="librxe,iscsi,rocksdb,fio,flamegraph,tsocks,qemu,vpp,libiscsi,nvmecli"
+CONF="librxe,iscsi,rocksdb,fio,flamegraph,tsocks,qemu,vpp,libiscsi,nvmecli,qat"
 
 function install_rxe_cfg()
 {
@@ -80,6 +80,40 @@ function install_iscsi_adm()
             else
                 echo "custom open-iscsi install located, not reinstalling"
             fi
+        fi
+    fi
+}
+
+function install_qat()
+{
+    if echo $CONF | grep -q qat; then
+        qat_tarball=$(basename $DRIVER_LOCATION_QAT)
+        kernel_maj=$(uname -r | cut -d'.' -f1)
+        kernel_min=$(uname -r | cut -d'.' -f2)
+
+        sudo modprobe -r qat_c62x
+        if [ -d /QAT ]; then
+            sudo rm -rf /QAT/
+        fi
+
+        sudo mkdir /QAT
+
+        wget $DRIVER_LOCATION_QAT
+        sudo cp $qat_tarball /QAT/
+        (cd /QAT && sudo tar zxof /QAT/$qat_tarball)
+
+        #The driver version 1.7.l.4.3.0-00033 contains a reference to a deprecated function. Remove it so the build won't fail.
+        if [ $kernel_maj -le 4 ]; then
+            if [ $kernel_min -le 17 ]; then
+                sudo sed -i 's/rdtscll(timestamp);/timestamp = rdtsc_ordered();/g' \
+                /QAT/quickassist/utilities/osal/src/linux/kernel_space/OsalServices.c || true
+            fi
+        fi
+
+        (cd /QAT && sudo ./configure --enable-icp-sriov=host && sudo make install)
+
+        if sudo service qat_service start; then
+            echo "failed to start the qat service. Something may be wrong with your device or package."
         fi
     fi
 }
@@ -142,7 +176,7 @@ function install_qemu()
 {
     if echo $CONF | grep -q qemu; then
         # Qemu is used in the vhost tests.
-        SPDK_QEMU_BRANCH=spdk-2.12
+        SPDK_QEMU_BRANCH=spdk-3.0.0
         mkdir -p qemu
         if [ ! -d "qemu/$SPDK_QEMU_BRANCH" ]; then
             git -C ./qemu clone "${GIT_REPO_QEMU}" -b "$SPDK_QEMU_BRANCH" "$SPDK_QEMU_BRANCH"
@@ -310,6 +344,8 @@ cd ~
 : ${GIT_REPO_VPP=https://gerrit.fd.io/r/vpp}; export GIT_REPO_VPP
 : ${GIT_REPO_LIBISCSI=https://github.com/sahlberg/libiscsi}; export GIT_REPO_LIBISCSI
 : ${GIT_REPO_SPDK_NVME_CLI=https://github.com/spdk/nvme-cli}; export GIT_REPO_SPDK_NVME_CLI
+: ${GIT_REPO_INTEL_IPSEC_MB=https://github.com/spdk/intel-ipsec-mb.git}; export GIT_REPO_INTEL_IPSEC_MB
+: ${DRIVER_LOCATION_QAT=https://01.org/sites/default/files/downloads/intelr-quickassist-technology/qat1.7.l.4.3.0-00033.tar.gz}; export DRIVER_LOCATION_QAT
 
 jobs=$(($(nproc)*2))
 
@@ -329,10 +365,11 @@ else
     git -C spdk_repo clone "${GIT_REPO_SPDK}"
 fi
 git -C spdk_repo/spdk config submodule.dpdk.url "${GIT_REPO_DPDK}"
+git -C spdk_repo/spdk config submodule.intel-ipsec-mb.url "${GIT_REPO_INTEL_IPSEC_MB}"
 git -C spdk_repo/spdk submodule update --init --recursive
 
 if $INSTALL; then
-    sudo ./scripts/pkgdep.sh
+    sudo spdk_repo/spdk/scripts/pkgdep.sh -i
 
     if echo $CONF | grep -q tsocks; then
         sudo dnf install -y tsocks
@@ -371,7 +408,8 @@ if $INSTALL; then
     libibverbs-utils \
     gdisk \
     socat \
-    sshfs
+    sshfs \
+    btrfs-progs
 fi
 
 sudo mkdir -p /usr/src
@@ -385,6 +423,7 @@ install_qemu&
 install_vpp&
 install_nvmecli&
 install_libiscsi&
+install_qat&
 
 wait
 # create autorun-spdk.conf in home folder. This is sourced by the autotest_common.sh file.
@@ -397,28 +436,33 @@ if [ ! -e ~/autorun-spdk.conf ]; then
 	cat > ~/autorun-spdk.conf << EOF
 # assign a value of 1 to all of the pertinent tests
 SPDK_BUILD_DOC=1
+SPDK_BUILD_SHARED_OBJECT=1
 SPDK_RUN_CHECK_FORMAT=1
 SPDK_RUN_SCANBUILD=1
 SPDK_RUN_VALGRIND=1
+SPDK_TEST_CRYPTO=1
 SPDK_TEST_UNITTEST=1
 SPDK_TEST_ISCSI=1
 SPDK_TEST_ISCSI_INITIATOR=1
-# nvme and nvme-cli cannot be run at the same time on a VM.
 SPDK_TEST_NVME=1
-SPDK_TEST_NVME_CLI=0
+SPDK_TEST_NVME_CLI=1
 SPDK_TEST_NVMF=1
 SPDK_TEST_RBD=1
-# requires some extra configuration. see TEST_ENV_SETUP_README
-SPDK_TEST_VHOST=0
-SPDK_TEST_VHOST_INIT=0
 SPDK_TEST_BLOCKDEV=1
-# doesn't work on vm
-SPDK_TEST_IOAT=0
 SPDK_TEST_EVENT=1
 SPDK_TEST_BLOBFS=1
 SPDK_TEST_PMDK=1
 SPDK_TEST_LVOL=1
+SPDK_TEST_JSON=1
 SPDK_RUN_ASAN=1
 SPDK_RUN_UBSAN=1
+# doesn't work on vm
+SPDK_TEST_IOAT=0
+# requires some extra configuration. see TEST_ENV_SETUP_README
+SPDK_TEST_VHOST=0
+SPDK_TEST_VHOST_INIT=0
+# Not configured here
+SPDK_RUN_INSTALLED_DPDK=0
+
 EOF
 fi

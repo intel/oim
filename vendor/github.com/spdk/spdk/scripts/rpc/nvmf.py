@@ -37,6 +37,22 @@ def set_nvmf_target_options(client,
     return client.call('set_nvmf_target_options', params)
 
 
+def set_nvmf_target_max_subsystems(client,
+                                   max_subsystems=None):
+    """Set NVMe-oF target options.
+
+    Args:
+        max_subsystems: Maximum number of NVMe-oF subsystems (e.g. 1024)
+
+    Returns:
+        True or False
+    """
+    params = {}
+
+    params['max_subsystems'] = max_subsystems
+    return client.call('set_nvmf_target_max_subsystems', params)
+
+
 def set_nvmf_target_config(client,
                            acceptor_poll_rate=None,
                            conn_sched=None):
@@ -96,6 +112,15 @@ def nvmf_create_transport(client,
     if max_aq_depth:
         params['max_aq_depth'] = max_aq_depth
     return client.call('nvmf_create_transport', params)
+
+
+def get_nvmf_transports(client):
+    """Get list of NVMe-oF transports.
+
+    Returns:
+        List of NVMe-oF transport objects.
+    """
+    return client.call('get_nvmf_transports')
 
 
 def get_nvmf_subsystems(client):

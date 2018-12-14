@@ -164,6 +164,39 @@ Example response:
 }
 ~~~
 
+## wait_subsystem_init {#rpc_wait_subsystem_init}
+
+Do not return until all subsystems have been initialized and the RPC system state is running.
+If the application is already running, this call will return immediately. This RPC can be called at any time.
+
+### Parameters
+
+This method has no parameters.
+
+### Response
+
+Returns True when subsystems have been initialized.
+
+### Example
+
+Example request:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "wait_subsystem_init"
+}
+~~~
+
+Example response:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
 ## get_rpc_methods {#rpc_get_rpc_methods}
 
 Get an array of supported RPC methods.
@@ -204,9 +237,9 @@ Example response:
     "get_nbd_disks",
     "stop_nbd_disk",
     "start_nbd_disk",
-    "get_trace_flags",
-    "clear_trace_flag",
-    "set_trace_flag",
+    "get_log_flags",
+    "clear_log_flag",
+    "set_log_flag",
     "get_log_level",
     "set_log_level",
     "get_log_print_level",
@@ -996,7 +1029,7 @@ Array of names of newly created bdevs.
 
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+name                    | Required | string      | Name of the NVMe controller, prefix for each bdev name
 trtype                  | Required | string      | NVMe-oF target trtype: rdma or pcie
 traddr                  | Required | string      | NVMe-oF target address: ip or BDF
 adrfam                  | Optional | string      | NVMe-oF target adrfam: ipv4, ipv6, ib, fc, intra_host
@@ -1605,7 +1638,7 @@ and a starting point in development of new bdev type.
 
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
-passthru_bdev_name      | Required | string      | Bdev name
+name                    | Required | string      | Bdev name
 base_bdev_name          | Required | string      | Base bdev name
 
 ### Result
@@ -1620,7 +1653,7 @@ Example request:
 {
   "params": {
     "base_bdev_name": "Malloc0",
-    "passthru_bdev_name": "Passsthru0"
+    "name": "Passsthru0"
   },
   "jsonrpc": "2.0",
   "method": "construct_passthru_bdev",
@@ -3332,21 +3365,16 @@ Example response:
 }
 ~~~
 
-## set_nvmf_target_options {#rpc_set_nvmf_target_options}
+## set_nvmf_target_max_subsystems {#rpc_set_nvmf_target_max_subsystems}
 
-Set global parameters for the NVMe-oF target.  This RPC may only be called before SPDK subsystems
-have been initialized.
+Set the maximum allowed subsystems for the NVMe-oF target.  This RPC may only be called
+before SPDK subsystems have been initialized.
 
 ### Parameters
 
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
-max_queue_depth         | Optional | number      | Maximum number of outstanding I/Os per queue
-max_qpairs_per_ctrlr    | Optional | number      | Maximum number of SQ and CQ per controller
-in_capsule_data_size    | Optional | number      | Maximum number of in-capsule data size
-max_io_size             | Optional | number      | Maximum I/O size (bytes)
-max_subsystems          | Optional | number      | Maximum number of NVMe-oF subsystems
-io_unit_size            | Optional | number      | I/O unit size (bytes)
+max_subsystems          | Required | number      | Maximum number of NVMe-oF subsystems
 
 ### Example
 
@@ -3355,13 +3383,8 @@ Example request:
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "set_nvmf_target_options",
+  "method": "set_nvmf_target_max_subsystems",
   "params": {
-    "in_capsule_data_size": 4096,
-    "io_unit_size": 131072,
-    "max_qpairs_per_ctrlr": 64,
-    "max_queue_depth": 128,
-    "max_io_size": 131072,
     "max_subsystems": 1024
   }
 }
@@ -3407,6 +3430,41 @@ Example response:
   "jsonrpc": "2.0",
   "id": 1,
   "result": true
+}
+~~~
+
+## get_nvmf_transports method {#rpc_get_nvmf_transports}
+
+### Parameters
+
+This method has no parameters.
+
+### Example
+
+Example request:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "get_nvmf_transports"
+}
+~~~
+
+Example response:
+~~~
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "type": "RDMA".
+      "max_queue_depth": 128,
+      "max_qpairs_per_ctrlr": 64,
+      "in_capsule_data_size": 4096,
+      "max_io_size": 131072,
+      "io_unit_size": 131072
+    }
+  ]
 }
 ~~~
 
@@ -4069,7 +4127,7 @@ Create a logical volume on a logical volume store.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 lvol_name               | Required | string      | Name of logical volume to create
-size                    | Required | number      | Desired size of logical volume in bytes
+size                    | Required | number      | Desired size of logical volume in megabytes
 thin_provision          | Optional | boolean     | True to enable thin provisioning
 uuid                    | Optional | string      | UUID of logical volume store to create logical volume on
 lvs_name                | Optional | string      | Name of logical volume store to create logical volume on
@@ -4229,7 +4287,7 @@ Resize a logical volume.
 Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 name                    | Required | string      | UUID or alias of the logical volume to resize
-size                    | Required | number      | Desired size of the logical volume in bytes
+size                    | Required | number      | Desired size of the logical volume in megabytes
 
 ### Example
 

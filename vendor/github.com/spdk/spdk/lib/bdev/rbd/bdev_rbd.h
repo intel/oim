@@ -56,4 +56,4 @@ struct spdk_bdev *spdk_bdev_rbd_create(const char *name, const char *user_id, co
 void spdk_bdev_rbd_delete(struct spdk_bdev *bdev, spdk_delete_rbd_complete cb_fn,
 			  void *cb_arg);
 
-#endif // SPDK_BDEV_RBD_H
+#endif /* SPDK_BDEV_RBD_H */

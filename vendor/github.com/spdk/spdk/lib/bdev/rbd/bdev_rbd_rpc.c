@@ -65,7 +65,7 @@ spdk_bdev_rbd_decode_config(const struct spdk_json_val *values, void *out)
 
 	if (values->type == SPDK_JSON_VAL_NULL) {
 		/* treated like empty object: empty config */
-		*map = calloc(sizeof(**map), 1);
+		*map = calloc(1, sizeof(**map));
 		if (!*map) {
 			return -1;
 		}
@@ -76,7 +76,7 @@ spdk_bdev_rbd_decode_config(const struct spdk_json_val *values, void *out)
 		return -1;
 	}
 
-	*map = calloc(sizeof(**map), values->len + 1);
+	*map = calloc(values->len + 1, sizeof(**map));
 	if (!*map) {
 		return -1;
 	}

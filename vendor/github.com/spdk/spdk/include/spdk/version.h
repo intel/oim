@@ -41,12 +41,12 @@
 /**
  * Major version number (year of original release minus 2000).
  */
-#define SPDK_VERSION_MAJOR	18
+#define SPDK_VERSION_MAJOR	19
 
 /**
  * Minor version number (month of original release).
  */
-#define SPDK_VERSION_MINOR	10
+#define SPDK_VERSION_MINOR	1
 
 /**
  * Patch level.
@@ -68,7 +68,7 @@
  *
  * \code
  * #if SPDK_VERSION >= SPDK_VERSION_NUM(17, 7, 0)
- * // Use feature from SPDK v17.07
+ *   Use feature from SPDK v17.07
  * #endif
  * \endcode
  */

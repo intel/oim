@@ -34,7 +34,9 @@
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
-DIRS-y = bdev blob blobfs event ioat iscsi json jsonrpc log lvol nvme nvmf scsi sock thread util
+DIRS-y = bdev blob blobfs event ioat iscsi json jsonrpc log lvol
+DIRS-y += nvme nvmf scsi sock thread util
+DIRS-$(CONFIG_REDUCE) += reduce
 ifeq ($(OS),Linux)
 DIRS-$(CONFIG_VHOST) += vhost
 endif

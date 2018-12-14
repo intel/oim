@@ -10,6 +10,58 @@ class UINVMf(UINode):
     def refresh(self):
         self._children = set([])
         UINVMfSubsystems(self)
+        UINVMfTransports(self)
+
+
+class UINVMfTransports(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, "transport", parent)
+        self.refresh()
+
+    def refresh(self):
+        self._children = set([])
+        for transport in self.get_root().get_nvmf_transports():
+            UINVMfTransport(transport, self)
+
+    def ui_command_create(self, trtype, max_queue_depth=None, max_qpairs_per_ctrlr=None, in_capsule_data_size=None,
+                          max_io_size=None, io_unit_size=None, max_aq_depth=None):
+        """Create a transport with given parameters
+
+        Arguments:
+            trtype - Example: 'RDMA'.
+            max_queue_depth - Optional parameter. Integer, max value 65535.
+            max_qpairs_per_ctrlr - Optional parameter. 16 bit Integer, max value 65535.
+            in_capsule_data_size - Optional parameter. 32 bit Integer, max value 4294967295
+            max_io_size - Optional parameter. 32 bit integer, max value 4294967295
+            io_unit_size - Optional parameter. 32 bit integer, max value 4294967295
+            max_aq_depth - Optional parameter. 32 bit integer, max value 4294967295
+        """
+        max_queue_depth = self.ui_eval_param(max_queue_depth, "number", None)
+        max_qpairs_per_ctrlr = self.ui_eval_param(max_qpairs_per_ctrlr, "number", None)
+        in_capsule_data_size = self.ui_eval_param(in_capsule_data_size, "number", None)
+        max_io_size = self.ui_eval_param(max_io_size, "number", None)
+        io_unit_size = self.ui_eval_param(io_unit_size, "number", None)
+        max_aq_depth = self.ui_eval_param(max_aq_depth, "number", None)
+        try:
+            self.get_root().create_nvmf_transport(trtype=trtype,
+                                                  max_queue_depth=max_queue_depth,
+                                                  max_qpairs_per_ctrlr=max_qpairs_per_ctrlr,
+                                                  in_capsule_data_size=in_capsule_data_size,
+                                                  max_io_size=max_io_size,
+                                                  io_unit_size=io_unit_size,
+                                                  max_aq_depth=max_aq_depth)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+        self.refresh()
+
+    def summary(self):
+        return "Transports: %s" % len(self.children), None
+
+
+class UINVMfTransport(UINode):
+    def __init__(self, transport, parent):
+        UINode.__init__(self, transport.trtype, parent)
+        self.transport = transport
 
 
 class UINVMfSubsystems(UINode):
@@ -21,6 +73,12 @@ class UINVMfSubsystems(UINode):
         self._children = set([])
         for subsystem in self.get_root().get_nvmf_subsystems():
             UINVMfSubsystem(subsystem, self)
+
+    def delete(self, subsystem_nqn):
+        try:
+            self.get_root().delete_nvmf_subsystem(nqn=subsystem_nqn)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
 
     def ui_command_create(self, nqn, serial_number=None,
                           max_namespaces=None, allow_any_host="false"):
@@ -50,10 +108,13 @@ class UINVMfSubsystems(UINode):
         Arguments:
             nqn_subsystem - Name of susbsytem to delete
         """
-        try:
-            self.get_root().delete_nvmf_subsystem(nqn=subsystem_nqn)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(subsystem_nqn)
+        self.refresh()
+
+    def ui_command_delete_all(self):
+        """Delete all subsystems"""
+        for child in self._children:
+            self.delete(child.subsystem.nqn)
         self.refresh()
 
     def summary(self):
@@ -128,6 +189,14 @@ class UINVMfSubsystemListeners(UINode):
                 self.listen_addresses = subsystem.listen_addresses
         self.refresh()
 
+    def delete(self, trtype, traddr, trsvcid, adrfam=None):
+        try:
+            self.get_root().nvmf_subsystem_remove_listener(
+                nqn=self.parent.subsystem.nqn, trtype=trtype,
+                traddr=traddr, trsvcid=trsvcid, adrfam=adrfam)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, trtype, traddr, trsvcid, adrfam):
         """Create address listener for subsystem.
 
@@ -155,12 +224,14 @@ class UINVMfSubsystemListeners(UINode):
             trsvcid - NVMe-oF transport service id: e.g., a port number.
             adrfam - Optional argument. Address family ("IPv4", "IPv6", "IB" or "FC").
         """
-        try:
-            self.get_root().nvmf_subsystem_remove_listener(
-                nqn=self.parent.subsystem.nqn, trtype=trtype,
-                traddr=traddr, trsvcid=trsvcid, adrfam=adrfam)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(trtype, traddr, trsvcid, adrfam)
+        self.get_root().refresh()
+        self.refresh_node()
+
+    def ui_command_delete_all(self):
+        """Remove all address listeners from subsystem."""
+        for la in self.listen_addresses:
+            self.delete(la['trtype'], la['traddr'], la['trsvcid'], la['adrfam'])
         self.get_root().refresh()
         self.refresh_node()
 
@@ -195,6 +266,13 @@ class UINVMfSubsystemHosts(UINode):
                 self.hosts = subsystem.hosts
         self.refresh()
 
+    def delete(self, host):
+        try:
+            self.get_root().nvmf_subsystem_remove_host(
+                nqn=self.parent.subsystem.nqn, host=host)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, host):
         """Add a host NQN to the whitelist of allowed hosts.
 
@@ -215,11 +293,14 @@ class UINVMfSubsystemHosts(UINode):
         Arguments:
            host - NQN of host to remove.
         """
-        try:
-            self.get_root().nvmf_subsystem_remove_host(
-                nqn=self.parent.subsystem.nqn, host=host)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(host)
+        self.get_root().refresh()
+        self.refresh_node()
+
+    def ui_command_delete_all(self):
+        """Delete host from subsystem"""
+        for host in self.hosts:
+            self.delete(host['nqn'])
         self.get_root().refresh()
         self.refresh_node()
 
@@ -250,6 +331,13 @@ class UINVMfSubsystemNamespaces(UINode):
                 self.namespaces = subsystem.namespaces
         self.refresh()
 
+    def delete(self, nsid):
+        try:
+            self.get_root().nvmf_subsystem_remove_ns(
+                nqn=self.parent.subsystem.nqn, nsid=nsid)
+        except JSONRPCException as e:
+            self.shell.log.error(e.message)
+
     def ui_command_create(self, bdev_name, nsid=None,
                           nguid=None, eui64=None, uuid=None):
         """Add a namespace to a subsystem.
@@ -279,11 +367,14 @@ class UINVMfSubsystemNamespaces(UINode):
             nsid - Id of namespace to remove.
         """
         nsid = self.ui_eval_param(nsid, "number", None)
-        try:
-            self.get_root().nvmf_subsystem_remove_ns(
-                nqn=self.parent.subsystem.nqn, nsid=nsid)
-        except JSONRPCException as e:
-            self.shell.log.error(e.message)
+        self.delete(nsid)
+        self.get_root().refresh()
+        self.refresh_node()
+
+    def ui_command_delete_all(self):
+        """Delete all namespaces from subsystem."""
+        for namespace in self.namespaces:
+            self.delete(namespace['nsid'])
         self.get_root().refresh()
         self.refresh_node()
 
@@ -297,6 +388,5 @@ class UINVMfSubsystemNamespace(UINode):
         self.namespace = namespace
 
     def summary(self):
-        info = ", ".join([str(self.namespace['uuid']), self.namespace['name'],
-                          str(self.namespace['nsid'])])
+        info = ", ".join([self.namespace['name'], str(self.namespace['nsid'])])
         return info, None

@@ -41,7 +41,7 @@ static struct rte_pci_id virtio_pci_driver_id[] = {
 	{ .vendor_id = 0, /* sentinel */ },
 };
 
-static struct spdk_pci_enum_ctx g_virtio_pci_drv = {
+static struct spdk_pci_driver g_virtio_pci_drv = {
 	.driver = {
 		.drv_flags	= RTE_PCI_DRV_NEED_MAPPING
 #if RTE_VERSION >= RTE_VERSION_NUM(18, 8, 0, 0)
@@ -49,32 +49,20 @@ static struct spdk_pci_enum_ctx g_virtio_pci_drv = {
 #endif
 		,
 		.id_table	= virtio_pci_driver_id,
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
 		.probe		= spdk_pci_device_init,
 		.remove		= spdk_pci_device_fini,
 		.driver.name	= "spdk_virtio",
-#else
-		.devinit	= spdk_pci_device_init,
-		.devuninit	= spdk_pci_device_fini,
-		.name		= "spdk_virtio",
-#endif
 	},
 
 	.cb_fn = NULL,
 	.cb_arg = NULL,
-	.mtx = PTHREAD_MUTEX_INITIALIZER,
 	.is_registered = false,
 };
 
-int
-spdk_pci_virtio_device_attach(spdk_pci_enum_cb enum_cb,
-			      void *enum_ctx, struct spdk_pci_addr *pci_address)
+struct spdk_pci_driver *
+spdk_pci_virtio_get_driver(void)
 {
-	return spdk_pci_device_attach(&g_virtio_pci_drv, enum_cb, enum_ctx, pci_address);
+	return &g_virtio_pci_drv;
 }
 
-int
-spdk_pci_virtio_enumerate(spdk_pci_enum_cb enum_cb, void *enum_ctx)
-{
-	return spdk_pci_enumerate(&g_virtio_pci_drv, enum_cb, enum_ctx);
-}
+SPDK_PMD_REGISTER_PCI(g_virtio_pci_drv);

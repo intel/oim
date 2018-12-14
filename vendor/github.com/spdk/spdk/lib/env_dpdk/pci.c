@@ -40,170 +40,20 @@
 #define PCI_CFG_SIZE		256
 #define PCI_EXT_CAP_ID_SN	0x03
 
-int
-spdk_pci_device_init(struct rte_pci_driver *driver,
-		     struct rte_pci_device *device)
-{
-	struct spdk_pci_enum_ctx *ctx = (struct spdk_pci_enum_ctx *)driver;
-	int rc;
-
-	if (!ctx->cb_fn) {
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-		rte_pci_unmap_device(device);
-#elif RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
-		rte_eal_pci_unmap_device(device);
-#endif
-
-		/* Return a positive value to indicate that this device does not belong to this driver, but
-		 * this isn't an error. */
-		return 1;
-	}
-
-	rc = ctx->cb_fn(ctx->cb_arg, (struct spdk_pci_device *)device);
-	if (rc != 0) {
-		return rc;
-	}
-
-	spdk_vtophys_pci_device_added(device);
-	return 0;
-}
-
-int
-spdk_pci_device_fini(struct rte_pci_device *device)
-{
-	spdk_vtophys_pci_device_removed(device);
-	return 0;
-}
-
-void
-spdk_pci_device_detach(struct spdk_pci_device *device)
-{
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
-#if RTE_VERSION < RTE_VERSION_NUM(17, 05, 0, 0)
-	rte_eal_device_remove(&device->device);
-#endif
-#endif
-
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
-	struct spdk_pci_addr	addr;
-	char			bdf[32];
-
-	addr.domain = device->addr.domain;
-	addr.bus = device->addr.bus;
-	addr.dev = device->addr.devid;
-	addr.func = device->addr.function;
-
-	spdk_pci_addr_fmt(bdf, sizeof(bdf), &addr);
-	if (rte_eal_dev_detach(&device->device) < 0) {
-		fprintf(stderr, "Failed to detach PCI device %s (device already removed?).\n", bdf);
-	}
-#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-	rte_pci_detach(&device->addr);
-#else
-	rte_eal_pci_detach(&device->addr);
-#endif
-}
-
-int
-spdk_pci_device_attach(struct spdk_pci_enum_ctx *ctx,
-		       spdk_pci_enum_cb enum_cb,
-		       void *enum_ctx, struct spdk_pci_addr *pci_address)
-{
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
-	char				bdf[32];
-
-	spdk_pci_addr_fmt(bdf, sizeof(bdf), pci_address);
-#else
-	struct rte_pci_addr		addr;
-
-	addr.domain = pci_address->domain;
-	addr.bus = pci_address->bus;
-	addr.devid = pci_address->dev;
-	addr.function = pci_address->func;
-#endif
-
-	pthread_mutex_lock(&ctx->mtx);
-
-	if (!ctx->is_registered) {
-		ctx->is_registered = true;
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-		rte_pci_register(&ctx->driver);
-#else
-		rte_eal_pci_register(&ctx->driver);
-#endif
-	}
-
-	ctx->cb_fn = enum_cb;
-	ctx->cb_arg = enum_ctx;
-
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
-	if (rte_eal_dev_attach(bdf, "") != 0) {
-#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-	if (rte_pci_probe_one(&addr) != 0) {
-#else
-	if (rte_eal_pci_probe_one(&addr) != 0) {
-#endif
-		ctx->cb_arg = NULL;
-		ctx->cb_fn = NULL;
-		pthread_mutex_unlock(&ctx->mtx);
-		return -1;
-	}
-
-	ctx->cb_arg = NULL;
-	ctx->cb_fn = NULL;
-	pthread_mutex_unlock(&ctx->mtx);
-
-	return 0;
-}
-
-/* Note: You can call spdk_pci_enumerate from more than one thread
- *       simultaneously safely, but you cannot call spdk_pci_enumerate
- *       and rte_eal_pci_probe simultaneously.
+/* DPDK 18.11+ hotplug isn't robust. Multiple apps starting at the same time
+ * might cause the internal IPC to misbehave. Just retry in such case.
  */
-int
-spdk_pci_enumerate(struct spdk_pci_enum_ctx *ctx,
-		   spdk_pci_enum_cb enum_cb,
-		   void *enum_ctx)
+#define DPDK_HOTPLUG_RETRY_COUNT 4
+
+static pthread_mutex_t g_pci_mutex = PTHREAD_MUTEX_INITIALIZER;
+static TAILQ_HEAD(, spdk_pci_device) g_pci_devices = TAILQ_HEAD_INITIALIZER(g_pci_devices);
+static TAILQ_HEAD(, spdk_pci_driver) g_pci_drivers = TAILQ_HEAD_INITIALIZER(g_pci_drivers);
+
+static int
+spdk_map_bar_rte(struct spdk_pci_device *device, uint32_t bar,
+		 void **mapped_addr, uint64_t *phys_addr, uint64_t *size)
 {
-	pthread_mutex_lock(&ctx->mtx);
-
-	if (!ctx->is_registered) {
-		ctx->is_registered = true;
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-		rte_pci_register(&ctx->driver);
-#else
-		rte_eal_pci_register(&ctx->driver);
-#endif
-	}
-
-	ctx->cb_fn = enum_cb;
-	ctx->cb_arg = enum_ctx;
-
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
-	if (rte_bus_probe() != 0) {
-#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-	if (rte_pci_probe() != 0) {
-#else
-	if (rte_eal_pci_probe() != 0) {
-#endif
-		ctx->cb_arg = NULL;
-		ctx->cb_fn = NULL;
-		pthread_mutex_unlock(&ctx->mtx);
-		return -1;
-	}
-
-	ctx->cb_arg = NULL;
-	ctx->cb_fn = NULL;
-	pthread_mutex_unlock(&ctx->mtx);
-
-	return 0;
-}
-
-int
-spdk_pci_device_map_bar(struct spdk_pci_device *device, uint32_t bar,
-			void **mapped_addr, uint64_t *phys_addr, uint64_t *size)
-{
-	struct rte_pci_device *dev = device;
+	struct rte_pci_device *dev = device->dev_handle;
 
 	*mapped_addr = dev->mem_resource[bar].addr;
 	*phys_addr = (uint64_t)dev->mem_resource[bar].phys_addr;
@@ -212,10 +62,347 @@ spdk_pci_device_map_bar(struct spdk_pci_device *device, uint32_t bar,
 	return 0;
 }
 
-int
-spdk_pci_device_unmap_bar(struct spdk_pci_device *device, uint32_t bar, void *addr)
+static int
+spdk_unmap_bar_rte(struct spdk_pci_device *device, uint32_t bar, void *addr)
 {
 	return 0;
+}
+
+static int
+spdk_cfg_read_rte(struct spdk_pci_device *dev, void *value, uint32_t len, uint32_t offset)
+{
+	int rc;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+	rc = rte_pci_read_config(dev->dev_handle, value, len, offset);
+#else
+	rc = rte_eal_pci_read_config(dev->dev_handle, value, len, offset);
+#endif
+
+#if defined(__FreeBSD__) && RTE_VERSION < RTE_VERSION_NUM(18, 11, 0, 0)
+	/* Older DPDKs return 0 on success and -1 on failure */
+	return rc;
+#endif
+	return (rc > 0 && (uint32_t) rc == len) ? 0 : -1;
+}
+
+static int
+spdk_cfg_write_rte(struct spdk_pci_device *dev, void *value, uint32_t len, uint32_t offset)
+{
+	int rc;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+	rc = rte_pci_write_config(dev->dev_handle, value, len, offset);
+#else
+	rc = rte_eal_pci_write_config(dev->dev_handle, value, len, offset);
+#endif
+
+#ifdef __FreeBSD__
+	/* DPDK returns 0 on success and -1 on failure */
+	return rc;
+#endif
+	return (rc > 0 && (uint32_t) rc == len) ? 0 : -1;
+}
+
+static void
+spdk_detach_rte(struct spdk_pci_device *dev)
+{
+	struct rte_pci_device *rte_dev = dev->dev_handle;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 11, 0, 0)
+	char bdf[32];
+	int i = 0, rc;
+
+	snprintf(bdf, sizeof(bdf), "%s", rte_dev->device.name);
+	do {
+		rc = rte_eal_hotplug_remove("pci", bdf);
+	} while (rc == -ENOMSG && ++i <= DPDK_HOTPLUG_RETRY_COUNT);
+#elif RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+	rte_eal_dev_detach(&rte_dev->device);
+#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+	rte_pci_detach(&rte_dev->addr);
+#else
+	rte_eal_device_remove(&rte_dev->device);
+	rte_eal_pci_detach(&rte_dev->addr);
+#endif
+}
+
+void
+spdk_pci_driver_register(struct spdk_pci_driver *driver)
+{
+	TAILQ_INSERT_TAIL(&g_pci_drivers, driver, tailq);
+}
+
+void
+spdk_pci_init(void)
+{
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 11, 0, 0)
+	struct spdk_pci_driver *driver;
+
+	/* We need to pre-register pci drivers for the pci devices to be
+	 * attachable in multi-process with DPDK 18.11+.
+	 *
+	 * DPDK 18.11+ does its best to ensure all devices are equally
+	 * attached or detached in all processes within a shared memory group.
+	 * For SPDK it means that if a device is hotplugged in the primary,
+	 * then DPDK will automatically send an IPC hotplug request to all other
+	 * processes. Those other processes may not have the same SPDK PCI
+	 * driver registered and may fail to attach the device. DPDK will send
+	 * back the failure status, and the the primary process will also fail
+	 * to hotplug the device. To prevent that, we need to pre-register the
+	 * pci drivers here.
+	 */
+	TAILQ_FOREACH(driver, &g_pci_drivers, tailq) {
+		assert(!driver->is_registered);
+		driver->is_registered = true;
+		rte_pci_register(&driver->driver);
+	}
+#endif
+}
+
+int
+spdk_pci_device_init(struct rte_pci_driver *_drv,
+		     struct rte_pci_device *_dev)
+{
+	struct spdk_pci_driver *driver = (struct spdk_pci_driver *)_drv;
+	struct spdk_pci_device *dev;
+	int rc;
+
+#if RTE_VERSION < RTE_VERSION_NUM(18, 11, 0, 0)
+	if (!driver->cb_fn) {
+#if RTE_VERSION < RTE_VERSION_NUM(17, 02, 0, 1)
+		rte_eal_pci_unmap_device(_dev);
+#endif
+		/* Return a positive value to indicate that this device does
+		 * not belong to this driver, but this isn't an error.
+		 */
+		return 1;
+	}
+#endif
+
+	dev = calloc(1, sizeof(*dev));
+	if (dev == NULL) {
+		return -1;
+	}
+
+	dev->dev_handle = _dev;
+
+	dev->addr.domain = _dev->addr.domain;
+	dev->addr.bus = _dev->addr.bus;
+	dev->addr.dev = _dev->addr.devid;
+	dev->addr.func = _dev->addr.function;
+	dev->id.vendor_id = _dev->id.vendor_id;
+	dev->id.device_id = _dev->id.device_id;
+	dev->id.subvendor_id = _dev->id.subsystem_vendor_id;
+	dev->id.subdevice_id = _dev->id.subsystem_device_id;
+	dev->socket_id = _dev->device.numa_node;
+
+	dev->map_bar = spdk_map_bar_rte;
+	dev->unmap_bar = spdk_unmap_bar_rte;
+	dev->cfg_read = spdk_cfg_read_rte;
+	dev->cfg_write = spdk_cfg_write_rte;
+	dev->detach = spdk_detach_rte;
+
+	dev->internal.driver = driver;
+
+	if (driver->cb_fn != NULL) {
+		rc = driver->cb_fn(driver->cb_arg, dev);
+		if (rc != 0) {
+			free(dev);
+			return rc;
+		}
+		dev->internal.attached = true;
+	}
+
+	TAILQ_INSERT_TAIL(&g_pci_devices, dev, internal.tailq);
+	spdk_vtophys_pci_device_added(dev->dev_handle);
+	return 0;
+}
+
+int
+spdk_pci_device_fini(struct rte_pci_device *_dev)
+{
+	struct spdk_pci_device *dev;
+
+	TAILQ_FOREACH(dev, &g_pci_devices, internal.tailq) {
+		if (dev->dev_handle == _dev) {
+			break;
+		}
+	}
+
+	if (dev == NULL || dev->internal.attached) {
+		/* The device might be still referenced somewhere in SPDK. */
+		return -1;
+	}
+
+	spdk_vtophys_pci_device_removed(dev->dev_handle);
+	TAILQ_REMOVE(&g_pci_devices, dev, internal.tailq);
+	free(dev);
+	return 0;
+
+}
+
+void
+spdk_pci_device_detach(struct spdk_pci_device *dev)
+{
+	assert(dev->internal.attached);
+	dev->internal.attached = false;
+	dev->detach(dev);
+}
+
+int
+spdk_pci_device_attach(struct spdk_pci_driver *driver,
+		       spdk_pci_enum_cb enum_cb,
+		       void *enum_ctx, struct spdk_pci_addr *pci_address)
+{
+	struct spdk_pci_device *dev;
+	int rc;
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+	char bdf[32];
+
+	spdk_pci_addr_fmt(bdf, sizeof(bdf), pci_address);
+#else
+	struct rte_pci_addr addr;
+
+	addr.domain = pci_address->domain;
+	addr.bus = pci_address->bus;
+	addr.devid = pci_address->dev;
+	addr.function = pci_address->func;
+#endif
+
+	pthread_mutex_lock(&g_pci_mutex);
+
+	TAILQ_FOREACH(dev, &g_pci_devices, internal.tailq) {
+		if (spdk_pci_addr_compare(&dev->addr, pci_address) == 0) {
+			break;
+		}
+	}
+
+	if (dev != NULL && dev->internal.driver == driver) {
+		if (dev->internal.attached) {
+			pthread_mutex_unlock(&g_pci_mutex);
+			return -1;
+		}
+
+		rc = enum_cb(enum_ctx, dev);
+		if (rc == 0) {
+			dev->internal.attached = true;
+		}
+		pthread_mutex_unlock(&g_pci_mutex);
+		return rc;
+	}
+
+	if (!driver->is_registered) {
+		driver->is_registered = true;
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+		rte_pci_register(&driver->driver);
+#else
+		rte_eal_pci_register(&driver->driver);
+#endif
+	}
+
+	driver->cb_fn = enum_cb;
+	driver->cb_arg = enum_ctx;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(18, 11, 0, 0)
+	int i = 0;
+
+	do {
+		rc = rte_eal_hotplug_add("pci", bdf, "");
+	} while (rc == -ENOMSG && ++i <= DPDK_HOTPLUG_RETRY_COUNT);
+
+	if (i > 1 && rc == -EEXIST) {
+		/* Even though the previous request timed out, the device
+		 * was attached successfully.
+		 */
+		rc = 0;
+	}
+#elif RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+	rc = rte_eal_dev_attach(bdf, "");
+#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+	rc = rte_pci_probe_one(&addr);
+#else
+	rc = rte_eal_pci_probe_one(&addr);
+#endif
+
+	driver->cb_arg = NULL;
+	driver->cb_fn = NULL;
+	pthread_mutex_unlock(&g_pci_mutex);
+
+	return rc == 0 ? 0 : -1;
+}
+
+/* Note: You can call spdk_pci_enumerate from more than one thread
+ *       simultaneously safely, but you cannot call spdk_pci_enumerate
+ *       and rte_eal_pci_probe simultaneously.
+ */
+int
+spdk_pci_enumerate(struct spdk_pci_driver *driver,
+		   spdk_pci_enum_cb enum_cb,
+		   void *enum_ctx)
+{
+	struct spdk_pci_device *dev;
+	int rc;
+
+	pthread_mutex_lock(&g_pci_mutex);
+
+	TAILQ_FOREACH(dev, &g_pci_devices, internal.tailq) {
+		if (dev->internal.attached || dev->internal.driver != driver) {
+			continue;
+		}
+
+		rc = enum_cb(enum_ctx, dev);
+		if (rc == 0) {
+			dev->internal.attached = true;
+		} else if (rc < 0) {
+			pthread_mutex_unlock(&g_pci_mutex);
+			return -1;
+		}
+	}
+
+	if (!driver->is_registered) {
+		driver->is_registered = true;
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+		rte_pci_register(&driver->driver);
+#else
+		rte_eal_pci_register(&driver->driver);
+#endif
+	}
+
+	driver->cb_fn = enum_cb;
+	driver->cb_arg = enum_ctx;
+
+#if RTE_VERSION >= RTE_VERSION_NUM(17, 11, 0, 3)
+	if (rte_bus_probe() != 0) {
+#elif RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
+	if (rte_pci_probe() != 0) {
+#else
+	if (rte_eal_pci_probe() != 0) {
+#endif
+		driver->cb_arg = NULL;
+		driver->cb_fn = NULL;
+		pthread_mutex_unlock(&g_pci_mutex);
+		return -1;
+	}
+
+	driver->cb_arg = NULL;
+	driver->cb_fn = NULL;
+	pthread_mutex_unlock(&g_pci_mutex);
+
+	return 0;
+}
+
+int
+spdk_pci_device_map_bar(struct spdk_pci_device *dev, uint32_t bar,
+			void **mapped_addr, uint64_t *phys_addr, uint64_t *size)
+{
+	return dev->map_bar(dev, bar, mapped_addr, phys_addr, size);
+}
+
+int
+spdk_pci_device_unmap_bar(struct spdk_pci_device *dev, uint32_t bar, void *addr)
+{
+	return dev->unmap_bar(dev, bar, addr);
 }
 
 uint32_t
@@ -233,13 +420,13 @@ spdk_pci_device_get_bus(struct spdk_pci_device *dev)
 uint8_t
 spdk_pci_device_get_dev(struct spdk_pci_device *dev)
 {
-	return dev->addr.devid;
+	return dev->addr.dev;
 }
 
 uint8_t
 spdk_pci_device_get_func(struct spdk_pci_device *dev)
 {
-	return dev->addr.function;
+	return dev->addr.func;
 }
 
 uint16_t
@@ -257,62 +444,37 @@ spdk_pci_device_get_device_id(struct spdk_pci_device *dev)
 uint16_t
 spdk_pci_device_get_subvendor_id(struct spdk_pci_device *dev)
 {
-	return dev->id.subsystem_vendor_id;
+	return dev->id.subvendor_id;
 }
 
 uint16_t
 spdk_pci_device_get_subdevice_id(struct spdk_pci_device *dev)
 {
-	return dev->id.subsystem_device_id;
+	return dev->id.subdevice_id;
 }
 
 struct spdk_pci_id
-spdk_pci_device_get_id(struct spdk_pci_device *pci_dev)
+spdk_pci_device_get_id(struct spdk_pci_device *dev)
 {
-	struct spdk_pci_id pci_id;
-
-	pci_id.vendor_id = spdk_pci_device_get_vendor_id(pci_dev);
-	pci_id.device_id = spdk_pci_device_get_device_id(pci_dev);
-	pci_id.subvendor_id = spdk_pci_device_get_subvendor_id(pci_dev);
-	pci_id.subdevice_id = spdk_pci_device_get_subdevice_id(pci_dev);
-
-	return pci_id;
+	return dev->id;
 }
 
 int
-spdk_pci_device_get_socket_id(struct spdk_pci_device *pci_dev)
+spdk_pci_device_get_socket_id(struct spdk_pci_device *dev)
 {
-#if RTE_VERSION >= RTE_VERSION_NUM(16, 11, 0, 0)
-	return pci_dev->device.numa_node;
-#else
-	return pci_dev->numa_node;
-#endif
+	return dev->socket_id;
 }
 
 int
 spdk_pci_device_cfg_read(struct spdk_pci_device *dev, void *value, uint32_t len, uint32_t offset)
 {
-	int rc;
-
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-	rc = rte_pci_read_config(dev, value, len, offset);
-#else
-	rc = rte_eal_pci_read_config(dev, value, len, offset);
-#endif
-	return (rc > 0 && (uint32_t) rc == len) ? 0 : -1;
+	return dev->cfg_read(dev, value, len, offset);
 }
 
 int
 spdk_pci_device_cfg_write(struct spdk_pci_device *dev, void *value, uint32_t len, uint32_t offset)
 {
-	int rc;
-
-#if RTE_VERSION >= RTE_VERSION_NUM(17, 05, 0, 4)
-	rc = rte_pci_write_config(dev, value, len, offset);
-#else
-	rc = rte_eal_pci_write_config(dev, value, len, offset);
-#endif
-	return (rc > 0 && (uint32_t) rc == len) ? 0 : -1;
+	return dev->cfg_write(dev, value, len, offset);
 }
 
 int
@@ -397,16 +559,9 @@ spdk_pci_device_get_serial_number(struct spdk_pci_device *dev, char *sn, size_t 
 }
 
 struct spdk_pci_addr
-spdk_pci_device_get_addr(struct spdk_pci_device *pci_dev)
+spdk_pci_device_get_addr(struct spdk_pci_device *dev)
 {
-	struct spdk_pci_addr pci_addr;
-
-	pci_addr.domain = spdk_pci_device_get_domain(pci_dev);
-	pci_addr.bus = spdk_pci_device_get_bus(pci_dev);
-	pci_addr.dev = spdk_pci_device_get_dev(pci_dev);
-	pci_addr.func = spdk_pci_device_get_func(pci_dev);
-
-	return pci_addr;
+	return dev->addr;
 }
 
 int
@@ -548,4 +703,23 @@ spdk_pci_addr_fmt(char *bdf, size_t sz, const struct spdk_pci_addr *addr)
 	}
 
 	return -1;
+}
+
+void
+spdk_pci_hook_device(struct spdk_pci_driver *drv, struct spdk_pci_device *dev)
+{
+	assert(dev->map_bar != NULL);
+	assert(dev->unmap_bar != NULL);
+	assert(dev->cfg_read != NULL);
+	assert(dev->cfg_write != NULL);
+	assert(dev->detach != NULL);
+	dev->internal.driver = drv;
+	TAILQ_INSERT_TAIL(&g_pci_devices, dev, internal.tailq);
+}
+
+void
+spdk_pci_unhook_device(struct spdk_pci_device *dev)
+{
+	assert(!dev->internal.attached);
+	TAILQ_REMOVE(&g_pci_devices, dev, internal.tailq);
 }

@@ -267,6 +267,14 @@ spdk_build_eal_cmdline(const struct spdk_env_opts *opts)
 		}
 	}
 
+	/* use a specific hugetlbfs mount */
+	if (opts->hugedir) {
+		args = spdk_push_arg(args, &argcount, _sprintf_alloc("--huge-dir=%s", opts->hugedir));
+		if (args == NULL) {
+			return -1;
+		}
+	}
+
 #if RTE_VERSION >= RTE_VERSION_NUM(18, 05, 0, 0) && RTE_VERSION < RTE_VERSION_NUM(18, 5, 1, 0)
 	/* Dynamic memory management is buggy in DPDK 18.05.0. Don't use it. */
 	args = spdk_push_arg(args, &argcount, _sprintf_alloc("--legacy-mem"));
@@ -293,6 +301,17 @@ spdk_build_eal_cmdline(const struct spdk_env_opts *opts)
 	}
 
 #ifdef __linux__
+	/* Set the base virtual address - it must be an address that is not in the
+	 * ASAN shadow region, otherwise ASAN-enabled builds will ignore the
+	 * mmap hint.
+	 *
+	 * Ref: https://github.com/google/sanitizers/wiki/AddressSanitizerAlgorithm
+	 */
+	args = spdk_push_arg(args, &argcount, _sprintf_alloc("--base-virtaddr=0x200000000000"));
+	if (args == NULL) {
+		return -1;
+	}
+
 	if (opts->shm_id < 0) {
 		args = spdk_push_arg(args, &argcount, _sprintf_alloc("--file-prefix=spdk_pid%d",
 				     getpid()));
@@ -302,17 +321,6 @@ spdk_build_eal_cmdline(const struct spdk_env_opts *opts)
 	} else {
 		args = spdk_push_arg(args, &argcount, _sprintf_alloc("--file-prefix=spdk%d",
 				     opts->shm_id));
-		if (args == NULL) {
-			return -1;
-		}
-
-		/* Set the base virtual address - it must be an address that is not in the
-		 * ASAN shadow region, otherwise ASAN-enabled builds will ignore the
-		 * mmap hint.
-		 *
-		 * Ref: https://github.com/google/sanitizers/wiki/AddressSanitizerAlgorithm
-		 */
-		args = spdk_push_arg(args, &argcount, _sprintf_alloc("--base-virtaddr=0x200000000000"));
 		if (args == NULL) {
 			return -1;
 		}
@@ -387,6 +395,8 @@ int spdk_env_init(const struct spdk_env_opts *opts)
 		 */
 		spdk_env_unlink_shared_files();
 	}
+
+	spdk_pci_init();
 
 	if (spdk_mem_map_init() < 0) {
 		fprintf(stderr, "Failed to allocate mem_map\n");

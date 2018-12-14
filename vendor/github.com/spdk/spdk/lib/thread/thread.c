@@ -33,8 +33,11 @@
 
 #include "spdk/stdinc.h"
 
+#include "spdk/env.h"
+#include "spdk/queue.h"
 #include "spdk/string.h"
 #include "spdk/thread.h"
+#include "spdk/util.h"
 
 #include "spdk_internal/log.h"
 
@@ -45,6 +48,8 @@
 #ifdef __FreeBSD__
 #include <pthread_np.h>
 #endif
+
+#define SPDK_MSG_BATCH_SIZE		8
 
 static pthread_mutex_t g_devlist_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -66,6 +71,36 @@ struct io_device {
 
 static TAILQ_HEAD(, io_device) g_io_devices = TAILQ_HEAD_INITIALIZER(g_io_devices);
 
+struct spdk_msg {
+	spdk_thread_fn		fn;
+	void			*arg;
+};
+
+static struct spdk_mempool *g_spdk_msg_mempool = NULL;
+
+enum spdk_poller_state {
+	/* The poller is registered with a thread but not currently executing its fn. */
+	SPDK_POLLER_STATE_WAITING,
+
+	/* The poller is currently running its fn. */
+	SPDK_POLLER_STATE_RUNNING,
+
+	/* The poller was unregistered during the execution of its fn. */
+	SPDK_POLLER_STATE_UNREGISTERED,
+};
+
+struct spdk_poller {
+	TAILQ_ENTRY(spdk_poller)	tailq;
+
+	/* Current state of the poller; should only be accessed from the poller's thread. */
+	enum spdk_poller_state		state;
+
+	uint64_t			period_ticks;
+	uint64_t			next_run_tick;
+	spdk_poller_fn			fn;
+	void				*arg;
+};
+
 struct spdk_thread {
 	pthread_t			thread_id;
 	spdk_thread_pass_msg		msg_fn;
@@ -75,6 +110,21 @@ struct spdk_thread {
 	TAILQ_HEAD(, spdk_io_channel)	io_channels;
 	TAILQ_ENTRY(spdk_thread)	tailq;
 	char				*name;
+
+	/*
+	 * Contains pollers actively running on this thread.  Pollers
+	 *  are run round-robin. The thread takes one poller from the head
+	 *  of the ring, executes it, then puts it back at the tail of
+	 *  the ring.
+	 */
+	TAILQ_HEAD(, spdk_poller)	active_pollers;
+
+	/**
+	 * Contains pollers running on this thread with a periodic timer.
+	 */
+	TAILQ_HEAD(timer_pollers_head, spdk_poller) timer_pollers;
+
+	struct spdk_ring		*messages;
 };
 
 static TAILQ_HEAD(, spdk_thread) g_threads = TAILQ_HEAD_INITIALIZER(g_threads);
@@ -113,12 +163,34 @@ _set_thread_name(const char *thread_name)
 int
 spdk_thread_lib_init(void)
 {
+	char mempool_name[SPDK_MAX_MEMZONE_NAME_LEN];
+
+	snprintf(mempool_name, sizeof(mempool_name), "msgpool_%d", getpid());
+	g_spdk_msg_mempool = spdk_mempool_create(mempool_name,
+			     262144 - 1, /* Power of 2 minus 1 is optimal for memory consumption */
+			     sizeof(struct spdk_msg),
+			     SPDK_MEMPOOL_DEFAULT_CACHE_SIZE,
+			     SPDK_ENV_SOCKET_ID_ANY);
+
+	if (!g_spdk_msg_mempool) {
+		return -1;
+	}
+
 	return 0;
 }
 
 void
 spdk_thread_lib_fini(void)
 {
+	struct io_device *dev;
+
+	TAILQ_FOREACH(dev, &g_io_devices, tailq) {
+		SPDK_ERRLOG("io_device %s not unregistered\n", dev->name);
+	}
+
+	if (g_spdk_msg_mempool) {
+		spdk_mempool_free(g_spdk_msg_mempool);
+	}
 }
 
 struct spdk_thread *
@@ -138,6 +210,12 @@ spdk_allocate_thread(spdk_thread_pass_msg msg_fn,
 		return NULL;
 	}
 
+	if ((start_poller_fn != NULL && stop_poller_fn == NULL) ||
+	    (start_poller_fn == NULL && stop_poller_fn != NULL)) {
+		SPDK_ERRLOG("start_poller_fn and stop_poller_fn must either both be NULL or both be non-NULL\n");
+		return NULL;
+	}
+
 	thread = calloc(1, sizeof(*thread));
 	if (!thread) {
 		SPDK_ERRLOG("Unable to allocate memory for thread\n");
@@ -152,6 +230,18 @@ spdk_allocate_thread(spdk_thread_pass_msg msg_fn,
 	thread->thread_ctx = thread_ctx;
 	TAILQ_INIT(&thread->io_channels);
 	TAILQ_INSERT_TAIL(&g_threads, thread, tailq);
+
+	TAILQ_INIT(&thread->active_pollers);
+	TAILQ_INIT(&thread->timer_pollers);
+
+	thread->messages = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 65536, SPDK_ENV_SOCKET_ID_ANY);
+	if (!thread->messages) {
+		SPDK_ERRLOG("Unable to allocate memory for message ring\n");
+		free(thread);
+		pthread_mutex_unlock(&g_devlist_mutex);
+		return NULL;
+	}
+
 	g_thread_count++;
 	if (name) {
 		_set_thread_name(name);
@@ -171,6 +261,7 @@ void
 spdk_free_thread(void)
 {
 	struct spdk_thread *thread;
+	struct spdk_io_channel *ch;
 
 	pthread_mutex_lock(&g_devlist_mutex);
 
@@ -183,13 +274,166 @@ spdk_free_thread(void)
 
 	SPDK_DEBUGLOG(SPDK_LOG_THREAD, "Freeing thread %s\n", thread->name);
 
+	TAILQ_FOREACH(ch, &thread->io_channels, tailq) {
+		SPDK_ERRLOG("thread %s still has channel for io_device %s\n",
+			    thread->name, ch->dev->name);
+	}
+
 	assert(g_thread_count > 0);
 	g_thread_count--;
 	TAILQ_REMOVE(&g_threads, thread, tailq);
 	free(thread->name);
+
+	if (thread->messages) {
+		spdk_ring_free(thread->messages);
+	}
+
 	free(thread);
 
 	pthread_mutex_unlock(&g_devlist_mutex);
+}
+
+static inline uint32_t
+_spdk_msg_queue_run_batch(struct spdk_thread *thread, uint32_t max_msgs)
+{
+	unsigned count, i;
+	void *messages[SPDK_MSG_BATCH_SIZE];
+
+#ifdef DEBUG
+	/*
+	 * spdk_ring_dequeue() fills messages and returns how many entries it wrote,
+	 * so we will never actually read uninitialized data from events, but just to be sure
+	 * (and to silence a static analyzer false positive), initialize the array to NULL pointers.
+	 */
+	memset(messages, 0, sizeof(messages));
+#endif
+
+	if (max_msgs > 0) {
+		max_msgs = spdk_min(max_msgs, SPDK_MSG_BATCH_SIZE);
+	} else {
+		max_msgs = SPDK_MSG_BATCH_SIZE;
+	}
+
+	count = spdk_ring_dequeue(thread->messages, messages, max_msgs);
+	if (count == 0) {
+		return 0;
+	}
+
+	for (i = 0; i < count; i++) {
+		struct spdk_msg *msg = messages[i];
+
+		assert(msg != NULL);
+		msg->fn(msg->arg);
+	}
+
+	spdk_mempool_put_bulk(g_spdk_msg_mempool, messages, count);
+
+	return count;
+}
+
+static void
+_spdk_poller_insert_timer(struct spdk_thread *thread, struct spdk_poller *poller, uint64_t now)
+{
+	struct spdk_poller *iter;
+
+	poller->next_run_tick = now + poller->period_ticks;
+
+	/*
+	 * Insert poller in the thread's timer_pollers list in sorted order by next scheduled
+	 * run time.
+	 */
+	TAILQ_FOREACH_REVERSE(iter, &thread->timer_pollers, timer_pollers_head, tailq) {
+		if (iter->next_run_tick <= poller->next_run_tick) {
+			TAILQ_INSERT_AFTER(&thread->timer_pollers, iter, poller, tailq);
+			return;
+		}
+	}
+
+	/* No earlier pollers were found, so this poller must be the new head */
+	TAILQ_INSERT_HEAD(&thread->timer_pollers, poller, tailq);
+}
+
+int
+spdk_thread_poll(struct spdk_thread *thread, uint32_t max_msgs)
+{
+	uint32_t msg_count;
+	struct spdk_poller *poller;
+	int rc = 0;
+
+	msg_count = _spdk_msg_queue_run_batch(thread, max_msgs);
+	if (msg_count) {
+		rc = 1;
+	}
+
+	poller = TAILQ_FIRST(&thread->active_pollers);
+	if (poller) {
+		int poller_rc;
+
+		TAILQ_REMOVE(&thread->active_pollers, poller, tailq);
+		poller->state = SPDK_POLLER_STATE_RUNNING;
+		poller_rc = poller->fn(poller->arg);
+		if (poller->state == SPDK_POLLER_STATE_UNREGISTERED) {
+			free(poller);
+		} else {
+			poller->state = SPDK_POLLER_STATE_WAITING;
+			TAILQ_INSERT_TAIL(&thread->active_pollers, poller, tailq);
+		}
+
+#ifdef DEBUG
+		if (poller_rc == -1) {
+			SPDK_DEBUGLOG(SPDK_LOG_THREAD, "Poller %p returned -1\n", poller);
+		}
+#endif
+
+		if (poller_rc > rc) {
+			rc = poller_rc;
+		}
+	}
+
+	poller = TAILQ_FIRST(&thread->timer_pollers);
+	if (poller) {
+		uint64_t now = spdk_get_ticks();
+
+		if (now >= poller->next_run_tick) {
+			int timer_rc = 0;
+
+			TAILQ_REMOVE(&thread->timer_pollers, poller, tailq);
+			poller->state = SPDK_POLLER_STATE_RUNNING;
+			timer_rc = poller->fn(poller->arg);
+			if (poller->state == SPDK_POLLER_STATE_UNREGISTERED) {
+				free(poller);
+			} else {
+				poller->state = SPDK_POLLER_STATE_WAITING;
+				_spdk_poller_insert_timer(thread, poller, now);
+			}
+
+#ifdef DEBUG
+			if (timer_rc == -1) {
+				SPDK_DEBUGLOG(SPDK_LOG_THREAD, "Timed poller %p returned -1\n", poller);
+			}
+#endif
+
+			if (timer_rc > rc) {
+				rc = timer_rc;
+
+			}
+		}
+	}
+
+	return rc;
+}
+
+uint64_t
+spdk_thread_next_poller_expiration(struct spdk_thread *thread)
+{
+	struct spdk_poller *poller;
+
+	poller = TAILQ_FIRST(&thread->timer_pollers);
+	if (poller) {
+		return poller->next_run_tick;
+	}
+
+	return 0;
 }
 
 uint32_t
@@ -229,9 +473,35 @@ spdk_thread_get_name(const struct spdk_thread *thread)
 void
 spdk_thread_send_msg(const struct spdk_thread *thread, spdk_thread_fn fn, void *ctx)
 {
-	thread->msg_fn(fn, ctx, thread->thread_ctx);
-}
+	struct spdk_msg *msg;
+	int rc;
 
+	if (!thread) {
+		assert(false);
+		return;
+	}
+
+	if (thread->msg_fn) {
+		thread->msg_fn(fn, ctx, thread->thread_ctx);
+		return;
+	}
+
+	msg = spdk_mempool_get(g_spdk_msg_mempool);
+	if (!msg) {
+		assert(false);
+		return;
+	}
+
+	msg->fn = fn;
+	msg->arg = ctx;
+
+	rc = spdk_ring_enqueue(thread->messages, (void **)&msg, 1);
+	if (rc != 1) {
+		assert(false);
+		spdk_mempool_put(g_spdk_msg_mempool, msg);
+		return;
+	}
+}
 
 struct spdk_poller *
 spdk_poller_register(spdk_poller_fn fn,
@@ -240,6 +510,7 @@ spdk_poller_register(spdk_poller_fn fn,
 {
 	struct spdk_thread *thread;
 	struct spdk_poller *poller;
+	uint64_t quotient, remainder, ticks;
 
 	thread = spdk_get_thread();
 	if (!thread) {
@@ -247,17 +518,34 @@ spdk_poller_register(spdk_poller_fn fn,
 		return NULL;
 	}
 
-	if (!thread->start_poller_fn || !thread->stop_poller_fn) {
-		SPDK_ERRLOG("No related functions to start requested poller\n");
-		assert(false);
+	if (thread->start_poller_fn) {
+		return thread->start_poller_fn(thread->thread_ctx, fn, arg, period_microseconds);
+	}
+
+	poller = calloc(1, sizeof(*poller));
+	if (poller == NULL) {
+		SPDK_ERRLOG("Poller memory allocation failed\n");
 		return NULL;
 	}
 
-	poller = thread->start_poller_fn(thread->thread_ctx, fn, arg, period_microseconds);
-	if (!poller) {
-		SPDK_ERRLOG("Unable to start requested poller\n");
-		assert(false);
-		return NULL;
+	poller->state = SPDK_POLLER_STATE_WAITING;
+	poller->fn = fn;
+	poller->arg = arg;
+
+	if (period_microseconds) {
+		quotient = period_microseconds / SPDK_SEC_TO_USEC;
+		remainder = period_microseconds % SPDK_SEC_TO_USEC;
+		ticks = spdk_get_ticks_hz();
+
+		poller->period_ticks = ticks * quotient + (ticks * remainder) / SPDK_SEC_TO_USEC;
+	} else {
+		poller->period_ticks = 0;
+	}
+
+	if (poller->period_ticks) {
+		_spdk_poller_insert_timer(thread, poller, spdk_get_ticks());
+	} else {
+		TAILQ_INSERT_TAIL(&thread->active_pollers, poller, tailq);
 	}
 
 	return poller;
@@ -277,9 +565,31 @@ spdk_poller_unregister(struct spdk_poller **ppoller)
 	*ppoller = NULL;
 
 	thread = spdk_get_thread();
+	if (!thread) {
+		assert(false);
+		return;
+	}
 
-	if (thread) {
+	if (thread->stop_poller_fn) {
 		thread->stop_poller_fn(poller, thread->thread_ctx);
+		return;
+	}
+
+	if (poller->state == SPDK_POLLER_STATE_RUNNING) {
+		/*
+		 * We are being called from the poller_fn, so set the state to unregistered
+		 * and let the thread poll loop free the poller.
+		 */
+		poller->state = SPDK_POLLER_STATE_UNREGISTERED;
+	} else {
+		/* Poller is not running currently, so just free it. */
+		if (poller->period_ticks) {
+			TAILQ_REMOVE(&thread->timer_pollers, poller, tailq);
+		} else {
+			TAILQ_REMOVE(&thread->active_pollers, poller, tailq);
+		}
+
+		free(poller);
 	}
 }
 
@@ -320,6 +630,7 @@ void
 spdk_for_each_thread(spdk_thread_fn fn, void *ctx, spdk_thread_fn cpl)
 {
 	struct call_thread *ct;
+	struct spdk_thread *thread;
 
 	ct = calloc(1, sizeof(*ct));
 	if (!ct) {
@@ -333,7 +644,14 @@ spdk_for_each_thread(spdk_thread_fn fn, void *ctx, spdk_thread_fn cpl)
 	ct->cpl = cpl;
 
 	pthread_mutex_lock(&g_devlist_mutex);
-	ct->orig_thread = _get_thread();
+	thread = _get_thread();
+	if (!thread) {
+		SPDK_ERRLOG("No thread allocated\n");
+		free(ct);
+		cpl(ctx);
+		return;
+	}
+	ct->orig_thread = thread;
 	ct->cur_thread = TAILQ_FIRST(&g_threads);
 	pthread_mutex_unlock(&g_devlist_mutex);
 
@@ -349,10 +667,18 @@ spdk_io_device_register(void *io_device, spdk_io_channel_create_cb create_cb,
 			const char *name)
 {
 	struct io_device *dev, *tmp;
+	struct spdk_thread *thread;
 
 	assert(io_device != NULL);
 	assert(create_cb != NULL);
 	assert(destroy_cb != NULL);
+
+	thread = spdk_get_thread();
+	if (!thread) {
+		SPDK_ERRLOG("%s called from non-SPDK thread\n", __func__);
+		assert(false);
+		return;
+	}
 
 	dev = calloc(1, sizeof(struct io_device));
 	if (dev == NULL) {
@@ -375,12 +701,13 @@ spdk_io_device_register(void *io_device, spdk_io_channel_create_cb create_cb,
 	dev->refcnt = 0;
 
 	SPDK_DEBUGLOG(SPDK_LOG_THREAD, "Registering io_device %s (%p) on thread %s\n",
-		      dev->name, dev->io_device, spdk_get_thread()->name);
+		      dev->name, dev->io_device, thread->name);
 
 	pthread_mutex_lock(&g_devlist_mutex);
 	TAILQ_FOREACH(tmp, &g_io_devices, tailq) {
 		if (tmp->io_device == io_device) {
-			SPDK_ERRLOG("io_device %p already registered\n", io_device);
+			SPDK_ERRLOG("io_device %p already registered (old:%s new:%s)\n",
+				    io_device, tmp->name, dev->name);
 			free(dev->name);
 			free(dev);
 			pthread_mutex_unlock(&g_devlist_mutex);
@@ -426,6 +753,11 @@ spdk_io_device_unregister(void *io_device, spdk_io_device_unregister_cb unregist
 	struct spdk_thread *thread;
 
 	thread = spdk_get_thread();
+	if (!thread) {
+		SPDK_ERRLOG("%s called from non-SPDK thread\n", __func__);
+		assert(false);
+		return;
+	}
 
 	pthread_mutex_lock(&g_devlist_mutex);
 	TAILQ_FOREACH(dev, &g_io_devices, tailq) {
@@ -442,7 +774,8 @@ spdk_io_device_unregister(void *io_device, spdk_io_device_unregister_cb unregist
 	}
 
 	if (dev->for_each_count > 0) {
-		SPDK_ERRLOG("io_device %p has %u for_each calls outstanding\n", io_device, dev->for_each_count);
+		SPDK_ERRLOG("io_device %s (%p) has %u for_each calls outstanding\n",
+			    dev->name, io_device, dev->for_each_count);
 		pthread_mutex_unlock(&g_devlist_mutex);
 		return;
 	}
@@ -530,7 +863,7 @@ spdk_get_io_channel(void *io_device)
 	pthread_mutex_unlock(&g_devlist_mutex);
 
 	rc = dev->create_cb(io_device, (uint8_t *)ch + sizeof(*ch));
-	if (rc == -1) {
+	if (rc != 0) {
 		pthread_mutex_lock(&g_devlist_mutex);
 		TAILQ_REMOVE(&ch->thread->io_channels, ch, tailq);
 		dev->refcnt--;
@@ -547,12 +880,20 @@ _spdk_put_io_channel(void *arg)
 {
 	struct spdk_io_channel *ch = arg;
 	bool do_remove_dev = true;
+	struct spdk_thread *thread;
+
+	thread = spdk_get_thread();
+	if (!thread) {
+		SPDK_ERRLOG("%s called from non-SPDK thread\n", __func__);
+		assert(false);
+		return;
+	}
 
 	SPDK_DEBUGLOG(SPDK_LOG_THREAD,
 		      "Releasing io_channel %p for io_device %s (%p). Channel thread %p. Current thread %s\n",
-		      ch, ch->dev->name, ch->dev->io_device, ch->thread, spdk_get_thread()->name);
+		      ch, ch->dev->name, ch->dev->io_device, ch->thread, thread->name);
 
-	assert(ch->thread == spdk_get_thread());
+	assert(ch->thread == thread);
 
 	ch->destroy_ref--;
 
