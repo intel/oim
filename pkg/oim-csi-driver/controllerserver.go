@@ -8,6 +8,7 @@ package oimcsidriver
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,16 +21,39 @@ const (
 )
 
 func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
-	// Check arguments
-	if len(req.GetName()) == 0 {
+	name := req.GetName()
+	caps := req.GetVolumeCapabilities()
+
+	if name == "" {
 		return nil, status.Error(codes.InvalidArgument, "Name missing in request")
 	}
-	if req.GetVolumeCapabilities() == nil {
+	if caps == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume Capabilities missing in request")
+	}
+	for _, cap := range caps {
+		if cap.GetBlock() != nil {
+			return nil, status.Error(codes.Unimplemented, "Block Volume not supported")
+		}
+		switch cap.GetAccessMode().GetMode() {
+		case csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER: // okay
+		case csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY: // okay
+		case csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY: // okay
+
+		case csi.VolumeCapability_AccessMode_MULTI_NODE_SINGLE_WRITER:
+			// While in theory writing blocks on one node and reading them on others could work,
+			// in practice caching effects might break that. Better don't allow it.
+			return nil, status.Error(codes.Unimplemented, "multi-node reader, single writer not supported")
+		case csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER:
+			return nil, status.Error(codes.Unimplemented, "multi-node reader, multi-node writer not supported")
+		default:
+			return nil, status.Error(codes.Unimplemented, fmt.Sprintf("%s not supported", cap.GetAccessMode().GetMode()))
+		}
+	}
+	if req.GetVolumeContentSource() != nil {
+		return nil, status.Error(codes.Unimplemented, "snapshots not supported")
 	}
 
 	// Serialize operations per volume by name.
-	name := req.GetName()
 	if name == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty name")
 	}
