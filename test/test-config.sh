@@ -21,12 +21,11 @@ TEST_IP_ADDR=192.168.7
 TEST_DNS_SERVERS=
 
 # Additional Clear Linux bundles.
-# storage-utils is needed because of https://github.com/clearlinux/distribution/issues/217
-TEST_CLEAR_LINUX_BUNDLES="storage-cluster storage-utils"
+TEST_CLEAR_LINUX_BUNDLES="storage-cluster"
 
 # Post-install command for each virtual machine. Called with the
 # current image number (0 to n-1) as parameter.
-TEST_CLEAR_LINUX_POST_INSTALL=do_enable_lvm
+TEST_CLEAR_LINUX_POST_INSTALL=
 
 # Called after Kubernetes has been configured and started on the master node.
 TEST_CONFIGURE_POST_MASTER=do_configure_post_master
@@ -40,12 +39,6 @@ if [ -d test/test-config.d ]; then
         . $i
     done
 fi
-
-do_enable_lvm () {
-    imagenum=$1
-    # Ceph needs LVM.
-    _work/ssh-clear-kvm.$imagenum 'systemctl enable lvm2-lvmetad.socket && systemctl start lvm2-lvmetad.socket'
-}
 
 do_configure_post_master () {
     # Allow normal pods on master node. This is particularly important because
