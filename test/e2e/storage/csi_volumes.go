@@ -23,7 +23,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/storage/utils"
@@ -83,7 +82,7 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 		}
 	})
 
-	patchOIM := func(object interface{}) error {
+	patchOIM := func(object interface{}) {
 		switch object := object.(type) {
 		case *appsv1.DaemonSet:
 			containers := &object.Spec.Template.Spec.Containers
@@ -92,34 +91,27 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 				for e := range container.Args {
 					// Replace @OIM_REGISTRY_ADDRESS@ in the DaemonSet.
 					container.Args[e] = strings.Replace(container.Args[e], "@OIM_REGISTRY_ADDRESS@", controlPlane.registryAddress, 1)
-					// Update --drivername and --provider.
-					if strings.HasSuffix(container.Args[e], "=oim-malloc") {
-						container.Args[e] = container.Args[e] + "-" + f.UniqueName
-					}
 				}
 			}
-			volumes := &object.Spec.Template.Spec.Volumes
-			for i := range *volumes {
-				volume := &(*volumes)[i]
-				// Update path.
-				if volume.VolumeSource.HostPath != nil {
-					path := &volume.VolumeSource.HostPath.Path
-					if strings.HasSuffix(*path, "/oim-malloc") {
-						*path = *path + "-" + f.UniqueName
-					}
-				}
-			}
-		case *storagev1.StorageClass:
-			f.PatchName(&object.Provisioner)
 		}
-
-		return nil
 	}
 
 	Describe("Sanity CSI plugin test using OIM CSI with Malloc BDev", func() {
 		BeforeEach(func() {
 			destructor, err := f.CreateFromManifests(
-				patchOIM,
+				func(object interface{}) error {
+					utils.PatchCSIDeployment(f,
+						utils.PatchCSIOptions{
+							OldDriverName:            "oim-malloc",
+							NewDriverName:            "oim-malloc-" + f.UniqueName,
+							DriverContainerName:      "oim-csi-driver",
+							ProvisionerContainerName: "external-provisioner",
+						},
+						object,
+					)
+					patchOIM(object)
+					return nil
+				},
 				os.ExpandEnv("${TEST_WORK}/ca/secret.yaml"),
 				"deploy/kubernetes/malloc/malloc-rbac.yaml",
 				"deploy/kubernetes/malloc/malloc-daemonset.yaml",
@@ -150,7 +142,11 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 	Describe("Sanity CSI plugin test using OIM CSI with Ceph", func() {
 		BeforeEach(func() {
 			destructor, err := f.CreateFromManifests(
-				patchOIM,
+				func(object interface{}) error {
+					// TODO (?): rename driver
+					patchOIM(object)
+					return nil
+				},
 				os.ExpandEnv("${TEST_WORK}/ca/secret.yaml"),
 				"deploy/kubernetes/ceph-csi/rbd-rbac.yaml",
 				"deploy/kubernetes/ceph-csi/rbd-node.yaml",

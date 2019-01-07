@@ -185,7 +185,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 				context.Background(),
 				&csi.CreateVolumeRequest{
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			cl.MaybeRegisterVolume("", vol, err)
@@ -203,7 +202,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 				&csi.CreateVolumeRequest{
 					Name: name,
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			cl.MaybeRegisterVolume(name, vol, err)
@@ -234,7 +232,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -279,7 +276,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						RequiredBytes: TestVolumeSize(sc),
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			if serverError, ok := status.FromError(err); ok &&
@@ -305,7 +301,7 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 			Expect(err).NotTo(HaveOccurred())
 			cl.UnregisterVolume(name)
 		})
-		It("should not fail when requesting to create a volume with already existing name and same capacity.", func() {
+		It("should not fail when requesting to create a volume with already exisiting name and same capacity.", func() {
 
 			By("creating a volume")
 			name := uniqueString("sanity-controller-create-twice")
@@ -329,7 +325,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						RequiredBytes: size,
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -357,7 +352,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						RequiredBytes: size,
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -379,7 +373,7 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 			Expect(err).NotTo(HaveOccurred())
 			cl.UnregisterVolume(name)
 		})
-		It("should fail when requesting to create a volume with already existing name and different capacity.", func() {
+		It("should fail when requesting to create a volume with already exisiting name and different capacity.", func() {
 
 			By("creating a volume")
 			name := uniqueString("sanity-controller-create-twice-different")
@@ -404,7 +398,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						LimitBytes:    size1,
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).ToNot(HaveOccurred())
@@ -433,7 +426,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						LimitBytes:    size2,
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).To(HaveOccurred())
@@ -482,7 +474,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						RequiredBytes: size,
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -561,7 +552,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -633,7 +623,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -778,7 +767,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -896,7 +884,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -966,7 +953,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -1088,7 +1074,6 @@ var _ = DescribeSanity("Controller Service", func(sc *SanityContext) {
 						},
 					},
 					ControllerCreateSecrets: sc.Secrets.CreateVolumeSecret,
-					Parameters:              sc.Config.TestVolumeParameters,
 				},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -1565,11 +1550,8 @@ var _ = DescribeSanity("CreateSnapshot [Controller Server]", func(sc *SanityCont
 		Expect(snap1).NotTo(BeNil())
 		verifySnapshotInfo(snap1.GetSnapshot())
 
-		volume2, err := c.CreateVolume(context.Background(), MakeCreateVolumeReq(sc, "CreateSnapshot-volume-3"))
-		Expect(err).ToNot(HaveOccurred())
-
 		By("creating a snapshot with the same name but different volume source id")
-		req2 := MakeCreateSnapshotReq(sc, "CreateSnapshot-snapshot-2", volume2.GetVolume().GetId(), nil)
+		req2 := MakeCreateSnapshotReq(sc, "CreateSnapshot-snapshot-2", "test001", nil)
 		_, err = c.CreateSnapshot(context.Background(), req2)
 		Expect(err).To(HaveOccurred())
 		serverError, ok := status.FromError(err)
@@ -1643,7 +1625,6 @@ func MakeCreateVolumeReq(sc *SanityContext, name string) *csi.CreateVolumeReques
 			RequiredBytes: size1,
 			LimitBytes:    size1,
 		},
-		Parameters: sc.Config.TestVolumeParameters,
 	}
 
 	if sc.Secrets != nil {

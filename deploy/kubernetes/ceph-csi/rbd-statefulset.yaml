@@ -28,6 +28,7 @@ spec:
             - "--endpoint=$(CSI_ENDPOINT)"
             - "--v=5"
             - "--drivername=oim-rbd"
+            - "--metadatastorage=k8s_configmap"
           env:
             - name: HOST_ROOTFS
               value: "/rootfs"
@@ -37,6 +38,10 @@ spec:
                   fieldPath: spec.nodeName
             - name: CSI_ENDPOINT
               value: unix://var/lib/kubelet/plugins/oim-rbd-cluster/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           imagePullPolicy: Always
           volumeMounts:
             - name: socket-dir

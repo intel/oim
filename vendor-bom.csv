@@ -16,10 +16,8 @@ github.com/emicklei/go-restful;go-restful;MIT License
 github.com/emicklei/go-restful-swagger12;go-restful-swagger12;MIT License
 github.com/evanphx/json-patch;Go-json-patch;BSD 3-clause "New" or "Revised" License
 github.com/fatih/camelcase;fatih camelcase;MIT License
-github.com/ghodss/yaml;Sam Ghods yaml;MIT License
 github.com/globalsign/mgo;mgo;BSD 2-clause "Simplified" License
 github.com/gogo/protobuf;gogo protobuf;BSD 3-clause "New" or "Revised" License
-github.com/golang/glog;glog;Apache License 2.0
 github.com/golang/groupcache;groupcache;Apache License 2.0
 github.com/googleapis/gnostic;googleapis gnostic;Apache License 2.0
 github.com/google/btree;google btree;Apache License 2.0
@@ -40,7 +38,7 @@ github.com/grpc-ecosystem/go-grpc-prometheus;Apache License 2.0
 github.com/hashicorp/golang-lru;golang-lru;Mozilla Public License 2.0
 github.com/hpcloud/tail;HP Cloud tail;MIT License
 github.com/imdario/mergo;mergo;BSD 3-clause "New" or "Revised" License
-github.com/inconshreveable/mousetrap;inconshreveable-mousetrap;Apache License 2.0
+github.com/inconshreveable/mousetrap;inconshreveable mousetrap;Apache License 2.0
 github.com/intel/govmm;Intel govmm;Apache License 2.0
 github.com/json-iterator/go;json-iterator go;MIT License
 github.com/konsorten/go-windows-terminal-sequences;go-windows-terminal-sequences;MIT License
@@ -94,12 +92,13 @@ k8s.io/apiextensions-apiserver;kubernetes apiextensions-apiserver;Apache License
 k8s.io/apimachinery;kubernetes apimachinery;Apache License 2.0
 k8s.io/apiserver;kubernetes apiserver;Apache License 2.0
 k8s.io/client-go;Kubernetes Go Client;Apache License 2.0
-k8s.io/cli-runtime;kubernetes cli-runtime;Apache License 2.0
+k8s.io/cli-runtime;Kubernetes CLI runtime;Apache License 2.0
 k8s.io/cloud-provider;kubernetes cloud-provider;Apache License 2.0
 k8s.io/cluster-bootstrap;kubernetes cluster-bootstrap;Apache License 2.0
 k8s.io/csi-api;kubernetes csi-api;Apache License 2.0
+k8s.io/klog;kubernetes glog;Apache License 2.0
 k8s.io/kube-aggregator;kubernetes kube-aggregator;Apache License 2.0
 k8s.io/kube-openapi;kubernetes kube-openapi;Apache License 2.0
 k8s.io/kubernetes;kubernetes;Apache License 2.0
 k8s.io/utils;kubernetes utils;Apache License 2.0
-vbom.ml/util;fvbommel util;MIT License
+sigs.k8s.io/yaml;kubernetes yaml;MIT License

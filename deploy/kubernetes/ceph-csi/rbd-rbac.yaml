@@ -126,3 +126,31 @@ roleRef:
   kind: ClusterRole
   name: oim-rbd-node-role
   apiGroup: rbac.authorization.k8s.io
+
+---
+# https://github.com/ceph/ceph-csi/issues/115
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: default
+  name: oim-rbd-configmap-updater
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "update", "patch", "list", "get", "delete"]
+
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: default
+  name: oim-rbd-node-rb
+subjects:
+  - kind: ServiceAccount
+    name: oim-rbd-cluster-sa
+    namespace: default
+roleRef:
+  kind: Role
+  namespace: default
+  name: oim-rbd-configmap-updater
+  apiGroup: rbac.authorization.k8s.io
