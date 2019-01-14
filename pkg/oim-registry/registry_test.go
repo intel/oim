@@ -292,8 +292,9 @@ var _ = Describe("OIM Registry", func() {
 
 		Context("with controller", func() {
 			var (
-				controller       *MockController
-				controllerServer *oimcommon.NonBlockingGRPCServer
+				controller        *MockController
+				controllerServer  *oimcommon.NonBlockingGRPCServer
+				controllerAddress string
 
 				ca       = os.ExpandEnv("${TEST_WORK}/ca/ca.crt")
 				key      = os.ExpandEnv("${TEST_WORK}/ca/controller." + controllerID + ".key")
@@ -309,7 +310,7 @@ var _ = Describe("OIM Registry", func() {
 				controllerCreds, err := oimcommon.LoadTLS(ca, key, "component.registry")
 				Expect(err).NotTo(HaveOccurred())
 				controller = &MockController{}
-				controllerAddress := "unix://" + filepath.Join(tmpDir, "controller.sock")
+				controllerAddress = "unix://" + filepath.Join(tmpDir, "controller.sock")
 				server, service := oimcontroller.Server(controllerAddress, controller, controllerCreds)
 				controllerServer = server
 				err = controllerServer.Start(ctx, service)
@@ -365,6 +366,27 @@ var _ = Describe("OIM Registry", func() {
 					}
 				})
 			}
+
+			It("controller should detect wrong registry", func() {
+				// Setup controller with normal creds.
+				setupController(ca, key)
+				// Connect directly to it with wrong key (another controller instead of "component.registry").
+				// We intentionally don't block here waiting for a connection, because then
+				// grpc.Dial() dial seems to retry forever.
+				clientCreds, err := oimcommon.LoadTLS(ca, wrongKey, "controller."+controllerID)
+				Expect(err).NotTo(HaveOccurred())
+				opts := oimcommon.ChooseDialOpts(controllerAddress, grpc.WithTransportCredentials(clientCreds))
+				conn, err := grpc.Dial(controllerAddress, opts...)
+				if err == nil {
+					defer conn.Close()
+					controllerClient = oim.NewControllerClient(conn)
+					_, err = controllerClient.MapVolume(context.Background(), &oim.MapVolumeRequest{
+						VolumeId: "my-volume",
+					})
+				}
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(`all SubConns are in TransientFailure, latest connection error: connection error: desc = "transport: authentication handshake failed: remote error: tls: bad certificate"`))
+			})
 		})
 	})
 })

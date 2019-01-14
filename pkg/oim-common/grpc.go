@@ -100,7 +100,24 @@ func LoadTLSConfig(caFile, key, peerName string) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		ServerName:   peerName,
+		ServerName: peerName, // Common name check when connecting to server.
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			// Common name check when accepting a connection from a client.
+			if peerName == "" {
+				// All names allowed.
+				return nil
+			}
+			if len(verifiedChains) == 0 ||
+				len(verifiedChains[0]) == 0 {
+				return errors.New("no valid certificate")
+			}
+			commonName := verifiedChains[0][0].Subject.CommonName
+			if commonName != peerName {
+				return errors.Errorf("expected CN %q, got %q", peerName, commonName)
+			}
+			return nil
+		},
+
 		Certificates: []tls.Certificate{certificate},
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
