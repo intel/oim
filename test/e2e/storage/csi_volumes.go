@@ -175,7 +175,7 @@ var _ = utils.SIGDescribe("OIM Volumes", func() {
 					"csiProvisionerSecretNamespace": "default",
 					"csiNodePublishSecretName":      "csi-rbd-secret",
 					"csiNodePublishSecretNamespace": "default",
-					"pool": "rbd",
+					"pool":                          "rbd",
 				},
 				// See https://github.com/ceph/ceph-csi/issues/85
 				claimSize:    "1Gi",
