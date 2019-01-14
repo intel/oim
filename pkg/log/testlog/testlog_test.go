@@ -52,6 +52,17 @@ func stripTimes(out []byte) string {
 	return strings.Join(parts, "")
 }
 
+var testOutputLogMsg = regexp.MustCompile(`\n\s+([^\n]*\.go:\d+:)`)
+
+func normalizeGoTestOutput(output string) string {
+	result := output
+	// Indention of test output changed from using tabs to using spaces.
+	// Replace with a single tab. Example:
+	//   testlog_test.go:40: INFO TestOutput2
+	result = testOutputLogMsg.ReplaceAllString(result, `\n $1`)
+	return result
+}
+
 func TestOutputSilent(t *testing.T) {
 	cmd := exec.Command(
 		"go", "test",
@@ -61,13 +72,13 @@ func TestOutputSilent(t *testing.T) {
 	cmd.Env = append(os.Environ(), "TEST_OUTPUT2_FAIL=1", "GOCACHE=off")
 	out, err := cmd.CombinedOutput()
 	assert.Error(t, err)
-	assert.Equal(t, `--- FAIL: TestOutput2 ()
+	assert.Equal(t, normalizeGoTestOutput(`--- FAIL: TestOutput2 ()
 	testlog_test.go:40: INFO TestOutput2
 	testlog_test.go:42: was asked to fail
 FAIL
 FAIL	github.com/intel/oim/pkg/log/testlog	
-`,
-		stripTimes(out))
+`),
+		normalizeGoTestOutput(stripTimes(out)))
 }
 
 func TestOutputVerbose(t *testing.T) {
@@ -80,7 +91,7 @@ func TestOutputVerbose(t *testing.T) {
 	cmd.Env = append(os.Environ(), "TEST_OUTPUT2_FAIL=1", "GOCACHE=off")
 	out, err := cmd.CombinedOutput()
 	assert.Error(t, err)
-	assert.Equal(t, `=== RUN   TestOutput1
+	assert.Equal(t, normalizeGoTestOutput(`=== RUN   TestOutput1
 --- PASS: TestOutput1 ()
 	testlog_test.go:34: INFO TestOutput1
 === RUN   TestOutput2
@@ -89,6 +100,6 @@ func TestOutputVerbose(t *testing.T) {
 	testlog_test.go:42: was asked to fail
 FAIL
 FAIL	github.com/intel/oim/pkg/log/testlog	
-`,
-		stripTimes(out))
+`),
+		normalizeGoTestOutput(stripTimes(out)))
 }
