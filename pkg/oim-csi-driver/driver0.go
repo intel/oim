@@ -8,10 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 package oimcsidriver
 
 import (
-	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/intel/oim/pkg/spec/csi/v0"
 )
 
-func (od *oimDriver) setControllerServiceCapabilities(cl []csi.ControllerServiceCapability_RPC_Type) {
+func (od *oimDriver03) setControllerServiceCapabilities(cl []csi.ControllerServiceCapability_RPC_Type) {
 	var csc []*csi.ControllerServiceCapability
 
 	for _, c := range cl {
@@ -28,7 +28,7 @@ func (od *oimDriver) setControllerServiceCapabilities(cl []csi.ControllerService
 	od.cap = csc
 }
 
-func (od *oimDriver) setVolumeCapabilityAccessModes(vc []csi.VolumeCapability_AccessMode_Mode) {
+func (od *oimDriver03) setVolumeCapabilityAccessModes(vc []csi.VolumeCapability_AccessMode_Mode) {
 	var vca []*csi.VolumeCapability_AccessMode
 	for _, c := range vc {
 		vca = append(vca,

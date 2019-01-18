@@ -69,12 +69,12 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
-  digest = "1:a54dc69ec3668e0e57ad159a0a8c0ce1ec571174bb4eb6b3915833a8c21d40f3"
+  digest = "1:94ffc0947c337d618b6ff5ed9abaddc1217b090c1b3a1ae4739b35b7b25851d5"
   name = "github.com/container-storage-interface/spec"
-  packages = ["lib/go/csi/v0"]
+  packages = ["lib/go/csi"]
   pruneopts = "UT"
-  revision = "2178fdeea87f1150a17a63252eee28d4d8141f72"
-  version = "v0.3.0"
+  revision = "ed0bb0e1557548aa028307f48728767cfe8f6345"
+  version = "v1.0.0"
 
 [[projects]]
   digest = "1:b7e8c5fa66ebd2e6083cd4a6cc515f6d3c651fd04ad18a8276444bbcb172c583"
@@ -449,15 +449,15 @@
   version = "v0.2.0"
 
 [[projects]]
-  digest = "1:f2d2fa10f6cd1ad64274c85f6105947b2966e026aafb997c3f6b7a91a4700664"
+  digest = "1:c9ba37d3709f57185b60f587a6282378feaff2aa3cddc28a56770704e3f96b98"
   name = "github.com/kubernetes-csi/csi-test"
   packages = [
     "pkg/sanity",
     "utils",
   ]
   pruneopts = "UT"
-  revision = "f931472b5957142f7c348031cd3cddc26434b890"
-  version = "v0.3.5"
+  revision = "5b1e3786b7c8f7ca514b40e882a0b5dc36e4c842"
+  version = "v1.1.0"
 
 [[projects]]
   branch = "master"
@@ -1713,7 +1713,7 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
-    "github.com/container-storage-interface/spec/lib/go/csi/v0",
+    "github.com/container-storage-interface/spec/lib/go/csi",
     "github.com/gogo/protobuf/proto",
     "github.com/gogo/protobuf/types",
     "github.com/intel/govmm/qemu",
@@ -1728,6 +1728,7 @@
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
     "github.com/vgough/grpc-proxy/proxy",
+    "golang.org/x/net/context",
     "golang.org/x/sys/unix",
     "google.golang.org/grpc",
     "google.golang.org/grpc/codes",

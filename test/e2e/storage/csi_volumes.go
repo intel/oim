@@ -132,6 +132,8 @@ var _ = Describe("OIM Volumes", func() {
 				},
 				manifests: []string{
 					os.ExpandEnv("${TEST_WORK}/ca/secret.yaml"),
+					"deploy/kubernetes/malloc/csi-attacher-rbac.yaml",
+					"deploy/kubernetes/malloc/csi-provisioner-rbac.yaml",
 					"deploy/kubernetes/malloc/malloc-rbac.yaml",
 					"deploy/kubernetes/malloc/malloc-daemonset.yaml",
 				},

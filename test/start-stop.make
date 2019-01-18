@@ -53,7 +53,7 @@ start: _work/clear-kvm.img _work/kube-clear-kvm _work/start-clear-kvm _work/ssh-
 	done
 	_work/kube-clear-kvm
 	cat _work/ca/secret.yaml | _work/ssh-clear-kvm kubectl create -f -
-	for i in malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
+	for i in csi-attacher-rbac.yaml csi-provisioner-rbac.yaml malloc-rbac.yaml malloc-storageclass.yaml malloc-daemonset.yaml; do \
 		cat deploy/kubernetes/malloc/$$i | \
 			sed -e "s;@OIM_REGISTRY_ADDRESS@;192.168.7.1:$$(cat _work/oim-registry.port);" | \
 			_work/ssh-clear-kvm kubectl create -f - || true; \

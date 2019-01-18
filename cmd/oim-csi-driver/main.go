@@ -28,6 +28,7 @@ var (
 	key                = flag.String("key", "", "the base name of the required .key and .crt files that authenticate and authorize the controller")
 	controllerID       = flag.String("controller-id", "", "The ID under which the OIM controller can be found in the registry.")
 	emulate            = flag.String("emulate", "", "name of CSI driver to emulate for node operations")
+	csiversion         = flag.String("csiversion", "1.0", "CSI version that is to be implemented by the driver (1.0 or 0.3)")
 	_                  = log.InitSimpleFlags()
 )
 
@@ -58,6 +59,7 @@ func main() {
 		oimcsidriver.WithOIMControllerID(*controllerID),
 		oimcsidriver.WithRegistryCreds(*ca, *key),
 		oimcsidriver.WithEmulation(*emulate),
+		oimcsidriver.WithCSIVersion(*csiversion),
 	}
 	driver, err := oimcsidriver.New(options...)
 	if err != nil {
