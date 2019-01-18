@@ -63,7 +63,7 @@ spec:
         - --v=5
         - --provisioner=oim-malloc
         - --csi-address=/csi/csi.sock
-        image: quay.io/k8scsi/csi-provisioner:v0.4.1
+        image: quay.io/k8scsi/csi-provisioner:v1.0.1
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
@@ -79,7 +79,7 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: spec.nodeName
-        image: quay.io/k8scsi/driver-registrar:v0.4.1
+        image: quay.io/k8scsi/csi-node-driver-registrar:v1.0.2
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
@@ -93,7 +93,7 @@ spec:
         env:
         - name: ADDRESS
           value: /csi/csi.sock
-        image: quay.io/k8scsi/csi-attacher:v0.4.1
+        image: quay.io/k8scsi/csi-attacher:v1.0.1
         imagePullPolicy: Always
         volumeMounts:
         - mountPath: /csi
@@ -108,7 +108,7 @@ spec:
           type: DirectoryOrCreate
         name: mountpoint-dir
       - hostPath:
-          path: /var/lib/kubelet/plugins
+          path: /var/lib/kubelet/plugins_registry
           type: Directory
         name: registration-dir
       - secret:

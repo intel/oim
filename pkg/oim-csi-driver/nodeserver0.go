@@ -14,19 +14,26 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/container-storage-interface/spec/lib/go/csi"
-
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/mount"
+	"github.com/intel/oim/pkg/spec/csi/v0"
 )
 
-func (od *oimDriver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+// Name is specified by generated interface, can't make it NodeGetID.
+// nolint: golint
+func (od *oimDriver03) NodeGetId(ctx context.Context, req *csi.NodeGetIdRequest) (*csi.NodeGetIdResponse, error) {
+	return &csi.NodeGetIdResponse{
+		NodeId: od.nodeID,
+	}, nil
+}
+
+func (od *oimDriver03) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	return &csi.NodeGetInfoResponse{
 		NodeId: od.nodeID,
 	}, nil
 }
 
-func (od *oimDriver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+func (od *oimDriver03) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
 			{
@@ -40,7 +47,7 @@ func (od *oimDriver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCa
 	}, nil
 }
 
-func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (od *oimDriver03) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	targetPath := req.GetTargetPath()
 	stagingTargetPath := req.GetStagingTargetPath()
 	volumeID := req.GetVolumeId()
@@ -119,7 +126,7 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (od *oimDriver03) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	targetPath := req.GetTargetPath()
 	volumeID := req.GetVolumeId()
 
@@ -146,7 +153,7 @@ func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (od *oimDriver03) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	targetPath := req.GetStagingTargetPath()
 	volumeID := req.GetVolumeId()
 	volumeCapability := req.GetVolumeCapability()
@@ -183,12 +190,14 @@ func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	}
 
 	fsType := req.GetVolumeCapability().GetMount().GetFsType()
+	attrib := req.GetVolumeAttributes()
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
 
 	log.FromContext(ctx).Infow("mounting",
 		"target", targetPath,
 		"fstype", fsType,
 		"volumeid", volumeID,
+		"attributes", attrib,
 		"flags", mountFlags,
 	)
 
@@ -210,7 +219,7 @@ func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (od *oimDriver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+func (od *oimDriver03) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 	targetPath := req.GetStagingTargetPath()
 	volumeID := req.GetVolumeId()
 
@@ -240,22 +249,4 @@ func (od *oimDriver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 	}
 
 	return &csi.NodeUnstageVolumeResponse{}, nil
-}
-
-func (od *oimDriver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	volumeID := req.GetVolumeId()
-	volumePath := req.GetVolumePath()
-	if volumeID == "" {
-		return nil, status.Error(codes.InvalidArgument, "empty volume ID")
-	}
-	if volumePath == "" {
-		return nil, status.Error(codes.InvalidArgument, "empty volume path")
-	}
-
-	// Volume ID is the same as the volume name in CreateVolume. Serialize by that.
-	volumeNameMutex.LockKey(volumeID)
-	defer volumeNameMutex.UnlockKey(volumeID)
-
-	// TODO: actually check that the path exists and extract information about it.
-	return &csi.NodeGetVolumeStatsResponse{}, nil
 }

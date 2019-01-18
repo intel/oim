@@ -13,10 +13,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/intel/oim/pkg/spec/csi/v0"
 )
 
-func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
+func (od *oimDriver03) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	name := req.GetName()
 	caps := req.GetVolumeCapabilities()
 
@@ -63,13 +63,14 @@ func (od *oimDriver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequ
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			// We use the unique name also as ID.
-			VolumeId:      name,
+			Id:            name,
 			CapacityBytes: actualBytes,
+			Attributes:    req.GetParameters(),
 		},
 	}, nil
 }
 
-func (od *oimDriver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+func (od *oimDriver03) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
@@ -89,15 +90,15 @@ func (od *oimDriver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequ
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
-func (od *oimDriver) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+func (od *oimDriver03) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-func (od *oimDriver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+func (od *oimDriver03) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-func (od *oimDriver) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
+func (od *oimDriver03) ValidateVolumeCapabilities(ctx context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
 
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
@@ -120,68 +121,38 @@ func (od *oimDriver) ValidateVolumeCapabilities(ctx context.Context, req *csi.Va
 		return nil, err
 	}
 
-	confirmed := &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
-		// We don't actually do any validation of these (don't even use them!).
-		// It's also unclear from the spec what a CO would do with the validated
-		// values, because both are opaque to the CO.
-		VolumeContext: req.VolumeContext,
-		Parameters:    req.Parameters,
-	}
 	for _, cap := range req.VolumeCapabilities {
-		if cap.GetBlock() != nil {
-			/* Known unsupported mode. Fail the validation. */
-			return &csi.ValidateVolumeCapabilitiesResponse{Message: "Block Volume not supported"}, nil
+		if cap.GetAccessMode().GetMode() != csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER {
+			return &csi.ValidateVolumeCapabilitiesResponse{Supported: false, Message: ""}, nil
 		}
-		if cap.GetMount() == nil {
-			/* Must be something else, an unknown mode. Ignore it. */
-			continue
-		}
-		// We could check fs type and mount flags for MountVolume, but let's assume that they are okay.
-		// Now check the access mode.
-		switch cap.GetAccessMode().GetMode() {
-		case csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER: // okay
-		case csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY: // okay
-		case csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY: // okay
-
-		case csi.VolumeCapability_AccessMode_MULTI_NODE_SINGLE_WRITER:
-			// While in theory writing blocks on one node and reading them on others could work,
-			// in practice caching effects might break that. Better don't allow it.
-			return &csi.ValidateVolumeCapabilitiesResponse{Message: "multi-node reader, single writer not supported"}, nil
-		case csi.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER:
-			return &csi.ValidateVolumeCapabilitiesResponse{Message: "multi-node reader, multi-node writer not supported"}, nil
-		default:
-			/* unknown, not supported */
-			continue
-		}
-		confirmed.VolumeCapabilities = append(confirmed.VolumeCapabilities, cap)
 	}
-	return &csi.ValidateVolumeCapabilitiesResponse{Confirmed: confirmed}, nil
+	return &csi.ValidateVolumeCapabilitiesResponse{Supported: true, Message: ""}, nil
 }
 
-func (od *oimDriver) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
+func (od *oimDriver03) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-func (od *oimDriver) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
+func (od *oimDriver03) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
 // ControllerGetCapabilities implements the default GRPC callout.
 // Default supports all capabilities
-func (od *oimDriver) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
+func (od *oimDriver03) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: od.cap,
 	}, nil
 }
 
-func (od *oimDriver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+func (od *oimDriver03) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-func (od *oimDriver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+func (od *oimDriver03) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
 
-func (od *oimDriver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+func (od *oimDriver03) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }

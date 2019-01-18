@@ -52,16 +52,6 @@ ignored = [
   # Because we need https://review.gerrithub.io/c/spdk/spdk/+/430460/ for RBD.
   branch = "master"
 
-# We are based on CSI v0.3.0 and must pull in the right version of the spec
-# and the corresponding csi-test.
-[[override]]
-  name = "github.com/container-storage-interface/spec"
-  version = "0.3"
-
-[[override]]
-  name = "github.com/kubernetes-csi/csi-test"
-  version = "0.3"
-
 [[constraint]]
   name = "k8s.io/kubernetes"
   branch = "master"

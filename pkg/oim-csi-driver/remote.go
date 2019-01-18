@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/container-storage-interface/spec/lib/go/csi/v0"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -27,112 +27,95 @@ import (
 
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/oim-common"
-	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
-func findNBDDevice(ctx context.Context, client *spdk.Client, volumeID string) (nbdDevice string, err error) {
-	nbdDisks, err := spdk.GetNBDDisks(ctx, client)
-	if err != nil {
-		return "", errors.Wrap(err, "get NDB disks from SPDK")
-	}
-	for _, nbd := range nbdDisks {
-		if nbd.BDevName == volumeID {
-			return nbd.NBDDevice, nil
-		}
-	}
-	return "", nil
+type remoteSPDK struct {
+	oimRegistryAddress string
+	registryCA         string
+	registryKey        string
+	oimControllerID    string
+
+	mapVolumeParams func(request interface{}, to *oim.MapVolumeRequest) error
 }
 
-type cleanup func() error
+var _ OIMBackend = &remoteSPDK{}
 
-func (od *oimDriver) createDevice(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
-	if od.vhostEndpoint != "" {
-		return od.createDeviceDirectly(ctx, req)
-	}
-	return od.createDeviceWithController(ctx, req)
-}
-
-func (od *oimDriver) createDeviceDirectly(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
-	if od.emulate != nil {
-		return "", nil, errors.Errorf("emulating CSI driver %q not currently implemented when using SPDK directly", od.emulate.CSIDriverName)
+func (r *remoteSPDK) createVolume(ctx context.Context, volumeID string, requiredBytes int64) (int64, error) {
+	// Check for maximum available capacity
+	capacity := requiredBytes
+	if capacity >= maxStorageCapacity {
+		return 0, status.Errorf(codes.OutOfRange, "Requested capacity %d exceeds maximum allowed %d", capacity, maxStorageCapacity)
 	}
 
-	// Connect to SPDK.
-	client, err := spdk.New(od.vhostEndpoint)
-	if err != nil {
-		return "", nil, errors.Wrap(err, "connect to SPDK")
-	}
-	defer client.Close()
-
-	volumeID := req.GetVolumeId()
-
-	// We might have already mapped that BDev to a NBD disk - check!
-	nbdDevice, err := findNBDDevice(ctx, client, volumeID)
-	if err != nil {
-		return "", nil, errors.Wrap(err, "find NBD device")
-	}
-	if nbdDevice != "" {
-		log.FromContext(ctx).Infof("Reusing already started NBD disk: %s", nbdDevice)
+	if capacity == 0 {
+		// If capacity is unset, round up to minimum size (1MB?).
+		capacity = mib
 	} else {
-		var nbdError error
-		// Find a free NBD device node and start a NBD disk there.
-		// Unfortunately this is racy. We assume that we are the
-		// only users of /dev/nbd*.
-		for i := 0; ; i++ {
-			// Filename from variable is save here.
-			n := fmt.Sprintf("/dev/nbd%d", i)
-			nbdFile, err := os.Open(n) // nolint: gosec
-
-			// We stop when we run into the first non-existent device name.
-			if os.IsNotExist(err) {
-				if nbdError == nil {
-					nbdError = err
-				}
-				break
-			}
-			if err != nil {
-				nbdError = err
-				continue
-			}
-			defer nbdFile.Close()
-			size, err := oimcommon.GetBlkSize64(nbdFile)
-			if err != nil {
-				nbdError = err
-				continue
-			}
-			err = nbdFile.Close()
-			if err != nil {
-				nbdError = err
-				continue
-			}
-			if size == 0 {
-				// Seems unused, take it.
-				nbdDevice = n
-				break
-			}
-		}
-		// Still nothing?!
-		if nbdDevice == "" {
-			return "", nil, errors.Wrap(nbdError, "no unused /dev/nbd*")
-		}
+		// Round up to multiple of 512.
+		capacity = (capacity + 511) / 512 * 512
 	}
 
-	args := spdk.StartNBDDiskArgs{
-		BDevName:  volumeID,
-		NBDDevice: nbdDevice,
+	if err := r.provision(ctx, volumeID, capacity); err != nil {
+		return 0, err
 	}
-	if err := spdk.StartNBDDisk(ctx, client, args); err != nil {
-		return "", nil, errors.Wrapf(err, "start SPDK NBD disk %+v", args)
-	}
-	return nbdDevice, nil, nil
+
+	return capacity, nil
 }
 
-func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.NodeStageVolumeRequest) (string, cleanup, error) {
-	volumeID := req.GetVolumeId()
+func (r *remoteSPDK) deleteVolume(ctx context.Context, volumeID string) error {
+	return r.provision(ctx, volumeID, 0)
+}
 
+func (r *remoteSPDK) provision(ctx context.Context, bdevName string, size int64) error {
 	// Connect to OIM controller through OIM registry.
-	conn, err := od.DialRegistry(ctx)
+	conn, err := r.dialRegistry(ctx)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	defer conn.Close()
+	controllerClient := oim.NewControllerClient(conn)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", r.oimControllerID)
+	_, err = controllerClient.ProvisionMallocBDev(ctx, &oim.ProvisionMallocBDevRequest{
+		BdevName: bdevName,
+		Size_:    size,
+	})
+	return err
+}
+
+func (r *remoteSPDK) checkVolumeExists(ctx context.Context, volumeID string) error {
+	// Connect to OIM controller through OIM registry.
+	conn, err := r.dialRegistry(ctx)
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	defer conn.Close()
+	controllerClient := oim.NewControllerClient(conn)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", r.oimControllerID)
+	_, err = controllerClient.CheckMallocBDev(ctx, &oim.CheckMallocBDevRequest{
+		BdevName: volumeID,
+	})
+	return err
+}
+
+func (r *remoteSPDK) dialRegistry(ctx context.Context) (*grpc.ClientConn, error) {
+	// Intentionally loaded anew for each connection attempt.
+	// File content can change over time.
+	transportCreds, err := oimcommon.LoadTLS(r.registryCA, r.registryKey, "component.registry")
+	if err != nil {
+		return nil, errors.Wrap(err, "load TLS certs")
+	}
+	opts := oimcommon.ChooseDialOpts(r.oimRegistryAddress, grpc.WithTransportCredentials(transportCreds))
+	conn, err := grpc.Dial(r.oimRegistryAddress, opts...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "connect to OIM registry at %s", r.oimRegistryAddress)
+	}
+	return conn, nil
+}
+
+func (r *remoteSPDK) createDevice(ctx context.Context, volumeID string, csiRequest interface{}) (string, cleanup, error) {
+	// Connect to OIM controller through OIM registry.
+	conn, err := r.dialRegistry(ctx)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "connect to OIM registry")
 	}
@@ -143,7 +126,7 @@ func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.No
 	// Find out about configured PCI address before
 	// triggering the more complex MapVolume operation.
 	var defPCIAddress oim.PCIAddress
-	path := od.oimControllerID + "/" + oimcommon.RegistryPCI
+	path := r.oimControllerID + "/" + oimcommon.RegistryPCI
 	valuesReply, err := registryClient.GetValues(ctx, &oim.GetValuesRequest{
 		Path: path,
 	})
@@ -162,7 +145,7 @@ func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.No
 	}
 
 	// Make volume available and/or find out where it is.
-	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", r.oimControllerID)
 	request := &oim.MapVolumeRequest{
 		VolumeId: volumeID,
 		// Malloc BDev is the default. It takes no special parameters.
@@ -170,12 +153,12 @@ func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.No
 			Malloc: &oim.MallocParams{},
 		},
 	}
-	if od.emulate != nil {
+	if r.mapVolumeParams != nil {
 		// Replace default parameters with the actual
 		// values for the request. Interpretation of
 		// the request depends on which CSI driver we
 		// emulate.
-		if err := od.emulate.MapVolumeParams(req, request); err != nil {
+		if err := r.mapVolumeParams(csiRequest, request); err != nil {
 			return "", nil, errors.Wrap(err, "create MapVolumeRequest parameters")
 		}
 	}
@@ -230,6 +213,24 @@ func (od *oimDriver) createDeviceWithController(ctx context.Context, req *csi.No
 		return "", cleanup, errors.Wrap(err, "mknod")
 	}
 	return devNode, cleanup, nil
+}
+
+func (r *remoteSPDK) deleteDevice(ctx context.Context, volumeID string) error {
+	// Connect to OIM controller through OIM registry.
+	conn, err := r.dialRegistry(ctx)
+	if err != nil {
+		return errors.Wrap(err, "connect to registry")
+	}
+	controllerClient := oim.NewControllerClient(conn)
+
+	// Make volume available and/or find out where it is.
+	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", r.oimControllerID)
+	if _, err := controllerClient.UnmapVolume(ctx, &oim.UnmapVolumeRequest{
+		VolumeId: volumeID,
+	}); err != nil {
+		return errors.Wrapf(err, "UnmapVolume for %s", volumeID)
+	}
+	return nil
 }
 
 // makedev prepares the dev argument for Mknod.
@@ -369,49 +370,4 @@ func findDev(ctx context.Context, sys string, pciAddress *oim.PCIAddress, scsiDi
 		}
 	}
 	return "", 0, 0, nil
-}
-
-func (od *oimDriver) deleteDevice(ctx context.Context, volumeID string) error {
-	if od.vhostEndpoint != "" {
-		return od.deleteDeviceDirectly(ctx, volumeID)
-	}
-	return od.deleteDeviceWithController(ctx, volumeID)
-}
-
-func (od *oimDriver) deleteDeviceDirectly(ctx context.Context, volumeID string) error {
-	// Connect to SPDK.
-	client, err := spdk.New(od.vhostEndpoint)
-	if err != nil {
-		return errors.Wrap(err, "connect to SPDK")
-	}
-	defer client.Close()
-
-	// Stop NBD disk.
-	nbdDevice, err := findNBDDevice(ctx, client, volumeID)
-	if err != nil {
-		return errors.Wrap(err, "get NDB disks from SPDK")
-	}
-	args := spdk.StopNBDDiskArgs{NBDDevice: nbdDevice}
-	if err := spdk.StopNBDDisk(ctx, client, args); err != nil {
-		return errors.Wrapf(err, "stop SPDK NDB disk %+v", args)
-	}
-	return nil
-}
-
-func (od *oimDriver) deleteDeviceWithController(ctx context.Context, volumeID string) error {
-	// Connect to OIM controller through OIM registry.
-	conn, err := od.DialRegistry(ctx)
-	if err != nil {
-		return errors.Wrap(err, "connect to registry")
-	}
-	controllerClient := oim.NewControllerClient(conn)
-
-	// Make volume available and/or find out where it is.
-	ctx = metadata.AppendToOutgoingContext(ctx, "controllerid", od.oimControllerID)
-	if _, err := controllerClient.UnmapVolume(ctx, &oim.UnmapVolumeRequest{
-		VolumeId: volumeID,
-	}); err != nil {
-		return errors.Wrapf(err, "UnmapVolume for %s", volumeID)
-	}
-	return nil
 }

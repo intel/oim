@@ -37,6 +37,8 @@ TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/spec/oim/v0
 TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/mount
 # test code will soon be replaced (https://github.com/kubernetes/kubernetes/pull/70992)
 TEST_LINT_EXCLUDE += $(IMPORT_PATH)/test/e2e
+# a verbatim copy of the generated code from CSI 0.3
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/spec/csi/v0
 
 # TODO: Simplifying the code can come later.
 LINTER += --disable=gocyclo

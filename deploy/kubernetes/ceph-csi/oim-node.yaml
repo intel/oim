@@ -39,6 +39,7 @@ spec:
             - --key=/ca/host.$(KUBE_NODE_NAME).key
             - --drivername=oim-rbd
             - --emulate=ceph-csi
+            - --csiversion=0.3
           env:
             - name: NODE_ID
               valueFrom:
