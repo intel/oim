@@ -127,7 +127,7 @@ test: test_vendor_bom
 test_vendor_bom:
 	@ if ! diff -c \
 		<(tail -n +2 vendor-bom.csv | sed -e 's/;.*//') \
-		<((grep '^  name =' Gopkg.lock  | sed -e 's/.*"\(.*\)"/\1/'; echo github.com/dpdk/dpdk) | sort); then \
+		<((grep '^  name =' Gopkg.lock  | sed -e 's/.*"\(.*\)"/\1/'; echo github.com/dpdk/dpdk) | sort | LC_ALL=C LANG=C sort); then \
 		echo; \
 		echo "vendor-bom.csv not in sync with vendor directory (aka Gopk.lock):"; \
 		echo "+ new entry, missing in vendor-bom.csv"; \
@@ -188,7 +188,7 @@ RUNTIME_DEPS += sed \
 	| cat |
 
 # Ignore duplicates.
-RUNTIME_DEPS += sort -u
+RUNTIME_DEPS += LC_ALL=C LANG=C sort -u
 
 _work/%/.ca-stamp: test/setup-ca.sh
 	rm -rf $(@D)
