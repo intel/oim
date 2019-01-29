@@ -1453,7 +1453,7 @@
 
 [[projects]]
   branch = "storage-volume-testsuites-concurrency"
-  digest = "1:cc390fd5b69fd4de67f8823ef8ad5ae48ebb1434fa570d710888f5d202d59851"
+  digest = "1:9a8f6b595931950f21b935b11f63c2676902ac8297a1280f8b8fe5eb5cc2cce9"
   name = "k8s.io/kubernetes"
   packages = [
     "cmd/kubeadm/app/apis/kubeadm",
@@ -1624,7 +1624,6 @@
     "pkg/util/goroutinemap/exponentialbackoff",
     "pkg/util/hash",
     "pkg/util/io",
-    "pkg/util/keymutex",
     "pkg/util/labels",
     "pkg/util/metrics",
     "pkg/util/mount",
@@ -1663,14 +1662,15 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:ae10a16a74957e6cda3836ba64ec1b052b4707d66923cede097db76dc372e09f"
+  digest = "1:211f7772d3566b58a6d559f3bc2dd25bdf65ff1bc224f6071f69b3f0c10c7b84"
   name = "k8s.io/utils"
   packages = [
     "exec",
+    "keymutex",
     "pointer",
   ]
   pruneopts = "UT"
-  revision = "1bd4f387aa67de2eec07a362c10bc8bd7fe74237"
+  revision = "ed37f7428a91fc2a81070808937195dcd46d320e"
 
 [[projects]]
   digest = "1:443f6048f55fc9e389e8f7fa20b25bc30ef565953dd5c6425c9032432a677301"
@@ -1744,7 +1744,6 @@
     "k8s.io/apimachinery/pkg/runtime",
     "k8s.io/apimachinery/pkg/util/sets",
     "k8s.io/client-go/kubernetes",
-    "k8s.io/kubernetes/pkg/util/keymutex",
     "k8s.io/kubernetes/pkg/version",
     "k8s.io/kubernetes/test/e2e/framework",
     "k8s.io/kubernetes/test/e2e/framework/ginkgowrapper",
@@ -1754,6 +1753,7 @@
     "k8s.io/kubernetes/test/e2e/storage/testsuites",
     "k8s.io/kubernetes/test/e2e/storage/utils",
     "k8s.io/utils/exec",
+    "k8s.io/utils/keymutex",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

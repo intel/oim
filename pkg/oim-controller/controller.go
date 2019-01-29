@@ -22,7 +22,7 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
-	"k8s.io/kubernetes/pkg/util/keymutex" // TODO: move to k8s.io/utils (https://github.com/kubernetes/utils/issues/62)
+	"k8s.io/utils/keymutex"
 )
 
 // Controller implements oim.Controller.
