@@ -37,6 +37,7 @@ func TestGetBDevs(t *testing.T) {
 	defer testlog.SetGlobal(t)()
 	defer testspdk.Finalize()
 	client := connect(t)
+	defer client.Close()
 	response, err := spdk.GetBDevs(context.Background(), client, spdk.GetBDevsArgs{})
 	assert.NoError(t, err, "Failed to list bdevs: %s", err)
 	assert.Empty(t, response, "Unexpected non-empty bdev list")
@@ -47,6 +48,7 @@ func TestError(t *testing.T) {
 	defer testlog.SetGlobal(t)()
 	defer testspdk.Finalize()
 	client := connect(t)
+	defer client.Close()
 
 	// It would be nice to get a well-documented error code here,
 	// but currently we don't (https://github.com/spdk/spdk/issues/319).
@@ -60,6 +62,7 @@ func TestMallocBDev(t *testing.T) {
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)
+	defer client.Close()
 
 	var created spdk.ConstructBDevResponse
 	cleanup := func(when string) {
@@ -124,6 +127,7 @@ func TestNBDDev(t *testing.T) {
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)
+	defer client.Close()
 
 	name := "my_malloc_bdev"
 	numBlocks := int64(2048)
@@ -193,6 +197,7 @@ func TestSCSI(t *testing.T) {
 	ctx := context.Background()
 	defer testspdk.Finalize()
 	client := connect(t)
+	defer client.Close()
 
 	var err error
 

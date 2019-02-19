@@ -139,7 +139,7 @@ func (op *OIMControlPlane) StopOIMControlPlane(ctx context.Context) {
 		op.controllerServer.Wait(ctx)
 	}
 	if op.controller != nil {
-		op.controller.Stop()
+		op.controller.Close()
 	}
 	if op.tmpDir != "" {
 		err := os.RemoveAll(op.tmpDir)

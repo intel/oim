@@ -73,7 +73,7 @@ func main() {
 	if err := controller.Start(); err != nil {
 		logger.Fatalf("Failed to start auto-registrationg: %s\n", err)
 	}
-	defer controller.Stop()
+	defer controller.Close()
 	server, service := controller.Server(*endpoint)
 	if err := server.Run(context.Background(), service); err != nil {
 		logger.Fatalf("Failed to run server: %s\n", err)
