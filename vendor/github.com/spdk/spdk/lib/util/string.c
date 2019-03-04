@@ -36,47 +36,54 @@
 #include "spdk/string.h"
 
 char *
-spdk_vsprintf_alloc(const char *format, va_list args)
+spdk_vsprintf_append_realloc(char *buffer, const char *format, va_list args)
 {
 	va_list args_copy;
-	char *buf;
-	size_t bufsize;
-	int rc;
+	char *new_buffer;
+	int orig_size = 0, new_size;
 
-	/* Try with a small buffer first. */
-	bufsize = 32;
-
-	/* Limit maximum buffer size to something reasonable so we don't loop forever. */
-	while (bufsize <= 1024 * 1024) {
-		buf = malloc(bufsize);
-		if (buf == NULL) {
-			return NULL;
-		}
-
-		va_copy(args_copy, args);
-		rc = vsnprintf(buf, bufsize, format, args_copy);
-		va_end(args_copy);
-
-		/*
-		 * If vsnprintf() returned a count within our current buffer size, we are done.
-		 * The count does not include the \0 terminator, so rc == bufsize is not OK.
-		 */
-		if (rc >= 0 && (size_t)rc < bufsize) {
-			return buf;
-		}
-
-		/*
-		 * vsnprintf() should return the required space, but some libc versions do not
-		 * implement this correctly, so just double the buffer size and try again.
-		 *
-		 * We don't need the data in buf, so rather than realloc(), use free() and malloc()
-		 * again to avoid a copy.
-		 */
-		free(buf);
-		bufsize *= 2;
+	/* Original buffer size */
+	if (buffer) {
+		orig_size = strlen(buffer);
 	}
 
-	return NULL;
+	/* Necessary buffer size */
+	va_copy(args_copy, args);
+	new_size = vsnprintf(NULL, 0, format, args_copy);
+	va_end(args_copy);
+
+	if (new_size < 0) {
+		return NULL;
+	}
+	new_size += orig_size + 1;
+
+	new_buffer = realloc(buffer, new_size);
+	if (new_buffer == NULL) {
+		return NULL;
+	}
+
+	vsnprintf(new_buffer + orig_size, new_size - orig_size, format, args);
+
+	return new_buffer;
+}
+
+char *
+spdk_sprintf_append_realloc(char *buffer, const char *format, ...)
+{
+	va_list args;
+	char *ret;
+
+	va_start(args, format);
+	ret = spdk_vsprintf_append_realloc(buffer, format, args);
+	va_end(args);
+
+	return ret;
+}
+
+char *
+spdk_vsprintf_alloc(const char *format, va_list args)
+{
+	return spdk_vsprintf_append_realloc(NULL, format, args);
 }
 
 char *
@@ -402,4 +409,66 @@ spdk_mem_all_zero(const void *data, size_t size)
 	}
 
 	return true;
+}
+
+long int
+spdk_strtol(const char *nptr, int base)
+{
+	long val;
+	char *endptr;
+
+	/* Since strtoll() can legitimately return 0, LONG_MAX, or LONG_MIN
+	 * on both success and failure, the calling program should set errno
+	 * to 0 before the call.
+	 */
+	errno = 0;
+
+	val = strtol(nptr, &endptr, base);
+
+	if (!errno && *endptr != '\0') {
+		/* Non integer character was found. */
+		return -EINVAL;
+	} else if (errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) {
+		/* Overflow occurred. */
+		return -ERANGE;
+	} else if (errno != 0 && val == 0) {
+		/* Other error occurred. */
+		return -errno;
+	} else if (val < 0) {
+		/* Input string was negative number. */
+		return -ERANGE;
+	}
+
+	return val;
+}
+
+long long int
+spdk_strtoll(const char *nptr, int base)
+{
+	long long val;
+	char *endptr;
+
+	/* Since strtoll() can legitimately return 0, LLONG_MAX, or LLONG_MIN
+	 * on both success and failure, the calling program should set errno
+	 * to 0 before the call.
+	 */
+	errno = 0;
+
+	val = strtoll(nptr, &endptr, base);
+
+	if (!errno && *endptr != '\0') {
+		/* Non integer character was found. */
+		return -EINVAL;
+	} else if (errno == ERANGE && (val == LLONG_MAX || val == LLONG_MIN)) {
+		/* Overflow occurred. */
+		return -ERANGE;
+	} else if (errno != 0 && val == 0) {
+		/* Other error occurred. */
+		return -errno;
+	} else if (val < 0) {
+		/* Input string was negative number. */
+		return -ERANGE;
+	}
+
+	return val;
 }

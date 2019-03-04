@@ -33,7 +33,7 @@
 
 #include "spdk_cunit.h"
 
-#include "common/lib/test_env.c"
+#include "common/lib/ut_multithread.c"
 #include "unit/lib/json_mock.c"
 
 #include "spdk/config.h"
@@ -59,11 +59,9 @@ DEFINE_STUB_V(spdk_trace_register_description, (const char *name, const char *sh
 DEFINE_STUB_V(_spdk_trace_record, (uint64_t tsc, uint16_t tpoint_id, uint16_t poller_id,
 				   uint32_t size, uint64_t object_id, uint64_t arg1));
 
-static void
-_bdev_send_msg(spdk_thread_fn fn, void *ctx, void *thread_ctx)
-{
-	fn(ctx);
-}
+int g_status;
+int g_count;
+struct spdk_histogram_data *g_histogram;
 
 void
 spdk_scsi_nvme_translate(const struct spdk_bdev_io *bdev_io,
@@ -289,8 +287,8 @@ struct spdk_bdev_module vbdev_ut_if = {
 	.examine_config = vbdev_ut_examine,
 };
 
-SPDK_BDEV_MODULE_REGISTER(&bdev_ut_if)
-SPDK_BDEV_MODULE_REGISTER(&vbdev_ut_if)
+SPDK_BDEV_MODULE_REGISTER(bdev_ut, &bdev_ut_if)
+SPDK_BDEV_MODULE_REGISTER(vbdev_ut, &vbdev_ut_if)
 
 static void
 vbdev_ut_examine(struct spdk_bdev *bdev)
@@ -349,6 +347,7 @@ static void
 free_bdev(struct spdk_bdev *bdev)
 {
 	spdk_bdev_unregister(bdev, NULL, NULL);
+	poll_threads();
 	memset(bdev, 0xFF, sizeof(*bdev));
 	free(bdev);
 }
@@ -357,6 +356,7 @@ static void
 free_vbdev(struct spdk_bdev *bdev)
 {
 	spdk_bdev_unregister(bdev, NULL, NULL);
+	poll_threads();
 	memset(bdev, 0xFF, sizeof(*bdev));
 	free(bdev);
 }
@@ -373,6 +373,8 @@ get_device_stat_cb(struct spdk_bdev *bdev, struct spdk_bdev_io_stat *stat, void 
 
 	free(stat);
 	free_bdev(bdev);
+
+	*(bool *)cb_arg = true;
 }
 
 static void
@@ -380,6 +382,7 @@ get_device_stat_test(void)
 {
 	struct spdk_bdev *bdev;
 	struct spdk_bdev_io_stat *stat;
+	bool done;
 
 	bdev = allocate_bdev("bdev0");
 	stat = calloc(1, sizeof(struct spdk_bdev_io_stat));
@@ -387,7 +390,12 @@ get_device_stat_test(void)
 		free_bdev(bdev);
 		return;
 	}
-	spdk_bdev_get_device_stat(bdev, stat, get_device_stat_cb, NULL);
+
+	done = false;
+	spdk_bdev_get_device_stat(bdev, stat, get_device_stat_cb, &done);
+	while (!done) { poll_threads(); }
+
+
 }
 
 static void
@@ -542,6 +550,18 @@ bytes_to_blocks_test(void)
 
 	/* Length not a block multiple */
 	CU_ASSERT(spdk_bdev_bytes_to_blocks(&bdev, 512, &offset_blocks, 3, &num_blocks) != 0);
+
+	/* In case blocklen not the power of two */
+	bdev.blocklen = 100;
+	CU_ASSERT(spdk_bdev_bytes_to_blocks(&bdev, 100, &offset_blocks, 200, &num_blocks) == 0);
+	CU_ASSERT(offset_blocks == 1);
+	CU_ASSERT(num_blocks == 2);
+
+	/* Offset not a block multiple */
+	CU_ASSERT(spdk_bdev_bytes_to_blocks(&bdev, 3, &offset_blocks, 100, &num_blocks) != 0);
+
+	/* Length not a block multiple */
+	CU_ASSERT(spdk_bdev_bytes_to_blocks(&bdev, 100, &offset_blocks, 3, &num_blocks) != 0);
 }
 
 static void
@@ -575,6 +595,8 @@ num_blocks_test(void)
 
 	spdk_bdev_close(desc);
 	spdk_bdev_unregister(&bdev, NULL, NULL);
+
+	poll_threads();
 }
 
 static void
@@ -618,6 +640,8 @@ alias_add_del_test(void)
 
 	bdev[2] = allocate_bdev("bdev2");
 	SPDK_CU_ASSERT_FATAL(bdev[2] != 0);
+
+	poll_threads();
 
 	/*
 	 * Trying adding an alias identical to name.
@@ -682,6 +706,8 @@ alias_add_del_test(void)
 	spdk_bdev_unregister(bdev[1], NULL, NULL);
 	spdk_bdev_unregister(bdev[2], NULL, NULL);
 
+	poll_threads();
+
 	free(bdev[0]);
 	free(bdev[1]);
 	free(bdev[2]);
@@ -741,11 +767,13 @@ bdev_io_wait_test(void)
 	rc = spdk_bdev_set_opts(&bdev_opts);
 	CU_ASSERT(rc == 0);
 	spdk_bdev_initialize(bdev_init_cb, NULL);
+	poll_threads();
 
 	bdev = allocate_bdev("bdev0");
 
 	rc = spdk_bdev_open(bdev, true, NULL, NULL, &desc);
 	CU_ASSERT(rc == 0);
+	poll_threads();
 	SPDK_CU_ASSERT_FATAL(desc != NULL);
 	io_ch = spdk_bdev_get_io_channel(desc);
 	CU_ASSERT(io_ch != NULL);
@@ -797,6 +825,7 @@ bdev_io_wait_test(void)
 	spdk_bdev_close(desc);
 	free_bdev(bdev);
 	spdk_bdev_finish(bdev_fini_cb, NULL);
+	poll_threads();
 }
 
 static void
@@ -1046,6 +1075,7 @@ bdev_io_split(void)
 	spdk_bdev_close(desc);
 	free_bdev(bdev);
 	spdk_bdev_finish(bdev_fini_cb, NULL);
+	poll_threads();
 }
 
 static void
@@ -1180,6 +1210,7 @@ bdev_io_split_with_io_wait(void)
 	spdk_bdev_close(desc);
 	free_bdev(bdev);
 	spdk_bdev_finish(bdev_fini_cb, NULL);
+	poll_threads();
 }
 
 static void
@@ -1395,15 +1426,124 @@ bdev_io_alignment(void)
 	spdk_bdev_close(desc);
 	free_bdev(bdev);
 	spdk_bdev_finish(bdev_fini_cb, NULL);
+	poll_threads();
 
 	free(buf);
+}
+
+static void
+histogram_status_cb(void *cb_arg, int status)
+{
+	g_status = status;
+}
+
+static void
+histogram_data_cb(void *cb_arg, int status, struct spdk_histogram_data *histogram)
+{
+	g_status = status;
+	g_histogram = histogram;
+}
+
+static void
+histogram_io_count(void *ctx, uint64_t start, uint64_t end, uint64_t count,
+		   uint64_t total, uint64_t so_far)
+{
+	g_count += count;
+}
+
+static void
+bdev_histograms(void)
+{
+	struct spdk_bdev *bdev;
+	struct spdk_bdev_desc *desc;
+	struct spdk_io_channel *ch;
+	struct spdk_histogram_data *histogram;
+	uint8_t buf[4096];
+	int rc;
+
+	spdk_bdev_initialize(bdev_init_cb, NULL);
+
+	bdev = allocate_bdev("bdev");
+
+	rc = spdk_bdev_open(bdev, true, NULL, NULL, &desc);
+	CU_ASSERT(rc == 0);
+	CU_ASSERT(desc != NULL);
+
+	ch = spdk_bdev_get_io_channel(desc);
+	CU_ASSERT(ch != NULL);
+
+	/* Enable histogram */
+	g_status = -1;
+	spdk_bdev_histogram_enable(bdev, histogram_status_cb, NULL, true);
+	poll_threads();
+	CU_ASSERT(g_status == 0);
+	CU_ASSERT(bdev->internal.histogram_enabled == true);
+
+	/* Allocate histogram */
+	histogram = spdk_histogram_data_alloc();
+	SPDK_CU_ASSERT_FATAL(histogram != NULL);
+
+	/* Check if histogram is zeroed */
+	spdk_bdev_histogram_get(bdev, histogram, histogram_data_cb, NULL);
+	poll_threads();
+	CU_ASSERT(g_status == 0);
+	SPDK_CU_ASSERT_FATAL(g_histogram != NULL);
+
+	g_count = 0;
+	spdk_histogram_data_iterate(g_histogram, histogram_io_count, NULL);
+
+	CU_ASSERT(g_count == 0);
+
+	rc = spdk_bdev_write_blocks(desc, ch, &buf, 0, 1, io_done, NULL);
+	CU_ASSERT(rc == 0);
+
+	spdk_delay_us(10);
+	stub_complete_io(1);
+	poll_threads();
+
+	rc = spdk_bdev_read_blocks(desc, ch, &buf, 0, 1, io_done, NULL);
+	CU_ASSERT(rc == 0);
+
+	spdk_delay_us(10);
+	stub_complete_io(1);
+	poll_threads();
+
+	/* Check if histogram gathered data from all I/O channels */
+	g_histogram = NULL;
+	spdk_bdev_histogram_get(bdev, histogram, histogram_data_cb, NULL);
+	poll_threads();
+	CU_ASSERT(g_status == 0);
+	CU_ASSERT(bdev->internal.histogram_enabled == true);
+	SPDK_CU_ASSERT_FATAL(g_histogram != NULL);
+
+	g_count = 0;
+	spdk_histogram_data_iterate(g_histogram, histogram_io_count, NULL);
+	CU_ASSERT(g_count == 2);
+
+	/* Disable histogram */
+	spdk_bdev_histogram_enable(bdev, histogram_status_cb, NULL, false);
+	poll_threads();
+	CU_ASSERT(g_status == 0);
+	CU_ASSERT(bdev->internal.histogram_enabled == false);
+
+	/* Try to run histogram commands on disabled bdev */
+	spdk_bdev_histogram_get(bdev, histogram, histogram_data_cb, NULL);
+	poll_threads();
+	CU_ASSERT(g_status == -EFAULT);
+
+	spdk_histogram_data_free(g_histogram);
+	spdk_put_io_channel(ch);
+	spdk_bdev_close(desc);
+	free_bdev(bdev);
+	spdk_bdev_finish(bdev_fini_cb, NULL);
+	poll_threads();
 }
 
 int
 main(int argc, char **argv)
 {
-	CU_pSuite	suite = NULL;
-	unsigned int	num_failures;
+	CU_pSuite		suite = NULL;
+	unsigned int		num_failures;
 
 	if (CU_initialize_registry() != CUE_SUCCESS) {
 		return CU_get_error();
@@ -1426,17 +1566,22 @@ main(int argc, char **argv)
 		CU_add_test(suite, "bdev_io_spans_boundary", bdev_io_spans_boundary_test) == NULL ||
 		CU_add_test(suite, "bdev_io_split", bdev_io_split) == NULL ||
 		CU_add_test(suite, "bdev_io_split_with_io_wait", bdev_io_split_with_io_wait) == NULL ||
-		CU_add_test(suite, "bdev_io_alignment", bdev_io_alignment) == NULL
+		CU_add_test(suite, "bdev_io_alignment", bdev_io_alignment) == NULL ||
+		CU_add_test(suite, "bdev_histograms", bdev_histograms) == NULL
 	) {
 		CU_cleanup_registry();
 		return CU_get_error();
 	}
 
-	spdk_allocate_thread(_bdev_send_msg, NULL, NULL, NULL, "thread0");
+	allocate_threads(1);
+	set_thread(0);
+
 	CU_basic_set_mode(CU_BRM_VERBOSE);
 	CU_basic_run_tests();
 	num_failures = CU_get_number_of_failures();
 	CU_cleanup_registry();
-	spdk_free_thread();
+
+	free_threads();
+
 	return num_failures;
 }

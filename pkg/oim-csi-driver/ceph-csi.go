@@ -11,8 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/container-storage-interface/spec/lib/go/csi/v0"
-
+	csi0 "github.com/intel/oim/pkg/spec/csi/v0"
 	"github.com/intel/oim/pkg/spec/oim/v0"
 )
 
@@ -31,24 +30,24 @@ type rbdVolume struct {
 	UserID             string `json:"userId"`
 }
 
-var emulateCephCSI = &EmulateCSIDriver{
+var emulateCephCSI0 = &EmulateCSI0Driver{
 	CSIDriverName: "ceph-csi",
 	// from https://github.com/ceph/ceph-csi/blob/master/pkg/rbd/rbd.go
-	ControllerServiceCapabilities: []csi.ControllerServiceCapability_RPC_Type{
-		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
-		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
-		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
-		csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
+	ControllerServiceCapabilities: []csi0.ControllerServiceCapability_RPC_Type{
+		csi0.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+		csi0.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
+		csi0.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
+		csi0.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
 	},
-	VolumeCapabilityAccessModes: []csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	VolumeCapabilityAccessModes: []csi0.VolumeCapability_AccessMode_Mode{csi0.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
 	MapVolumeParams:             mapCephVolumeParams,
 }
 
 func init() {
-	supportedCSIDrivers["ceph-csi"] = emulateCephCSI
+	supportedCSI0Drivers["ceph-csi"] = emulateCephCSI0
 }
 
-func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRequest) error {
+func mapCephVolumeParams(from *csi0.NodeStageVolumeRequest, to *oim.MapVolumeRequest) error {
 	// Currently ceph-csi is passed this kind of request:
 	//
 	// volume_id: ".....-0242ac110002"
@@ -71,11 +70,11 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 	//
 	// The code for retrieving the relevant attributes was copied from https://github.com/ceph/ceph-csi/tree/master/pkg/rbd
 
-	targetPath := from.GetTargetPath()
-	if !strings.HasSuffix(targetPath, "/mount") {
+	targetPath := from.GetStagingTargetPath()
+	if !strings.HasSuffix(targetPath, "/globalmount") {
 		return fmt.Errorf("malformed value of target path: %s", targetPath)
 	}
-	s := strings.Split(strings.TrimSuffix(targetPath, "/mount"), "/")
+	s := strings.Split(strings.TrimSuffix(targetPath, "/globalmount"), "/")
 	volName := s[len(s)-1]
 
 	volOptions, err := getRBDVolumeOptions(from.VolumeAttributes)
@@ -83,7 +82,7 @@ func mapCephVolumeParams(from *csi.NodePublishVolumeRequest, to *oim.MapVolumeRe
 		return err
 	}
 	userID := volOptions.UserID
-	credentials := from.GetNodePublishSecrets()
+	credentials := from.GetNodeStageSecrets()
 
 	mon, err := getMon(volOptions, credentials)
 	if err != nil {

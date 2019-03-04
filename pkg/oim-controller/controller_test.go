@@ -97,7 +97,7 @@ var _ = Describe("OIM Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
-			defer c.Stop()
+			defer c.Close()
 
 			Eventually(func() map[string]string {
 				return oimregistry.GetRegistryEntries(db)
@@ -117,7 +117,7 @@ var _ = Describe("OIM Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			err = c.Start()
 			Expect(err).NotTo(HaveOccurred())
-			defer c.Stop()
+			defer c.Close()
 
 			Eventually(getDB, 1*time.Second).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
 			// Remove entry.
@@ -141,7 +141,7 @@ var _ = Describe("OIM Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(getDB, 1*time.Second).Should(Equal(map[string]string{controllerID + "/" + oimcommon.RegistryAddress: addr}))
-			c.Stop()
+			c.Close()
 			// Remove entry.
 			db.Store(controllerID+"/"+oimcommon.RegistryAddress, "")
 			Consistently(getDB, 10*time.Second).Should(Equal(map[string]string{}))
@@ -204,6 +204,8 @@ var _ = Describe("OIM Controller", func() {
 					}
 				}
 			}
+
+			c.Close()
 
 			// And also the VHost controller.
 			if err := testspdk.Finalize(); err != nil {

@@ -41,10 +41,6 @@
 
 #define OCSSD_SECTOR_SIZE 0x1000
 
-DEFINE_STUB(spdk_nvme_qpair_process_completions, int32_t,
-	    (struct spdk_nvme_qpair *qpair,
-	     uint32_t max_completions), 0);
-
 static struct nvme_driver _g_nvme_driver = {
 	.lock = PTHREAD_MUTEX_INITIALIZER,
 };
@@ -69,9 +65,6 @@ nvme_ctrlr_proc_get_ref(struct spdk_nvme_ctrlr *ctrlr)
 {
 	return;
 }
-
-DEFINE_STUB(spdk_nvme_ctrlr_get_current_process, struct spdk_nvme_ctrlr_process *,
-	    (struct spdk_nvme_ctrlr *ctrlr), NULL)
 
 int
 nvme_ctrlr_process_init(struct spdk_nvme_ctrlr *ctrlr)
@@ -111,10 +104,7 @@ nvme_ctrlr_get_ref_count(struct spdk_nvme_ctrlr *ctrlr)
 }
 
 int
-nvme_transport_ctrlr_scan(const struct spdk_nvme_transport_id *trid,
-			  void *cb_ctx,
-			  spdk_nvme_probe_cb probe_cb,
-			  spdk_nvme_remove_cb remove_cb,
+nvme_transport_ctrlr_scan(struct spdk_nvme_probe_ctx *probe_ctx,
 			  bool direct_connect)
 {
 	return 0;

@@ -39,7 +39,7 @@ ENV_NAME := $(notdir $(CONFIG_ENV))
 DIRS-y = vtophys
 
 ifeq ($(ENV_NAME),env_dpdk)
-DIRS-y += memory pci
+DIRS-y += env_dpdk_post_init memory pci
 endif
 
 .PHONY: all clean $(DIRS-y)

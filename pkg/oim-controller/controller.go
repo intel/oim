@@ -22,7 +22,7 @@ import (
 	"github.com/intel/oim/pkg/oim-common"
 	"github.com/intel/oim/pkg/spdk"
 	"github.com/intel/oim/pkg/spec/oim/v0"
-	"k8s.io/kubernetes/pkg/util/keymutex" // TODO: move to k8s.io/utils (https://github.com/kubernetes/utils/issues/62)
+	"k8s.io/utils/keymutex"
 )
 
 // Controller implements oim.Controller.
@@ -467,11 +467,17 @@ func (c *Controller) register(ctx context.Context) {
 	})
 }
 
-// Stop ends the interaction with the OIM Registry, if one was configured.
-func (c *Controller) Stop() {
+// Close ends the interaction with the OIM Registry, if one was configured,
+// and frees all resources.
+func (c *Controller) Close() {
 	if c.stop != nil {
 		close(c.stop)
 		c.wg.Wait()
+	}
+	if c.SPDK != nil {
+		if err := c.SPDK.Close(); err != nil {
+			log.L().Errorw("close SPDK", "error", err)
+		}
 	}
 }
 

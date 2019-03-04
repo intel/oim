@@ -3,7 +3,8 @@ import sys
 import argparse
 import configshell_fb
 from os import getuid
-from configshell_fb import ConfigShell, shell
+from rpc.client import JSONRPCException
+from configshell_fb import ConfigShell, shell, ExecutionError
 from spdkcli import UIRoot
 from pyparsing import (alphanums, Optional, Suppress, Word, Regex,
                        removeQuotes, dblQuotedString, OneOrMore)
@@ -12,14 +13,14 @@ from pyparsing import (alphanums, Optional, Suppress, Word, Regex,
 def add_quotes_to_shell(spdk_shell):
     command = shell.locatedExpr(Word(alphanums + '_'))('command')
     value = dblQuotedString.addParseAction(removeQuotes)
-    value_word = Word(alphanums + ';,=_\+/.<>()~@:-%[]')
-    keyword = Word(alphanums + '_\-')
+    value_word = Word(alphanums + r';,=_\+/.<>()~@:-%[]')
+    keyword = Word(alphanums + r'_\-')
     kparam = shell.locatedExpr(keyword + Suppress('=') +
                                Optional(value | value_word, default=''))('kparams*')
     pparam = shell.locatedExpr(value | value_word)('pparams*')
     parameters = OneOrMore(kparam | pparam)
-    bookmark = Regex('@([A-Za-z0-9:_.]|-)+')
-    pathstd = Regex('([A-Za-z0-9:_.\[\]]|-)*' + '/' + '([A-Za-z0-9:_.\[\]/]|-)*') \
+    bookmark = Regex(r'@([A-Za-z0-9:_.]|-)+')
+    pathstd = Regex(r'([A-Za-z0-9:_.\[\]]|-)*' + '/' + r'([A-Za-z0-9:_.\[\]/]|-)*') \
         | '..' | '.'
     path = shell.locatedExpr(bookmark | pathstd | '*')('path')
     spdk_shell._parser = Optional(path) + Optional(command) + Optional(parameters)
@@ -49,12 +50,20 @@ def main():
         pass
 
     if len(args.commands) > 0:
-        spdk_shell.run_cmdline(" ".join(args.commands))
+        try:
+            spdk_shell.run_cmdline(" ".join(args.commands))
+        except Exception as e:
+            sys.stderr.write("%s\n" % e)
+            sys.exit(1)
         sys.exit(0)
 
     spdk_shell.con.display("SPDK CLI v0.1")
     spdk_shell.con.display("")
-    spdk_shell.run_interactive()
+    while not spdk_shell._exit:
+        try:
+            spdk_shell.run_interactive()
+        except (JSONRPCException, ExecutionError) as e:
+            spdk_shell.log.error("%s" % e)
 
 
 if __name__ == "__main__":

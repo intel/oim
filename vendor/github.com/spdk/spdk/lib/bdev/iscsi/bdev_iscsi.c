@@ -167,7 +167,7 @@ static struct spdk_bdev_module g_iscsi_bdev_module = {
 	.async_init	= true,
 };
 
-SPDK_BDEV_MODULE_REGISTER(&g_iscsi_bdev_module);
+SPDK_BDEV_MODULE_REGISTER(iscsi, &g_iscsi_bdev_module);
 
 static void
 _bdev_iscsi_io_complete(void *_iscsi_io)
@@ -534,12 +534,9 @@ bdev_iscsi_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 {
 	struct bdev_iscsi_lun *lun = ctx;
 
-	spdk_json_write_name(w, "iscsi");
-	spdk_json_write_object_begin(w);
-	spdk_json_write_name(w, "initiator_name");
-	spdk_json_write_string(w, lun->initiator_iqn);
-	spdk_json_write_name(w, "url");
-	spdk_json_write_string(w, lun->url);
+	spdk_json_write_named_object_begin(w, "iscsi");
+	spdk_json_write_named_string(w, "initiator_name", lun->initiator_iqn);
+	spdk_json_write_named_string(w, "url", lun->url);
 	spdk_json_write_object_end(w);
 
 	return 0;

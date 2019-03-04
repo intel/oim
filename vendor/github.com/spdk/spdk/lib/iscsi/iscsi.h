@@ -58,9 +58,7 @@
 #define MAX_PORTAL 1024
 #define MAX_INITIATOR 256
 #define MAX_NETMASK 256
-#define MAX_SESSIONS 1024
-#define MAX_ISCSI_CONNECTIONS MAX_SESSIONS
-#define MAX_FIRSTBURSTLENGTH	16777215
+#define MAX_ISCSI_CONNECTIONS 1024
 
 #define DEFAULT_PORT 3260
 #define DEFAULT_MAX_SESSIONS 128
@@ -68,7 +66,6 @@
 #define DEFAULT_MAXOUTSTANDINGR2T 1
 #define DEFAULT_DEFAULTTIME2WAIT 2
 #define DEFAULT_DEFAULTTIME2RETAIN 20
-#define DEFAULT_FIRSTBURSTLENGTH 8192
 #define DEFAULT_INITIALR2T true
 #define DEFAULT_IMMEDIATEDATA true
 #define DEFAULT_DATAPDUINORDER true
@@ -127,6 +124,8 @@
  */
 #define SPDK_ISCSI_MIN_FIRST_BURST_LENGTH	512
 
+#define SPDK_ISCSI_MAX_FIRST_BURST_LENGTH	16777215
+
 /** Defines how long we should wait for a TCP close after responding to a
  *   logout request, before terminating the connection ourselves.
  */
@@ -159,8 +158,6 @@
 struct spdk_mobj {
 	struct spdk_mempool *mp;
 	void *buf;
-	size_t len;
-	uint64_t reserved; /* do not use */
 };
 
 struct spdk_iscsi_pdu {
@@ -462,12 +459,6 @@ spdk_get_immediate_data_buffer_size(void)
 	       ISCSI_DIGEST_LEN + /* header digest */
 	       8 +		   /* bidirectional AHS */
 	       52;		   /* extended CDB AHS (for a 64-byte CDB) */
-}
-
-static inline int
-spdk_get_data_out_buffer_size(void)
-{
-	return SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH;
 }
 
 #endif /* SPDK_ISCSI_H */

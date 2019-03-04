@@ -35,6 +35,7 @@
 
 #include "spdk/event.h"
 #include "spdk/rpc.h"
+#include "spdk/string.h"
 #include "spdk/util.h"
 
 #include "spdk_internal/log.h"
@@ -80,7 +81,7 @@ spdk_rpc_kill_instance(struct spdk_jsonrpc_request *request,
 	}
 
 	sig_count = SPDK_COUNTOF(signals);
-	signal = atoi(req.sig_name);
+	signal = spdk_strtol(req.sig_name, 10);
 	for (i = 0 ; i < sig_count; i++) {
 		if (strcmp(req.sig_name, signals[i].signal_string) == 0 ||
 		    signal == signals[i].signal) {
@@ -145,8 +146,7 @@ spdk_rpc_context_switch_monitor(struct spdk_jsonrpc_request *request,
 
 	spdk_json_write_object_begin(w);
 
-	spdk_json_write_name(w, "enabled");
-	spdk_json_write_bool(w, spdk_reactor_context_switch_monitor_enabled());
+	spdk_json_write_named_bool(w, "enabled", spdk_reactor_context_switch_monitor_enabled());
 
 	spdk_json_write_object_end(w);
 	spdk_jsonrpc_end_result(request, w);

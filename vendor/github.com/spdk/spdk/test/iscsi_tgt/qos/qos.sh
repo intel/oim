@@ -20,7 +20,7 @@ function check_qos_works_well() {
 		start_io_count=$($rpc_py get_bdevs_iostat -b $3 | jq -r '.[1].bytes_read')
 	fi
 
-	$fio_py 512 64 randread 5
+	$fio_py 1024 128 randread 5
 
 	if [ $LIMIT_TYPE = IOPS ]; then
 		end_io_count=$($rpc_py get_bdevs_iostat -b $3 | jq -r '.[1].num_read_ops')
@@ -32,7 +32,7 @@ function check_qos_works_well() {
 
 	if [ $enable_limit = true ]; then
 		#qos realization is related with bytes transfered.It currently have like 5% variation.
-		retval=$(echo "$qos_limit*0.95 < $read_result && $read_result < $qos_limit*1.05" | bc)
+		retval=$(echo "$qos_limit*0.85 < $read_result && $read_result < $qos_limit*1.05" | bc)
 		if [ $retval -eq 0 ]; then
 			echo "Failed to limit the io read rate of malloc bdev by qos"
 			exit 1
@@ -61,7 +61,8 @@ timing_enter qos
 MALLOC_BDEV_SIZE=64
 MALLOC_BLOCK_SIZE=512
 IOPS_LIMIT=20000
-BANDWIDTH_LIMIT=10
+BANDWIDTH_LIMIT=20
+READ_BANDWIDTH_LIMIT=10
 LIMIT_TYPE=IOPS
 rpc_py="$rootdir/scripts/rpc.py"
 fio_py="$rootdir/scripts/fio.py"
@@ -114,9 +115,9 @@ check_qos_works_well true $BANDWIDTH_LIMIT Malloc0
 $rpc_py set_bdev_qos_limit Malloc0 --rw_mbytes_per_sec 0
 check_qos_works_well false $BANDWIDTH_LIMIT Malloc0
 
-# Limit the I/O bandwidth rate again.
-$rpc_py set_bdev_qos_limit Malloc0 --rw_mbytes_per_sec $BANDWIDTH_LIMIT
-check_qos_works_well true $BANDWIDTH_LIMIT Malloc0
+# Limit the I/O bandwidth rate again with both read/write and read/only.
+$rpc_py set_bdev_qos_limit Malloc0 --rw_mbytes_per_sec $BANDWIDTH_LIMIT --r_mbytes_per_sec $READ_BANDWIDTH_LIMIT
+check_qos_works_well true $READ_BANDWIDTH_LIMIT Malloc0
 echo "I/O bandwidth limiting tests successful"
 
 iscsicleanup

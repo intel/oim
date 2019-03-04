@@ -146,6 +146,9 @@ struct spdk_vhost_nvme_dev {
 	struct spdk_vhost_nvme_sq sq_queue[MAX_IO_QUEUES + 1];
 	struct spdk_vhost_nvme_cq cq_queue[MAX_IO_QUEUES + 1];
 
+	/* The one and only session associated with this device */
+	struct spdk_vhost_session *vsession;
+
 	TAILQ_ENTRY(spdk_vhost_nvme_dev) tailq;
 	STAILQ_HEAD(, spdk_vhost_nvme_task) free_tasks;
 	struct spdk_poller *requestq_poller;
@@ -248,6 +251,7 @@ static int
 spdk_nvme_map_prps(struct spdk_vhost_nvme_dev *nvme, struct spdk_nvme_cmd *cmd,
 		   struct spdk_vhost_nvme_task *task, uint32_t len)
 {
+	struct spdk_vhost_session *vsession = nvme->vsession;
 	uint64_t prp1, prp2;
 	void *vva;
 	uint32_t i;
@@ -261,7 +265,7 @@ spdk_nvme_map_prps(struct spdk_vhost_nvme_dev *nvme, struct spdk_nvme_cmd *cmd,
 	residue_len = mps - (prp1 % mps);
 	residue_len = spdk_min(len, residue_len);
 
-	vva = spdk_vhost_gpa_to_vva(&nvme->vdev, prp1, residue_len);
+	vva = spdk_vhost_gpa_to_vva(vsession, prp1, residue_len);
 	if (spdk_unlikely(vva == NULL)) {
 		SPDK_ERRLOG("GPA to VVA failed\n");
 		return -1;
@@ -279,7 +283,7 @@ spdk_nvme_map_prps(struct spdk_vhost_nvme_dev *nvme, struct spdk_nvme_cmd *cmd,
 		if (len <= mps) {
 			/* 2 PRP used */
 			task->iovcnt = 2;
-			vva = spdk_vhost_gpa_to_vva(&nvme->vdev, prp2, len);
+			vva = spdk_vhost_gpa_to_vva(vsession, prp2, len);
 			if (spdk_unlikely(vva == NULL)) {
 				return -1;
 			}
@@ -288,7 +292,7 @@ spdk_nvme_map_prps(struct spdk_vhost_nvme_dev *nvme, struct spdk_nvme_cmd *cmd,
 		} else {
 			/* PRP list used */
 			nents = (len + mps - 1) / mps;
-			vva = spdk_vhost_gpa_to_vva(&nvme->vdev, prp2, nents * sizeof(*prp_list));
+			vva = spdk_vhost_gpa_to_vva(vsession, prp2, nents * sizeof(*prp_list));
 			if (spdk_unlikely(vva == NULL)) {
 				return -1;
 			}
@@ -296,7 +300,7 @@ spdk_nvme_map_prps(struct spdk_vhost_nvme_dev *nvme, struct spdk_nvme_cmd *cmd,
 			i = 0;
 			while (len != 0) {
 				residue_len = spdk_min(len, mps);
-				vva = spdk_vhost_gpa_to_vva(&nvme->vdev, prp_list[i], residue_len);
+				vva = spdk_vhost_gpa_to_vva(vsession, prp_list[i], residue_len);
 				if (spdk_unlikely(vva == NULL)) {
 					return -1;
 				}
@@ -698,6 +702,7 @@ static int
 vhost_nvme_doorbell_buffer_config(struct spdk_vhost_nvme_dev *nvme,
 				  struct spdk_nvme_cmd *cmd, struct spdk_nvme_cpl *cpl)
 {
+	struct spdk_vhost_session *vsession = nvme->vsession;
 	uint64_t dbs_dma_addr, eis_dma_addr;
 
 	dbs_dma_addr = cmd->dptr.prp.prp1;
@@ -707,8 +712,8 @@ vhost_nvme_doorbell_buffer_config(struct spdk_vhost_nvme_dev *nvme,
 		return -1;
 	}
 	/* Guest Physical Address to Host Virtual Address */
-	nvme->dbbuf_dbs = spdk_vhost_gpa_to_vva(&nvme->vdev, dbs_dma_addr, 4096);
-	nvme->dbbuf_eis = spdk_vhost_gpa_to_vva(&nvme->vdev, eis_dma_addr, 4096);
+	nvme->dbbuf_dbs = spdk_vhost_gpa_to_vva(vsession, dbs_dma_addr, 4096);
+	nvme->dbbuf_eis = spdk_vhost_gpa_to_vva(vsession, eis_dma_addr, 4096);
 	if (!nvme->dbbuf_dbs || !nvme->dbbuf_eis) {
 		return -1;
 	}
@@ -763,7 +768,7 @@ vhost_nvme_create_io_sq(struct spdk_vhost_nvme_dev *nvme,
 	sq->size = qsize + 1;
 	sq->sq_head = sq->sq_tail = 0;
 	requested_len = sizeof(struct spdk_nvme_cmd) * sq->size;
-	sq->sq_cmd = spdk_vhost_gpa_to_vva(&nvme->vdev, dma_addr, requested_len);
+	sq->sq_cmd = spdk_vhost_gpa_to_vva(nvme->vsession, dma_addr, requested_len);
 	if (!sq->sq_cmd) {
 		return -1;
 	}
@@ -846,7 +851,7 @@ vhost_nvme_create_io_cq(struct spdk_vhost_nvme_dev *nvme,
 	cq->guest_signaled_cq_head = 0;
 	cq->need_signaled_cnt = 0;
 	requested_len = sizeof(struct spdk_nvme_cpl) * cq->size;
-	cq->cq_cqe = spdk_vhost_gpa_to_vva(&nvme->vdev, dma_addr, requested_len);
+	cq->cq_cqe = spdk_vhost_gpa_to_vva(nvme->vsession, dma_addr, requested_len);
 	if (!cq->cq_cqe) {
 		return -1;
 	}
@@ -889,10 +894,15 @@ static struct spdk_vhost_nvme_dev *
 spdk_vhost_nvme_get_by_name(int vid)
 {
 	struct spdk_vhost_nvme_dev *nvme;
+	struct spdk_vhost_dev *vdev;
+	struct spdk_vhost_session *vsession;
 
 	TAILQ_FOREACH(nvme, &g_nvme_ctrlrs, tailq) {
-		if (nvme->vdev.vid == vid) {
-			return nvme;
+		vdev = &nvme->vdev;
+		TAILQ_FOREACH(vsession, &vdev->vsessions, tailq) {
+			if (vsession->vid == vid) {
+				return nvme;
+			}
 		}
 	}
 
@@ -981,7 +991,7 @@ spdk_vhost_nvme_admin_passthrough(int vid, void *cmd, void *cqe, void *buf)
 	}
 
 	if (ret) {
-		SPDK_ERRLOG("Admin Passthrough Faild with %u\n", req->opc);
+		SPDK_ERRLOG("Admin Passthrough Failed with %u\n", req->opc);
 	}
 
 	return 0;
@@ -1064,11 +1074,9 @@ alloc_task_pool(struct spdk_vhost_nvme_dev *nvme)
 	return 0;
 }
 
-/* new device means enable the
- * virtual NVMe controller
- */
 static int
-spdk_vhost_nvme_start_device(struct spdk_vhost_dev *vdev, void *event_ctx)
+spdk_vhost_nvme_start_cb(struct spdk_vhost_dev *vdev,
+			 struct spdk_vhost_session *vsession, void *event_ctx)
 {
 	struct spdk_vhost_nvme_dev *nvme = to_nvme_dev(vdev);
 	struct spdk_vhost_nvme_ns *ns_dev;
@@ -1082,8 +1090,8 @@ spdk_vhost_nvme_start_device(struct spdk_vhost_dev *vdev, void *event_ctx)
 		return -1;
 	}
 
-	SPDK_NOTICELOG("Start Device %u, Path %s, lcore %d\n", vdev->vid,
-		       vdev->path, vdev->lcore);
+	SPDK_NOTICELOG("Start Device %u, Path %s, lcore %d\n", vsession->vid,
+		       vdev->path, vsession->lcore);
 
 	for (i = 0; i < nvme->num_ns; i++) {
 		ns_dev = &nvme->ns[i];
@@ -1093,11 +1101,35 @@ spdk_vhost_nvme_start_device(struct spdk_vhost_dev *vdev, void *event_ctx)
 		}
 	}
 
+	nvme->vsession = vsession;
 	/* Start the NVMe Poller */
 	nvme->requestq_poller = spdk_poller_register(nvme_worker, nvme, 0);
 
-	spdk_vhost_dev_backend_event_done(event_ctx, 0);
+	spdk_vhost_session_event_done(event_ctx, 0);
 	return 0;
+}
+
+static int
+spdk_vhost_nvme_start(struct spdk_vhost_session *vsession)
+{
+	int rc;
+
+	if (vsession->vdev->active_session_num > 0) {
+		/* We're trying to start a second session */
+		SPDK_ERRLOG("Vhost-NVMe devices can support only one simultaneous connection.\n");
+		return -1;
+	}
+
+	vsession->lcore = spdk_vhost_allocate_reactor(vsession->vdev->cpumask);
+	rc = spdk_vhost_session_send_event(vsession, spdk_vhost_nvme_start_cb,
+					   3, "start session");
+
+	if (rc != 0) {
+		spdk_vhost_free_reactor(vsession->lcore);
+		vsession->lcore = -1;
+	}
+
+	return rc;
 }
 
 static void
@@ -1152,15 +1184,14 @@ destroy_device_poller_cb(void *arg)
 	}
 
 	spdk_poller_unregister(&nvme->destroy_ctx.poller);
-	spdk_vhost_dev_backend_event_done(nvme->destroy_ctx.event_ctx, 0);
+	spdk_vhost_session_event_done(nvme->destroy_ctx.event_ctx, 0);
 
 	return -1;
 }
 
-/* Disable NVMe controller
- */
 static int
-spdk_vhost_nvme_stop_device(struct spdk_vhost_dev *vdev, void *event_ctx)
+spdk_vhost_nvme_stop_cb(struct spdk_vhost_dev *vdev,
+			struct spdk_vhost_session *vsession, void *event_ctx)
 {
 	struct spdk_vhost_nvme_dev *nvme = to_nvme_dev(vdev);
 
@@ -1169,12 +1200,28 @@ spdk_vhost_nvme_stop_device(struct spdk_vhost_dev *vdev, void *event_ctx)
 	}
 
 	free_task_pool(nvme);
-	SPDK_NOTICELOG("Stopping Device %u, Path %s\n", vdev->vid, vdev->path);
+	SPDK_NOTICELOG("Stopping Device %u, Path %s\n", vsession->vid, vdev->path);
 
 	nvme->destroy_ctx.event_ctx = event_ctx;
 	spdk_poller_unregister(&nvme->requestq_poller);
 	nvme->destroy_ctx.poller = spdk_poller_register(destroy_device_poller_cb, nvme, 1000);
 
+	return 0;
+}
+
+static int
+spdk_vhost_nvme_stop(struct spdk_vhost_session *vsession)
+{
+	int rc;
+
+	rc = spdk_vhost_session_send_event(vsession, spdk_vhost_nvme_stop_cb,
+					   3, "start session");
+	if (rc != 0) {
+		return rc;
+	}
+
+	spdk_vhost_free_reactor(vsession->lcore);
+	vsession->lcore = -1;
 	return 0;
 }
 
@@ -1247,8 +1294,9 @@ spdk_vhost_nvme_write_config_json(struct spdk_vhost_dev *vdev, struct spdk_json_
 }
 
 static const struct spdk_vhost_dev_backend spdk_vhost_nvme_device_backend = {
-	.start_device = spdk_vhost_nvme_start_device,
-	.stop_device = spdk_vhost_nvme_stop_device,
+	.session_ctx_size = 0,
+	.start_session = spdk_vhost_nvme_start,
+	.stop_session = spdk_vhost_nvme_stop,
 	.dump_info_json = spdk_vhost_nvme_dump_info_json,
 	.write_config_json = spdk_vhost_nvme_write_config_json,
 	.remove_device = spdk_vhost_nvme_dev_remove,

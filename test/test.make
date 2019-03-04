@@ -37,6 +37,8 @@ TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/spec/oim/v0
 TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/mount
 # test code will soon be replaced (https://github.com/kubernetes/kubernetes/pull/70992)
 TEST_LINT_EXCLUDE += $(IMPORT_PATH)/test/e2e
+# a verbatim copy of the generated code from CSI 0.3
+TEST_LINT_EXCLUDE += $(IMPORT_PATH)/pkg/spec/csi/v0
 
 # TODO: Simplifying the code can come later.
 LINTER += --disable=gocyclo
@@ -82,16 +84,19 @@ TEST_QEMU_DEPS=$(_TEST_QEMU_IMAGE) $(TEST_QEMU_START) $(TEST_QEMU_SSH) $(TEST_QE
 # We only need to build and push the latest OIM CSI driver if we actually use it during testing.
 TEST_E2E_DEPS=$(if $(filter $(IMPORT_PATH)/test/e2e, $(TEST_ARGS)), push-oim-csi-driver)
 
-.PHONY: run_tests
-run_tests: $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi-driver _work/ca/.ca-stamp _work/evil-ca/.ca-stamp
-	TEST_OIM_CSI_DRIVER_BINARY=$(abspath _output/oim-csi-driver) \
+RUN_TESTS_ENV = TEST_OIM_CSI_DRIVER_BINARY=$(abspath _output/oim-csi-driver) \
 	TEST_SPDK_VHOST_SOCKET=$(abspath $(TEST_SPDK_VHOST_SOCKET)) \
 	TEST_SPDK_VHOST_BINARY=$(abspath $(_TEST_SPDK_VHOST_BINARY)) \
 	TEST_QEMU_IMAGE=$(abspath $(_TEST_QEMU_IMAGE)) \
 	TEST_WORK=$(abspath _work) \
 	REPO_ROOT=$(abspath .) \
-	KUBECONFIG=$(abspath _work)/clear-kvm-kube.config \
-	    $(TEST_CMD) $(shell go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);./;' )
+	KUBECONFIG=$(abspath _work)/clear-kvm-kube.config
+
+RUN_TESTS_DEPS = $(TEST_QEMU_DEPS) $(_TEST_SPDK_VHOST_BINARY) $(TEST_E2E_DEPS) oim-csi-driver _work/ca/.ca-stamp _work/evil-ca/.ca-stamp
+
+.PHONY: run_tests
+run_tests: $(RUN_TESTS_DEPS)
+	$(RUN_TESTS_ENV) $(TEST_CMD) $(shell go list $(TEST_ARGS) | sed -e 's;$(IMPORT_PATH);./;')
 
 .PHONY: force_test
 force_test: clean_testcache test
@@ -121,8 +126,8 @@ coverage:
 test: test_vendor_bom
 test_vendor_bom:
 	@ if ! diff -c \
-		<(tail +2 vendor-bom.csv | sed -e 's/;.*//') \
-		<((grep '^  name =' Gopkg.lock  | sed -e 's/.*"\(.*\)"/\1/'; echo github.com/dpdk/dpdk) | sort); then \
+		<(tail -n +2 vendor-bom.csv | sed -e 's/;.*//') \
+		<((grep '^  name =' Gopkg.lock  | sed -e 's/.*"\(.*\)"/\1/'; echo github.com/dpdk/dpdk) | sort | LC_ALL=C LANG=C sort); then \
 		echo; \
 		echo "vendor-bom.csv not in sync with vendor directory (aka Gopk.lock):"; \
 		echo "+ new entry, missing in vendor-bom.csv"; \
@@ -183,7 +188,7 @@ RUNTIME_DEPS += sed \
 	| cat |
 
 # Ignore duplicates.
-RUNTIME_DEPS += sort -u
+RUNTIME_DEPS += LC_ALL=C LANG=C sort -u
 
 _work/%/.ca-stamp: test/setup-ca.sh
 	rm -rf $(@D)

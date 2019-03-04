@@ -34,6 +34,7 @@
 #include "spdk/stdinc.h"
 
 #include "spdk/event.h"
+#include "spdk/string.h"
 #include "spdk/thread.h"
 
 static int g_time_in_sec;
@@ -116,14 +117,13 @@ main(int argc, char **argv)
 
 	spdk_app_opts_init(&opts);
 	opts.name = "reactor";
-	opts.max_delay_us = 1000;
 
 	g_time_in_sec = 0;
 
 	while ((op = getopt(argc, argv, "t:")) != -1) {
 		switch (op) {
 		case 't':
-			g_time_in_sec = atoi(optarg);
+			g_time_in_sec = spdk_strtol(optarg, 10);
 			break;
 		default:
 			usage(argv[0]);
@@ -131,7 +131,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (!g_time_in_sec) {
+	if (g_time_in_sec <= 0) {
 		usage(argv[0]);
 		exit(1);
 	}

@@ -35,8 +35,11 @@
 
 #include "spdk/event.h"
 #include "spdk/nvme.h"
+#include "spdk/string.h"
+#include "spdk/thread.h"
 
 static char g_path[256];
+static struct spdk_poller *g_poller;
 
 static void
 usage(char *executable_name)
@@ -69,6 +72,13 @@ attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 {
 }
 
+static int
+stub_sleep(void *arg)
+{
+	usleep(1000 * 1000);
+	return 0;
+}
+
 static void
 stub_start(void *arg1, void *arg2)
 {
@@ -86,11 +96,14 @@ stub_start(void *arg1, void *arg2)
 		fprintf(stderr, "could not create sentinel file %s\n", g_path);
 		exit(1);
 	}
+
+	g_poller = spdk_poller_register(stub_sleep, NULL, 0);
 }
 
 static void
 stub_shutdown(void)
 {
+	spdk_poller_unregister(&g_poller);
 	unlink(g_path);
 	spdk_app_stop(0);
 }
@@ -100,6 +113,7 @@ main(int argc, char **argv)
 {
 	int ch;
 	struct spdk_app_opts opts = {};
+	long int val;
 
 	/* default value in opts structure */
 	spdk_app_opts_init(&opts);
@@ -108,26 +122,35 @@ main(int argc, char **argv)
 	opts.rpc_addr = NULL;
 
 	while ((ch = getopt(argc, argv, "i:m:n:p:s:H")) != -1) {
-		switch (ch) {
-		case 'i':
-			opts.shm_id = atoi(optarg);
-			break;
-		case 'm':
+		if (ch == 'm') {
 			opts.reactor_mask = optarg;
-			break;
-		case 'n':
-			opts.mem_channel = atoi(optarg);
-			break;
-		case 'p':
-			opts.master_core = atoi(optarg);
-			break;
-		case 's':
-			opts.mem_size = atoi(optarg);
-			break;
-		case 'H':
-		default:
+		} else if (ch == '?') {
 			usage(argv[0]);
-			exit(EXIT_SUCCESS);
+			exit(1);
+		} else {
+			val = spdk_strtol(optarg, 10);
+			if (val < 0) {
+				fprintf(stderr, "Converting a string to integer failed\n");
+				exit(1);
+			}
+			switch (ch) {
+			case 'i':
+				opts.shm_id = val;
+				break;
+			case 'n':
+				opts.mem_channel = val;
+				break;
+			case 'p':
+				opts.master_core = val;
+				break;
+			case 's':
+				opts.mem_size = val;
+				break;
+			case 'H':
+			default:
+				usage(argv[0]);
+				exit(EXIT_SUCCESS);
+			}
 		}
 	}
 
@@ -138,7 +161,6 @@ main(int argc, char **argv)
 	}
 
 	opts.shutdown_cb = stub_shutdown;
-	opts.max_delay_us = 1000 * 1000;
 
 	ch = spdk_app_start(&opts, stub_start, (void *)(intptr_t)opts.shm_id, NULL);
 	spdk_app_fini();

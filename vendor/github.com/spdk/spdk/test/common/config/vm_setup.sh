@@ -24,7 +24,7 @@ VM_SETUP_PATH=$(readlink -f ${BASH_SOURCE%/*})
 
 UPGRADE=false
 INSTALL=false
-CONF="librxe,iscsi,rocksdb,fio,flamegraph,tsocks,qemu,vpp,libiscsi,nvmecli,qat"
+CONF="librxe,iscsi,rocksdb,fio,flamegraph,tsocks,qemu,vpp,libiscsi,nvmecli,qat,ocf"
 
 function install_rxe_cfg()
 {
@@ -285,6 +285,20 @@ function install_libiscsi()
     fi
 }
 
+function install_ocf()
+{
+    local version="v18.12"
+    local targetdir="/usr/src/ocf"
+
+    if echo $CONF | grep -q ocf; then
+        if [ ! -d "$targetdir" ]; then
+            sudo git clone "${GIT_REPO_OCF}" "$targetdir" -b "$version"
+        else
+            echo "OCF already installed. Skipping"
+        fi
+    fi
+}
+
 function usage()
 {
     echo "This script is intended to automate the environment setup for a fedora linux virtual machine."
@@ -346,6 +360,7 @@ cd ~
 : ${GIT_REPO_SPDK_NVME_CLI=https://github.com/spdk/nvme-cli}; export GIT_REPO_SPDK_NVME_CLI
 : ${GIT_REPO_INTEL_IPSEC_MB=https://github.com/spdk/intel-ipsec-mb.git}; export GIT_REPO_INTEL_IPSEC_MB
 : ${DRIVER_LOCATION_QAT=https://01.org/sites/default/files/downloads/intelr-quickassist-technology/qat1.7.l.4.3.0-00033.tar.gz}; export DRIVER_LOCATION_QAT
+: ${GIT_REPO_OCF=https://github.com/Open-OCF/ocf}; export GIT_REPO_OCF
 
 jobs=$(($(nproc)*2))
 
@@ -409,7 +424,10 @@ if $INSTALL; then
     gdisk \
     socat \
     sshfs \
-    btrfs-progs
+    sshpass \
+    python3-pandas \
+    btrfs-progs \
+    iptables
 fi
 
 sudo mkdir -p /usr/src
@@ -424,6 +442,7 @@ install_vpp&
 install_nvmecli&
 install_libiscsi&
 install_qat&
+install_ocf&
 
 wait
 # create autorun-spdk.conf in home folder. This is sourced by the autotest_common.sh file.
@@ -441,6 +460,7 @@ SPDK_RUN_CHECK_FORMAT=1
 SPDK_RUN_SCANBUILD=1
 SPDK_RUN_VALGRIND=1
 SPDK_TEST_CRYPTO=1
+SPDK_RUN_FUNCTIONAL_TEST=1
 SPDK_TEST_UNITTEST=1
 SPDK_TEST_ISCSI=1
 SPDK_TEST_ISCSI_INITIATOR=1
@@ -454,6 +474,7 @@ SPDK_TEST_BLOBFS=1
 SPDK_TEST_PMDK=1
 SPDK_TEST_LVOL=1
 SPDK_TEST_JSON=1
+SPDK_TEST_OCF=1
 SPDK_RUN_ASAN=1
 SPDK_RUN_UBSAN=1
 # doesn't work on vm

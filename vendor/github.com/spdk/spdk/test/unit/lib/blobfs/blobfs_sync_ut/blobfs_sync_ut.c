@@ -38,6 +38,7 @@
 #include "spdk/log.h"
 #include "spdk/thread.h"
 #include "spdk/barrier.h"
+#include "spdk_internal/thread.h"
 
 #include "spdk_cunit.h"
 #include "unit/lib/blob/bs_dev_common.c"
@@ -61,12 +62,6 @@ int
 spdk_conf_section_get_intval(struct spdk_conf_section *sp, const char *key)
 {
 	return -1;
-}
-
-static void
-_fs_send_msg(spdk_thread_fn fn, void *ctx, void *thread_ctx)
-{
-	fn(ctx);
 }
 
 struct ut_request {
@@ -143,21 +138,30 @@ fs_op_with_handle_complete(void *ctx, struct spdk_filesystem *fs, int fserrno)
 static void
 _fs_init(void *arg)
 {
+	struct spdk_thread *thread;
 	struct spdk_bs_dev *dev;
 
 	g_fs = NULL;
 	g_fserrno = -1;
 	dev = init_dev();
 	spdk_fs_init(dev, NULL, send_request, fs_op_with_handle_complete, NULL);
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
+
 	SPDK_CU_ASSERT_FATAL(g_fs != NULL);
+	SPDK_CU_ASSERT_FATAL(g_fs->bdev == dev);
 	CU_ASSERT(g_fserrno == 0);
 }
 
 static void
 _fs_unload(void *arg)
 {
+	struct spdk_thread *thread;
+
 	g_fserrno = -1;
 	spdk_fs_unload(g_fs, fs_op_complete, NULL);
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
 	CU_ASSERT(g_fserrno == 0);
 	g_fs = NULL;
 }
@@ -207,6 +211,7 @@ cache_write_null_buffer(void)
 	uint64_t length;
 	int rc;
 	struct spdk_io_channel *channel;
+	struct spdk_thread *thread;
 
 	ut_send_request(_fs_init, NULL);
 
@@ -229,6 +234,9 @@ cache_write_null_buffer(void)
 
 	spdk_fs_free_io_channel(channel);
 
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
+
 	ut_send_request(_fs_unload, NULL);
 }
 
@@ -237,6 +245,7 @@ fs_create_sync(void)
 {
 	int rc;
 	struct spdk_io_channel *channel;
+	struct spdk_thread *thread;
 
 	ut_send_request(_fs_init, NULL);
 
@@ -255,6 +264,9 @@ fs_create_sync(void)
 
 	spdk_fs_free_io_channel(channel);
 
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
+
 	ut_send_request(_fs_unload, NULL);
 }
 
@@ -264,6 +276,7 @@ cache_append_no_cache(void)
 	int rc;
 	char buf[100];
 	struct spdk_io_channel *channel;
+	struct spdk_thread *thread;
 
 	ut_send_request(_fs_init, NULL);
 
@@ -292,6 +305,9 @@ cache_append_no_cache(void)
 
 	spdk_fs_free_io_channel(channel);
 
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
+
 	ut_send_request(_fs_unload, NULL);
 }
 
@@ -301,6 +317,7 @@ fs_delete_file_without_close(void)
 	int rc;
 	struct spdk_io_channel *channel;
 	struct spdk_file *file;
+	struct spdk_thread *thread;
 
 	ut_send_request(_fs_init, NULL);
 	channel = spdk_fs_alloc_io_channel_sync(g_fs);
@@ -325,6 +342,9 @@ fs_delete_file_without_close(void)
 
 	spdk_fs_free_io_channel(channel);
 
+	thread = spdk_get_thread();
+	while (spdk_thread_poll(thread, 0, 0) > 0) {}
+
 	ut_send_request(_fs_unload, NULL);
 
 }
@@ -332,16 +352,18 @@ fs_delete_file_without_close(void)
 static void
 terminate_spdk_thread(void *arg)
 {
-	spdk_free_thread();
+	spdk_thread_exit(spdk_get_thread());
 	pthread_exit(NULL);
 }
 
 static void *
 spdk_thread(void *arg)
 {
+	struct spdk_thread *thread;
 	struct ut_request *req;
 
-	spdk_allocate_thread(_fs_send_msg, NULL, NULL, NULL, "thread1");
+	thread = spdk_thread_create("thread1");
+	spdk_set_thread(thread);
 
 	while (1) {
 		pthread_mutex_lock(&g_mutex);
@@ -355,15 +377,16 @@ spdk_thread(void *arg)
 			g_req = NULL;
 		}
 		pthread_mutex_unlock(&g_mutex);
-	}
 
-	spdk_free_thread();
+		spdk_thread_poll(thread, 0, 0);
+	}
 
 	return NULL;
 }
 
 int main(int argc, char **argv)
 {
+	struct spdk_thread *thread;
 	CU_pSuite	suite = NULL;
 	pthread_t	spdk_tid;
 	unsigned int	num_failures;
@@ -389,7 +412,8 @@ int main(int argc, char **argv)
 		return CU_get_error();
 	}
 
-	spdk_allocate_thread(_fs_send_msg, NULL, NULL, NULL, "thread0");
+	thread = spdk_thread_create("thread0");
+	spdk_set_thread(thread);
 
 	pthread_create(&spdk_tid, NULL, spdk_thread, NULL);
 	g_dev_buffer = calloc(1, DEV_BUFFER_SIZE);
@@ -400,6 +424,6 @@ int main(int argc, char **argv)
 	free(g_dev_buffer);
 	send_request(terminate_spdk_thread, NULL);
 	pthread_join(spdk_tid, NULL);
-	spdk_free_thread();
+	spdk_thread_exit(thread);
 	return num_failures;
 }

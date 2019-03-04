@@ -43,6 +43,8 @@
 #include "spdk/queue.h"
 #include "spdk/util.h"
 
+#include "spdk_internal/thread.h"
+
 #include "config-host.h"
 #include "fio.h"
 #include "optgroup.h"
@@ -70,9 +72,9 @@ struct spdk_fio_target {
 struct spdk_fio_thread {
 	struct thread_data		*td; /* fio thread context */
 	struct spdk_thread		*thread; /* spdk thread context */
-	uint64_t			timeout; /* polling timeout */
 
 	TAILQ_HEAD(, spdk_fio_target)	targets;
+	bool				failed; /* true if the thread failed to initialize */
 
 	struct io_u		**iocq;		/* io completion queue */
 	unsigned int		iocq_count;	/* number of iocq entries filled by last getevents */
@@ -85,14 +87,8 @@ static int spdk_fio_init(struct thread_data *td);
 static void spdk_fio_cleanup(struct thread_data *td);
 static size_t spdk_fio_poll_thread(struct spdk_fio_thread *fio_thread);
 
-/* Default polling timeout (us) */
-#define SPDK_FIO_POLLING_TIMEOUT 1000000UL
-
-static void
-spdk_fio_bdev_init_done(void *cb_arg, int rc)
-{
-	*(bool *)cb_arg = true;
-}
+/* Default polling timeout (ns) */
+#define SPDK_FIO_POLLING_TIMEOUT 1000000000ULL
 
 static int
 spdk_fio_init_thread(struct thread_data *td)
@@ -108,18 +104,17 @@ spdk_fio_init_thread(struct thread_data *td)
 	fio_thread->td = td;
 	td->io_ops_data = fio_thread;
 
-	fio_thread->thread = spdk_allocate_thread(NULL, NULL, NULL, NULL, "fio_thread");
+	fio_thread->thread = spdk_thread_create("fio_thread");
 	if (!fio_thread->thread) {
 		free(fio_thread);
 		SPDK_ERRLOG("failed to allocate thread\n");
 		return -1;
 	}
+	spdk_set_thread(fio_thread->thread);
 
 	fio_thread->iocq_size = td->o.iodepth;
 	fio_thread->iocq = calloc(fio_thread->iocq_size, sizeof(struct io_u *));
 	assert(fio_thread->iocq != NULL);
-
-	fio_thread->timeout = SPDK_FIO_POLLING_TIMEOUT;
 
 	TAILQ_INIT(&fio_thread->targets);
 
@@ -127,8 +122,9 @@ spdk_fio_init_thread(struct thread_data *td)
 }
 
 static void
-spdk_fio_cleanup_thread(struct spdk_fio_thread *fio_thread)
+spdk_fio_bdev_close_targets(void *arg)
 {
+	struct spdk_fio_thread *fio_thread = arg;
 	struct spdk_fio_target *target, *tmp;
 
 	TAILQ_FOREACH_SAFE(target, &fio_thread->targets, link, tmp) {
@@ -137,34 +133,91 @@ spdk_fio_cleanup_thread(struct spdk_fio_thread *fio_thread)
 		spdk_bdev_close(target->desc);
 		free(target);
 	}
+}
+
+static void
+spdk_fio_cleanup_thread(struct spdk_fio_thread *fio_thread)
+{
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_close_targets, fio_thread);
 
 	while (spdk_fio_poll_thread(fio_thread) > 0) {}
 
-	spdk_free_thread();
+	spdk_set_thread(fio_thread->thread);
+
+	spdk_thread_exit(fio_thread->thread);
 	free(fio_thread->iocq);
 	free(fio_thread);
 }
 
 static void
-spdk_fio_module_finish_done(void *cb_arg)
+spdk_fio_calc_timeout(struct spdk_fio_thread *fio_thread, struct timespec *ts)
 {
-	*(bool *)cb_arg = true;
-}
+	uint64_t timeout, now;
 
-static void
-spdk_fio_calc_timeout(struct timespec *ts, uint64_t us)
-{
-	uint64_t timeout = ts->tv_sec * SPDK_SEC_TO_NSEC + ts->tv_nsec;
+	if (spdk_thread_has_active_pollers(fio_thread->thread)) {
+		return;
+	}
 
-	timeout += us * 1000;
-	ts->tv_sec  = timeout / SPDK_SEC_TO_NSEC;
-	ts->tv_nsec = timeout % SPDK_SEC_TO_NSEC;
+	timeout = spdk_thread_next_poller_expiration(fio_thread->thread);
+	now = spdk_get_ticks();
+
+	if (timeout == 0) {
+		timeout = now + (SPDK_FIO_POLLING_TIMEOUT * spdk_get_ticks_hz()) / SPDK_SEC_TO_NSEC;
+	}
+
+	if (timeout > now) {
+		timeout = ((timeout - now) * SPDK_SEC_TO_NSEC) / spdk_get_ticks_hz() +
+			  ts->tv_sec * SPDK_SEC_TO_NSEC + ts->tv_nsec;
+
+		ts->tv_sec  = timeout / SPDK_SEC_TO_NSEC;
+		ts->tv_nsec = timeout % SPDK_SEC_TO_NSEC;
+	}
 }
 
 static pthread_t g_init_thread_id = 0;
 static pthread_mutex_t g_init_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_init_cond;
 static bool g_poll_loop = true;
+
+static void
+spdk_fio_bdev_init_done(void *cb_arg, int rc)
+{
+	*(bool *)cb_arg = true;
+}
+
+static void
+spdk_fio_bdev_init_start(void *arg)
+{
+	bool *done = arg;
+
+	/* Initialize the copy engine */
+	spdk_copy_engine_initialize();
+
+	/* Initialize the bdev layer */
+	spdk_bdev_initialize(spdk_fio_bdev_init_done, done);
+}
+
+static void
+spdk_fio_bdev_fini_done(void *cb_arg)
+{
+	*(bool *)cb_arg = true;
+}
+
+static void
+spdk_fio_copy_fini_start(void *arg)
+{
+	bool *done = arg;
+
+	spdk_copy_engine_finish(spdk_fio_bdev_fini_done, done);
+}
+
+static void
+spdk_fio_bdev_fini_start(void *arg)
+{
+	bool *done = arg;
+
+	spdk_bdev_finish(spdk_fio_copy_fini_start, done);
+}
 
 static void *
 spdk_init_thread_poll(void *arg)
@@ -175,7 +228,6 @@ spdk_init_thread_poll(void *arg)
 	struct spdk_env_opts		opts;
 	bool				done;
 	int				rc;
-	size_t				count;
 	struct timespec			ts;
 	struct thread_data		td = {};
 
@@ -229,7 +281,7 @@ spdk_init_thread_poll(void *arg)
 	}
 	spdk_unaffinitize_thread();
 
-	spdk_thread_lib_init();
+	spdk_thread_lib_init(NULL, 0);
 
 	/* Create an SPDK thread temporarily */
 	rc = spdk_fio_init_thread(&td);
@@ -240,14 +292,10 @@ spdk_init_thread_poll(void *arg)
 
 	fio_thread = td.io_ops_data;
 
-	/* Initialize the copy engine */
-	spdk_copy_engine_initialize();
-
 	/* Initialize the bdev layer */
 	done = false;
-	spdk_bdev_initialize(spdk_fio_bdev_init_done, &done);
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_init_start, &done);
 
-	/* First, poll until initialization is done. */
 	do {
 		spdk_fio_poll_thread(fio_thread);
 	} while (!done);
@@ -266,7 +314,7 @@ spdk_init_thread_poll(void *arg)
 		spdk_fio_poll_thread(fio_thread);
 
 		clock_gettime(CLOCK_MONOTONIC, &ts);
-		spdk_fio_calc_timeout(&ts, fio_thread->timeout);
+		spdk_fio_calc_timeout(fio_thread, &ts);
 
 		rc = pthread_cond_timedwait(&g_init_cond, &g_init_mtx, &ts);
 		if (rc != ETIMEDOUT) {
@@ -276,27 +324,15 @@ spdk_init_thread_poll(void *arg)
 
 	pthread_mutex_unlock(&g_init_mtx);
 
+	/* Finalize the bdev layer */
 	done = false;
-	spdk_bdev_finish(spdk_fio_module_finish_done, &done);
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_fini_start, &done);
 
 	do {
 		spdk_fio_poll_thread(fio_thread);
 	} while (!done);
 
-	do {
-		count = spdk_fio_poll_thread(fio_thread);
-	} while (count > 0);
-
-	done = false;
-	spdk_copy_engine_finish(spdk_fio_module_finish_done, &done);
-
-	do {
-		spdk_fio_poll_thread(fio_thread);
-	} while (!done);
-
-	do {
-		count = spdk_fio_poll_thread(fio_thread);
-	} while (count > 0);
+	while (spdk_fio_poll_thread(fio_thread) > 0) {};
 
 	spdk_fio_cleanup_thread(fio_thread);
 
@@ -390,18 +426,14 @@ spdk_fio_setup(struct thread_data *td)
 	return 0;
 }
 
-/* Called for each thread, on that thread, shortly after the thread
- * starts.
- */
-static int
-spdk_fio_init(struct thread_data *td)
+static void
+spdk_fio_bdev_open(void *arg)
 {
+	struct thread_data *td = arg;
 	struct spdk_fio_thread *fio_thread;
 	unsigned int i;
 	struct fio_file *f;
 	int rc;
-
-	spdk_fio_init_thread(td);
 
 	fio_thread = td->io_ops_data;
 
@@ -411,21 +443,24 @@ spdk_fio_init(struct thread_data *td)
 		target = calloc(1, sizeof(*target));
 		if (!target) {
 			SPDK_ERRLOG("Unable to allocate memory for I/O target.\n");
-			return -1;
+			fio_thread->failed = true;
+			return;
 		}
 
 		target->bdev = spdk_bdev_get_by_name(f->file_name);
 		if (!target->bdev) {
 			SPDK_ERRLOG("Unable to find bdev with name %s\n", f->file_name);
 			free(target);
-			return -1;
+			fio_thread->failed = true;
+			return;
 		}
 
 		rc = spdk_bdev_open(target->bdev, true, NULL, NULL, &target->desc);
 		if (rc) {
 			SPDK_ERRLOG("Unable to open bdev %s\n", f->file_name);
 			free(target);
-			return -1;
+			fio_thread->failed = true;
+			return;
 		}
 
 		target->ch = spdk_bdev_get_io_channel(target->desc);
@@ -433,12 +468,35 @@ spdk_fio_init(struct thread_data *td)
 			SPDK_ERRLOG("Unable to get I/O channel for bdev.\n");
 			spdk_bdev_close(target->desc);
 			free(target);
-			return -1;
+			fio_thread->failed = true;
+			return;
 		}
 
 		f->engine_data = target;
 
 		TAILQ_INSERT_TAIL(&fio_thread->targets, target, link);
+	}
+}
+
+/* Called for each thread, on that thread, shortly after the thread
+ * starts.
+ */
+static int
+spdk_fio_init(struct thread_data *td)
+{
+	struct spdk_fio_thread *fio_thread;
+
+	spdk_fio_init_thread(td);
+
+	fio_thread = td->io_ops_data;
+	fio_thread->failed = false;
+
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_open, td);
+
+	while (spdk_fio_poll_thread(fio_thread) > 0) {}
+
+	if (fio_thread->failed) {
+		return -1;
 	}
 
 	return 0;
@@ -591,7 +649,7 @@ spdk_fio_event(struct thread_data *td, int event)
 static size_t
 spdk_fio_poll_thread(struct spdk_fio_thread *fio_thread)
 {
-	return spdk_thread_poll(fio_thread->thread, 0);
+	return spdk_thread_poll(fio_thread->thread, 0, 0);
 }
 
 static int

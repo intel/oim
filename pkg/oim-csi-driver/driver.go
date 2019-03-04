@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 package oimcsidriver
 
 import (
-	"github.com/container-storage-interface/spec/lib/go/csi/v0"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 )
 
 func (od *oimDriver) setControllerServiceCapabilities(cl []csi.ControllerServiceCapability_RPC_Type) {

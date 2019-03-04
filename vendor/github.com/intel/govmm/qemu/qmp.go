@@ -1,5 +1,5 @@
 /*
-// Copyright (c) 2016 Intel Corporation
+// Copyright contributors to the Virtual Machine Manager for Go project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -313,7 +313,7 @@ func (q *QMP) finaliseCommandWithResponse(cmdEl *list.Element, cmdQueue *list.Li
 		if succeeded {
 			cmd.res <- qmpResult{response: response}
 		} else {
-			cmd.res <- qmpResult{err: fmt.Errorf("QMP command failed")}
+			cmd.res <- qmpResult{err: fmt.Errorf("QMP command failed: %v", response)}
 		}
 	}
 	if cmdQueue.Len() > 0 {
@@ -323,6 +323,23 @@ func (q *QMP) finaliseCommandWithResponse(cmdEl *list.Element, cmdQueue *list.Li
 
 func (q *QMP) finaliseCommand(cmdEl *list.Element, cmdQueue *list.List, succeeded bool) {
 	q.finaliseCommandWithResponse(cmdEl, cmdQueue, succeeded, nil)
+}
+
+func (q *QMP) errorDesc(errorData interface{}) (string, error) {
+	// convert error to json
+	data, err := json.Marshal(errorData)
+	if err != nil {
+		return "", fmt.Errorf("unable to extract error information: %v", err)
+	}
+
+	// see: https://github.com/qemu/qemu/blob/stable-2.12/qapi/qmp-dispatch.c#L125
+	var qmpErr map[string]string
+	// convert json to qmpError
+	if err = json.Unmarshal(data, &qmpErr); err != nil {
+		return "", fmt.Errorf("unable to convert json to qmpError: %v", err)
+	}
+
+	return qmpErr["desc"], nil
 }
 
 func (q *QMP) processQMPInput(line []byte, cmdQueue *list.List) {
@@ -339,7 +356,7 @@ func (q *QMP) processQMPInput(line []byte, cmdQueue *list.List) {
 	}
 
 	response, succeeded := vmData["return"]
-	_, failed := vmData["error"]
+	errData, failed := vmData["error"]
 
 	if !succeeded && !failed {
 		return
@@ -353,6 +370,14 @@ func (q *QMP) processQMPInput(line []byte, cmdQueue *list.List) {
 	}
 	cmd := cmdEl.Value.(*qmpCommand)
 	if failed || cmd.filter == nil {
+		if errData != nil {
+			desc, err := q.errorDesc(errData)
+			if err != nil {
+				q.cfg.Logger.Infof("Get error description failed: %v", err)
+			} else {
+				response = desc
+			}
+		}
 		q.finaliseCommandWithResponse(cmdEl, cmdQueue, succeeded, response)
 	} else {
 		cmd.resultReceived = true
@@ -379,7 +404,7 @@ func (q *QMP) writeNextQMPCommand(cmdQueue *list.List) {
 	encodedCmd, err := json.Marshal(&cmdData)
 	if err != nil {
 		cmd.res <- qmpResult{
-			err: fmt.Errorf("Unable to marhsall command %s: %v",
+			err: fmt.Errorf("unable to marhsall command %s: %v",
 				cmd.name, err),
 		}
 		cmdQueue.Remove(cmdEl)
@@ -394,7 +419,7 @@ func (q *QMP) writeNextQMPCommand(cmdQueue *list.List) {
 
 	if err != nil {
 		cmd.res <- qmpResult{
-			err: fmt.Errorf("Unable to write command to qmp socket %v", err),
+			err: fmt.Errorf("unable to write command to qmp socket %v", err),
 		}
 		cmdQueue.Remove(cmdEl)
 	}
@@ -500,7 +525,7 @@ func (q *QMP) mainLoop() {
 		}
 		/* #nosec */
 		_ = q.conn.Close()
-		_ = <-fromVMCh
+		<-fromVMCh
 		failOutstandingCommands(cmdQueue)
 		close(q.disconnectedCh)
 	}()
@@ -664,12 +689,12 @@ func QMPStart(ctx context.Context, socket string, cfg QMPConfig, disconnectedCh 
 	case <-ctx.Done():
 		q.Shutdown()
 		<-disconnectedCh
-		return nil, nil, fmt.Errorf("Canceled by caller")
+		return nil, nil, fmt.Errorf("canceled by caller")
 	case <-disconnectedCh:
-		return nil, nil, fmt.Errorf("Lost connection to VM")
+		return nil, nil, fmt.Errorf("lost connection to VM")
 	case q.version = <-connectedCh:
 		if q.version == nil {
-			return nil, nil, fmt.Errorf("Failed to find QMP version information")
+			return nil, nil, fmt.Errorf("failed to find QMP version information")
 		}
 	}
 
@@ -722,11 +747,7 @@ func (q *QMP) ExecuteQuit(ctx context.Context) error {
 	return q.executeCommand(ctx, "quit", nil, nil)
 }
 
-// ExecuteBlockdevAdd sends a blockdev-add to the QEMU instance.  device is the
-// path of the device to add, e.g., /dev/rdb0, and blockdevID is an identifier
-// used to name the device.  As this identifier will be passed directly to QMP,
-// it must obey QMP's naming rules, e,g., it must start with a letter.
-func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string) error {
+func (q *QMP) blockdevAddBaseArgs(device, blockdevID string) (map[string]interface{}, map[string]interface{}) {
 	var args map[string]interface{}
 
 	blockdevArgs := map[string]interface{}{
@@ -747,6 +768,39 @@ func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string)
 		}
 	}
 
+	return args, blockdevArgs
+}
+
+// ExecuteBlockdevAdd sends a blockdev-add to the QEMU instance.  device is the
+// path of the device to add, e.g., /dev/rdb0, and blockdevID is an identifier
+// used to name the device.  As this identifier will be passed directly to QMP,
+// it must obey QMP's naming rules, e,g., it must start with a letter.
+func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string) error {
+	args, _ := q.blockdevAddBaseArgs(device, blockdevID)
+
+	return q.executeCommand(ctx, "blockdev-add", args, nil)
+}
+
+// ExecuteBlockdevAddWithCache has two more parameters direct and noFlush
+// than ExecuteBlockdevAdd.
+// They are cache-related options for block devices that are described in
+// https://github.com/qemu/qemu/blob/master/qapi/block-core.json.
+// direct denotes whether use of O_DIRECT (bypass the host page cache)
+// is enabled.  noFlush denotes whether flush requests for the device are
+// ignored.
+func (q *QMP) ExecuteBlockdevAddWithCache(ctx context.Context, device, blockdevID string, direct, noFlush bool) error {
+	args, blockdevArgs := q.blockdevAddBaseArgs(device, blockdevID)
+
+	if q.version.Major < 2 || (q.version.Major == 2 && q.version.Minor < 9) {
+		return fmt.Errorf("versions of qemu (%d.%d) older than 2.9 do not support set cache-related options for block devices",
+			q.version.Major, q.version.Minor)
+	}
+
+	blockdevArgs["cache"] = map[string]interface{}{
+		"direct":   direct,
+		"no-flush": noFlush,
+	}
+
 	return q.executeCommand(ctx, "blockdev-add", args, nil)
 }
 
@@ -756,7 +810,10 @@ func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string)
 // add.  Both strings must be valid QMP identifiers.  driver is the name of the
 // driver,e.g., virtio-blk-pci, and bus is the name of the bus.  bus is optional.
 // shared denotes if the drive can be shared allowing it to be passed more than once.
-func (q *QMP) ExecuteDeviceAdd(ctx context.Context, blockdevID, devID, driver, bus, romfile string, shared bool) error {
+// disableModern indicates if virtio version 1.0 should be replaced by the
+// former version 0.9, as there is a KVM bug that occurs when using virtio
+// 1.0 in nested environments.
+func (q *QMP) ExecuteDeviceAdd(ctx context.Context, blockdevID, devID, driver, bus, romfile string, shared, disableModern bool) error {
 	args := map[string]interface{}{
 		"id":     devID,
 		"driver": driver,
@@ -770,6 +827,10 @@ func (q *QMP) ExecuteDeviceAdd(ctx context.Context, blockdevID, devID, driver, b
 	}
 	if isVirtioPCI[DeviceDriver(driver)] {
 		args["romfile"] = romfile
+
+		if disableModern {
+			args["disable-modern"] = disableModern
+		}
 	}
 
 	return q.executeCommand(ctx, "device_add", args, nil)
@@ -783,7 +844,10 @@ func (q *QMP) ExecuteDeviceAdd(ctx context.Context, blockdevID, devID, driver, b
 // scsiID is the SCSI id, lun is logical unit number. scsiID and lun are optional, a negative value
 // for scsiID and lun is ignored. shared denotes if the drive can be shared allowing it
 // to be passed more than once.
-func (q *QMP) ExecuteSCSIDeviceAdd(ctx context.Context, blockdevID, devID, driver, bus, romfile string, scsiID, lun int, shared bool) error {
+// disableModern indicates if virtio version 1.0 should be replaced by the
+// former version 0.9, as there is a KVM bug that occurs when using virtio
+// 1.0 in nested environments.
+func (q *QMP) ExecuteSCSIDeviceAdd(ctx context.Context, blockdevID, devID, driver, bus, romfile string, scsiID, lun int, shared, disableModern bool) error {
 	// TBD: Add drivers for scsi passthrough like scsi-generic and scsi-block
 	drivers := []string{"scsi-hd", "scsi-cd", "scsi-disk"}
 
@@ -796,7 +860,7 @@ func (q *QMP) ExecuteSCSIDeviceAdd(ctx context.Context, blockdevID, devID, drive
 	}
 
 	if !isSCSIDriver {
-		return fmt.Errorf("Invalid SCSI driver provided %s", driver)
+		return fmt.Errorf("invalid SCSI driver provided %s", driver)
 	}
 
 	args := map[string]interface{}{
@@ -816,6 +880,10 @@ func (q *QMP) ExecuteSCSIDeviceAdd(ctx context.Context, blockdevID, devID, drive
 	}
 	if isVirtioPCI[DeviceDriver(driver)] {
 		args["romfile"] = romfile
+
+		if disableModern {
+			args["disable-modern"] = disableModern
+		}
 	}
 
 	return q.executeCommand(ctx, "device_add", args, nil)
@@ -908,7 +976,10 @@ func (q *QMP) ExecuteNetdevDel(ctx context.Context, netdevID string) error {
 // using the device_add command. devID is the id of the device to add.
 // Must be valid QMP identifier. netdevID is the id of nic added by previous netdev_add.
 // queues is the number of queues of a nic.
-func (q *QMP) ExecuteNetPCIDeviceAdd(ctx context.Context, netdevID, devID, macAddr, addr, bus, romfile string, queues int) error {
+// disableModern indicates if virtio version 1.0 should be replaced by the
+// former version 0.9, as there is a KVM bug that occurs when using virtio
+// 1.0 in nested environments.
+func (q *QMP) ExecuteNetPCIDeviceAdd(ctx context.Context, netdevID, devID, macAddr, addr, bus, romfile string, queues int, disableModern bool) error {
 	args := map[string]interface{}{
 		"id":      devID,
 		"driver":  VirtioNetPCI,
@@ -927,6 +998,9 @@ func (q *QMP) ExecuteNetPCIDeviceAdd(ctx context.Context, netdevID, devID, macAd
 	if netdevID != "" {
 		args["netdev"] = netdevID
 	}
+	if disableModern {
+		args["disable-modern"] = disableModern
+	}
 
 	if queues > 0 {
 		// (2N+2 vectors, N for tx queues, N for rx queues, 1 for config, and one for possible control vq)
@@ -937,6 +1011,26 @@ func (q *QMP) ExecuteNetPCIDeviceAdd(ctx context.Context, netdevID, devID, macAd
 		// always set
 		args["mq"] = "on"
 		args["vectors"] = 2*queues + 2
+	}
+
+	return q.executeCommand(ctx, "device_add", args, nil)
+}
+
+// ExecuteNetCCWDeviceAdd adds a Net CCW device to a QEMU instance
+// using the device_add command. devID is the id of the device to add.
+// Must be valid QMP identifier. netdevID is the id of nic added by previous netdev_add.
+// queues is the number of queues of a nic.
+func (q *QMP) ExecuteNetCCWDeviceAdd(ctx context.Context, netdevID, devID, macAddr, addr, bus string, queues int) error {
+	args := map[string]interface{}{
+		"id":     devID,
+		"driver": VirtioNetCCW,
+		"netdev": netdevID,
+		"mac":    macAddr,
+		"addr":   addr,
+	}
+
+	if queues > 0 {
+		args["mq"] = "on"
 	}
 
 	return q.executeCommand(ctx, "device_add", args, nil)
@@ -964,7 +1058,10 @@ func (q *QMP) ExecuteDeviceDel(ctx context.Context, devID string) error {
 // to hot plug PCI devices on PCI(E) bridges, unlike ExecuteDeviceAdd this function receive the
 // device address on its parent bus. bus is optional. shared denotes if the drive can be shared
 // allowing it to be passed more than once.
-func (q *QMP) ExecutePCIDeviceAdd(ctx context.Context, blockdevID, devID, driver, addr, bus, romfile string, shared bool) error {
+// disableModern indicates if virtio version 1.0 should be replaced by the
+// former version 0.9, as there is a KVM bug that occurs when using virtio
+// 1.0 in nested environments.
+func (q *QMP) ExecutePCIDeviceAdd(ctx context.Context, blockdevID, devID, driver, addr, bus, romfile string, shared, disableModern bool) error {
 	args := map[string]interface{}{
 		"id":     devID,
 		"driver": driver,
@@ -979,6 +1076,10 @@ func (q *QMP) ExecutePCIDeviceAdd(ctx context.Context, blockdevID, devID, driver
 	}
 	if isVirtioPCI[DeviceDriver(driver)] {
 		args["romfile"] = romfile
+
+		if disableModern {
+			args["disable-modern"] = disableModern
+		}
 	}
 
 	return q.executeCommand(ctx, "device_add", args, nil)
@@ -991,7 +1092,7 @@ func (q *QMP) ExecutePCIDeviceAdd(ctx context.Context, blockdevID, devID, driver
 func (q *QMP) ExecuteVFIODeviceAdd(ctx context.Context, devID, bdf, romfile string) error {
 	args := map[string]interface{}{
 		"id":      devID,
-		"driver":  "vfio-pci",
+		"driver":  Vfio,
 		"host":    bdf,
 		"romfile": romfile,
 	}
@@ -1006,11 +1107,12 @@ func (q *QMP) ExecuteVFIODeviceAdd(ctx context.Context, devID, bdf, romfile stri
 func (q *QMP) ExecutePCIVFIODeviceAdd(ctx context.Context, devID, bdf, addr, bus, romfile string) error {
 	args := map[string]interface{}{
 		"id":      devID,
-		"driver":  "vfio-pci",
+		"driver":  Vfio,
 		"host":    bdf,
 		"addr":    addr,
 		"romfile": romfile,
 	}
+
 	if bus != "" {
 		args["bus"] = bus
 	}
@@ -1025,10 +1127,11 @@ func (q *QMP) ExecutePCIVFIODeviceAdd(ctx context.Context, devID, bdf, addr, bus
 func (q *QMP) ExecutePCIVFIOMediatedDeviceAdd(ctx context.Context, devID, sysfsdev, addr, bus, romfile string) error {
 	args := map[string]interface{}{
 		"id":       devID,
-		"driver":   "vfio-pci",
+		"driver":   Vfio,
 		"sysfsdev": sysfsdev,
 		"romfile":  romfile,
 	}
+
 	if bus != "" {
 		args["bus"] = bus
 	}
@@ -1041,14 +1144,21 @@ func (q *QMP) ExecutePCIVFIOMediatedDeviceAdd(ctx context.Context, devID, sysfsd
 // ExecuteCPUDeviceAdd adds a CPU to a QEMU instance using the device_add command.
 // driver is the CPU model, cpuID must be a unique ID to identify the CPU, socketID is the socket number within
 // node/board the CPU belongs to, coreID is the core number within socket the CPU belongs to, threadID is the
-// thread number within core the CPU belongs to.
+// thread number within core the CPU belongs to. Note that socketID and threadID are not a requirement for
+// architecures like ppc64le.
 func (q *QMP) ExecuteCPUDeviceAdd(ctx context.Context, driver, cpuID, socketID, coreID, threadID, romfile string) error {
 	args := map[string]interface{}{
-		"driver":    driver,
-		"id":        cpuID,
-		"socket-id": socketID,
-		"core-id":   coreID,
-		"thread-id": threadID,
+		"driver":  driver,
+		"id":      cpuID,
+		"core-id": coreID,
+	}
+
+	if socketID != "" {
+		args["socket-id"] = socketID
+	}
+
+	if threadID != "" {
+		args["thread-id"] = threadID
 	}
 
 	if isVirtioPCI[DeviceDriver(driver)] {
@@ -1068,13 +1178,13 @@ func (q *QMP) ExecuteQueryHotpluggableCPUs(ctx context.Context) ([]HotpluggableC
 	// convert response to json
 	data, err := json.Marshal(response)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to extract CPU information: %v", err)
+		return nil, fmt.Errorf("unable to extract CPU information: %v", err)
 	}
 
 	var cpus []HotpluggableCPU
 	// convert json to []HotpluggableCPU
 	if err = json.Unmarshal(data, &cpus); err != nil {
-		return nil, fmt.Errorf("Unable to convert json to hotpluggable CPU: %v", err)
+		return nil, fmt.Errorf("unable to convert json to hotpluggable CPU: %v", err)
 	}
 
 	return cpus, nil
@@ -1108,7 +1218,7 @@ func (q *QMP) ExecQueryMemoryDevices(ctx context.Context) ([]MemoryDevices, erro
 	// convert response to json
 	data, err := json.Marshal(response)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to extract memory devices information: %v", err)
+		return nil, fmt.Errorf("unable to extract memory devices information: %v", err)
 	}
 
 	var memoryDevices []MemoryDevices
@@ -1132,7 +1242,7 @@ func (q *QMP) ExecQueryCpus(ctx context.Context) ([]CPUInfo, error) {
 	// convert response to json
 	data, err := json.Marshal(response)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to extract memory devices information: %v", err)
+		return nil, fmt.Errorf("unable to extract memory devices information: %v", err)
 	}
 
 	var cpuInfo []CPUInfo
@@ -1156,7 +1266,7 @@ func (q *QMP) ExecQueryCpusFast(ctx context.Context) ([]CPUInfoFast, error) {
 	// convert response to json
 	data, err := json.Marshal(response)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to extract memory devices information: %v", err)
+		return nil, fmt.Errorf("unable to extract memory devices information: %v", err)
 	}
 
 	var cpuInfoFast []CPUInfoFast
@@ -1170,13 +1280,14 @@ func (q *QMP) ExecQueryCpusFast(ctx context.Context) ([]CPUInfoFast, error) {
 
 // ExecHotplugMemory adds size of MiB memory to the guest
 func (q *QMP) ExecHotplugMemory(ctx context.Context, qomtype, id, mempath string, size int) error {
+	props := map[string]interface{}{"size": uint64(size) << 20}
 	args := map[string]interface{}{
 		"qom-type": qomtype,
 		"id":       id,
-		"props":    map[string]interface{}{"size": uint64(size) << 20},
+		"props":    props,
 	}
 	if mempath != "" {
-		args["mem-path"] = mempath
+		props["mem-path"] = mempath
 	}
 	err := q.executeCommand(ctx, "object-add", args, nil)
 	if err != nil {
@@ -1203,6 +1314,42 @@ func (q *QMP) ExecHotplugMemory(ctx context.Context, qomtype, id, mempath string
 	return err
 }
 
+// ExecuteNVDIMMDeviceAdd adds a block device to a QEMU instance using
+// a NVDIMM driver with the device_add command.
+// id is the id of the device to add.  It must be a valid QMP identifier.
+// mempath is the path of the device to add, e.g., /dev/rdb0.  size is
+// the data size of the device.
+func (q *QMP) ExecuteNVDIMMDeviceAdd(ctx context.Context, id, mempath string, size int64) error {
+	args := map[string]interface{}{
+		"qom-type": "memory-backend-file",
+		"id":       "nvdimmbackmem" + id,
+		"props": map[string]interface{}{
+			"mem-path": mempath,
+			"size":     size,
+			"share":    true,
+		},
+	}
+	err := q.executeCommand(ctx, "object-add", args, nil)
+	if err != nil {
+		return err
+	}
+
+	args = map[string]interface{}{
+		"driver": "nvdimm",
+		"id":     "nvdimm" + id,
+		"memdev": "nvdimmbackmem" + id,
+	}
+	if err = q.executeCommand(ctx, "device_add", args, nil); err != nil {
+		q.cfg.Logger.Errorf("Unable to hotplug NVDIMM device: %v", err)
+		err2 := q.executeCommand(ctx, "object-del", map[string]interface{}{"id": "nvdimmbackmem" + id}, nil)
+		if err2 != nil {
+			q.cfg.Logger.Warningf("Unable to clean up memory object: %v", err2)
+		}
+	}
+
+	return err
+}
+
 // ExecuteBalloon sets the size of the balloon, hence updates the memory
 // allocated for the VM.
 func (q *QMP) ExecuteBalloon(ctx context.Context, bytes uint64) error {
@@ -1213,9 +1360,12 @@ func (q *QMP) ExecuteBalloon(ctx context.Context, bytes uint64) error {
 }
 
 // ExecutePCIVSockAdd adds a vhost-vsock-pci bus
+// disableModern indicates if virtio version 1.0 should be replaced by the
+// former version 0.9, as there is a KVM bug that occurs when using virtio
+// 1.0 in nested environments.
 func (q *QMP) ExecutePCIVSockAdd(ctx context.Context, id, guestCID, vhostfd, addr, bus, romfile string, disableModern bool) error {
 	args := map[string]interface{}{
-		"driver":    VHostVSockPCI,
+		"driver":    VHostVSock,
 		"id":        id,
 		"guest-cid": guestCID,
 		"vhostfd":   vhostfd,
@@ -1291,12 +1441,12 @@ func (q *QMP) ExecuteQueryMigration(ctx context.Context) (MigrationStatus, error
 
 	data, err := json.Marshal(response)
 	if err != nil {
-		return MigrationStatus{}, fmt.Errorf("Unable to extract migrate status information: %v", err)
+		return MigrationStatus{}, fmt.Errorf("unable to extract migrate status information: %v", err)
 	}
 
 	var status MigrationStatus
 	if err = json.Unmarshal(data, &status); err != nil {
-		return MigrationStatus{}, fmt.Errorf("Unable to convert migrate status information: %v", err)
+		return MigrationStatus{}, fmt.Errorf("unable to convert migrate status information: %v", err)
 	}
 
 	return status, nil

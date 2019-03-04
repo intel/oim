@@ -119,7 +119,7 @@ rte_pci_unmap_device(struct rte_pci_device *dev)
 static int
 find_max_end_va(const struct rte_memseg_list *msl, void *arg)
 {
-	size_t sz = msl->memseg_arr.len * msl->page_sz;
+	size_t sz = msl->len;
 	void *end_va = RTE_PTR_ADD(msl->base_va, sz);
 	void **max_va = arg;
 
@@ -228,6 +228,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 		return -1;
 
 	memset(dev, 0, sizeof(*dev));
+	dev->device.bus = &rte_pci_bus.bus;
 	dev->addr = *addr;
 
 	/* get vendor id */
@@ -348,7 +349,7 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 			if (ret < 0) {
 				rte_pci_insert_device(dev2, dev);
 			} else { /* already registered */
-				if (dev2->driver == NULL) {
+				if (!rte_dev_is_probed(&dev2->device)) {
 					dev2->kdrv = dev->kdrv;
 					dev2->max_vfs = dev->max_vfs;
 					pci_name_set(dev2);
@@ -358,10 +359,11 @@ pci_scan_one(const char *dirname, const struct rte_pci_addr *addr)
 				} else {
 					/**
 					 * If device is plugged and driver is
-					 * probed already, we don't need to do
-					 * anything here. (This happens when we
-					 * call rte_eal_hotplug_add)
-					 */
+					 * probed already, (This happens when
+					 * we call rte_dev_probe which will
+					 * scan all device on the bus) we don't
+					 * need to do anything here unless...
+					 **/
 					if (dev2->kdrv != dev->kdrv ||
 						dev2->max_vfs != dev->max_vfs)
 						/*
@@ -612,9 +614,16 @@ pci_one_device_iommu_support_va(struct rte_pci_device *dev)
 	fclose(fp);
 
 	mgaw = ((vtd_cap_reg & VTD_CAP_MGAW_MASK) >> VTD_CAP_MGAW_SHIFT) + 1;
-	if (mgaw < X86_VA_WIDTH)
-		return false;
 
+	/*
+	 * Assuming there is no limitation by now. We can not know at this point
+	 * because the memory has not been initialized yet. Setting the dma mask
+	 * will force a check once memory initialization is done. We can not do
+	 * a fallback to IOVA PA now, but if the dma check fails, the error
+	 * message should advice for using '--iova-mode pa' if IOVA VA is the
+	 * current mode.
+	 */
+	rte_mem_set_dma_mask(mgaw);
 	return true;
 }
 #elif defined(RTE_ARCH_PPC_64)
@@ -644,8 +653,11 @@ pci_devices_iommu_support_va(void)
 		FOREACH_DEVICE_ON_PCIBUS(dev) {
 			if (!rte_pci_match(drv, dev))
 				continue;
-			if (!pci_one_device_iommu_support_va(dev))
-				return false;
+			/*
+			 * just one PCI device needs to be checked out because
+			 * the IOMMU hardware is the same for all of them.
+			 */
+			return pci_one_device_iommu_support_va(dev);
 		}
 	}
 	return true;
@@ -696,23 +708,22 @@ rte_pci_get_iommu_class(void)
 int rte_pci_read_config(const struct rte_pci_device *device,
 		void *buf, size_t len, off_t offset)
 {
+	char devname[RTE_DEV_NAME_MAX_LEN] = "";
 	const struct rte_intr_handle *intr_handle = &device->intr_handle;
 
-	switch (intr_handle->type) {
-	case RTE_INTR_HANDLE_UIO:
-	case RTE_INTR_HANDLE_UIO_INTX:
+	switch (device->kdrv) {
+	case RTE_KDRV_IGB_UIO:
+	case RTE_KDRV_UIO_GENERIC:
 		return pci_uio_read_config(intr_handle, buf, len, offset);
-
 #ifdef VFIO_PRESENT
-	case RTE_INTR_HANDLE_VFIO_MSIX:
-	case RTE_INTR_HANDLE_VFIO_MSI:
-	case RTE_INTR_HANDLE_VFIO_LEGACY:
+	case RTE_KDRV_VFIO:
 		return pci_vfio_read_config(intr_handle, buf, len, offset);
 #endif
 	default:
+		rte_pci_device_name(&device->addr, devname,
+				    RTE_DEV_NAME_MAX_LEN);
 		RTE_LOG(ERR, EAL,
-			"Unknown handle type of fd %d\n",
-					intr_handle->fd);
+			"Unknown driver type for %s\n", devname);
 		return -1;
 	}
 }
@@ -721,23 +732,22 @@ int rte_pci_read_config(const struct rte_pci_device *device,
 int rte_pci_write_config(const struct rte_pci_device *device,
 		const void *buf, size_t len, off_t offset)
 {
+	char devname[RTE_DEV_NAME_MAX_LEN] = "";
 	const struct rte_intr_handle *intr_handle = &device->intr_handle;
 
-	switch (intr_handle->type) {
-	case RTE_INTR_HANDLE_UIO:
-	case RTE_INTR_HANDLE_UIO_INTX:
+	switch (device->kdrv) {
+	case RTE_KDRV_IGB_UIO:
+	case RTE_KDRV_UIO_GENERIC:
 		return pci_uio_write_config(intr_handle, buf, len, offset);
-
 #ifdef VFIO_PRESENT
-	case RTE_INTR_HANDLE_VFIO_MSIX:
-	case RTE_INTR_HANDLE_VFIO_MSI:
-	case RTE_INTR_HANDLE_VFIO_LEGACY:
+	case RTE_KDRV_VFIO:
 		return pci_vfio_write_config(intr_handle, buf, len, offset);
 #endif
 	default:
+		rte_pci_device_name(&device->addr, devname,
+				    RTE_DEV_NAME_MAX_LEN);
 		RTE_LOG(ERR, EAL,
-			"Unknown handle type of fd %d\n",
-					intr_handle->fd);
+			"Unknown driver type for %s\n", devname);
 		return -1;
 	}
 }

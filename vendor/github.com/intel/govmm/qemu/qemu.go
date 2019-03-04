@@ -1,5 +1,5 @@
 /*
-// Copyright (c) 2016 Intel Corporation
+// Copyright contributors to the Virtual Machine Manager for Go project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -62,17 +62,11 @@ const (
 	// NVDIMM is the Non Volatile DIMM device driver.
 	NVDIMM DeviceDriver = "nvdimm"
 
-	// Virtio9P is the 9pfs device driver.
-	Virtio9P DeviceDriver = "virtio-9p-pci"
-
-	// VirtioNet is the virt-io networking device driver.
-	VirtioNet DeviceDriver = "virtio-net"
-
 	// VirtioNetPCI is the virt-io pci networking device driver.
 	VirtioNetPCI DeviceDriver = "virtio-net-pci"
 
-	// VirtioSerial is the serial device driver.
-	VirtioSerial DeviceDriver = "virtio-serial-pci"
+	// VirtioNetCCW is the virt-io ccw networking device driver.
+	VirtioNetCCW DeviceDriver = "virtio-net-ccw"
 
 	// VirtioBlock is the block device driver.
 	VirtioBlock DeviceDriver = "virtio-blk"
@@ -82,9 +76,6 @@ const (
 
 	// VirtioSerialPort is the serial port device driver.
 	VirtioSerialPort DeviceDriver = "virtserialport"
-
-	// VHostVSockPCI is the vhost vsock pci driver.
-	VHostVSockPCI DeviceDriver = "vhost-vsock-pci"
 
 	// VirtioRng is the paravirtualized RNG device driver.
 	VirtioRng DeviceDriver = "virtio-rng"
@@ -101,12 +92,6 @@ const (
 	//VhostUserBlk represents a block vhostuser device type.
 	VhostUserBlk DeviceDriver = "vhost-user-blk-pci"
 
-	// VfioPCI represent a VFIO device type.
-	VfioPCI DeviceDriver = "vfio-pci"
-
-	// VirtioScsiPCI represents a SCSI device type.
-	VirtioScsiPCI DeviceDriver = "virtio-scsi-pci"
-
 	// PCIBridgeDriver represents a PCI bridge device type.
 	PCIBridgeDriver DeviceDriver = "pci-bridge"
 
@@ -114,27 +99,19 @@ const (
 	PCIePCIBridgeDriver DeviceDriver = "pcie-pci-bridge"
 )
 
-// isVirtioPCI is a map indicating if a DeviceDriver is considered as a
-// virtio PCI device, which is helpful to determine if the option "romfile"
-// applies or not to this specific device.
-var isVirtioPCI = map[DeviceDriver]bool{
-	NVDIMM:              false,
-	Virtio9P:            true,
-	VirtioNet:           true,
-	VirtioNetPCI:        true,
-	VirtioSerial:        true,
-	VirtioBlock:         true,
-	Console:             false,
-	VirtioSerialPort:    false,
-	VHostVSockPCI:       true,
-	VirtioRng:           true,
-	VirtioBalloon:       true,
-	VhostUserSCSI:       true,
-	VhostUserBlk:        true,
-	VfioPCI:             true,
-	VirtioScsiPCI:       true,
-	PCIBridgeDriver:     true,
-	PCIePCIBridgeDriver: true,
+// disableModern returns the parameters with the disable-modern option.
+// In case the device driver is not a PCI device and it doesn't have the option
+// an empty string is returned.
+func (driver DeviceDriver) disableModern(disable bool) string {
+	if !isVirtioPCI[driver] {
+		return ""
+	}
+
+	if disable {
+		return "disable-modern=true"
+	}
+
+	return "disable-modern=false"
 }
 
 // ObjectType is a string representing a qemu object type.
@@ -283,9 +260,9 @@ func (fsdev FSDevice) QemuParams(config *Config) []string {
 	var deviceParams []string
 	var qemuParams []string
 
-	deviceParams = append(deviceParams, fmt.Sprintf("%s", fsdev.Driver))
-	if fsdev.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	deviceParams = append(deviceParams, string(fsdev.Driver))
+	if s := fsdev.Driver.disableModern(fsdev.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 	deviceParams = append(deviceParams, fmt.Sprintf(",fsdev=%s", fsdev.ID))
 	deviceParams = append(deviceParams, fmt.Sprintf(",mount_tag=%s", fsdev.MountTag))
@@ -369,9 +346,9 @@ func (cdev CharDevice) QemuParams(config *Config) []string {
 	var deviceParams []string
 	var qemuParams []string
 
-	deviceParams = append(deviceParams, fmt.Sprintf("%s", cdev.Driver))
-	if cdev.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	deviceParams = append(deviceParams, string(cdev.Driver))
+	if s := cdev.Driver.disableModern(cdev.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 	if cdev.Bus != "" {
 		deviceParams = append(deviceParams, fmt.Sprintf(",bus=%s", cdev.Bus))
@@ -424,48 +401,6 @@ const (
 	// VHOSTUSER is a vhost-user port (socket)
 	VHOSTUSER NetDeviceType = "vhostuser"
 )
-
-// QemuNetdevParam converts to the QEMU -netdev parameter notation
-func (n NetDeviceType) QemuNetdevParam() string {
-	switch n {
-	case TAP:
-		return "tap"
-	case MACVTAP:
-		return "tap"
-	case IPVTAP:
-		return "tap"
-	case VETHTAP:
-		return "tap" // -netdev type=tap -device virtio-net-pci
-	case VFIO:
-		return "" // -device vfio-pci (no netdev)
-	case VHOSTUSER:
-		return "vhost-user" // -netdev type=vhost-user (no device)
-	default:
-		return ""
-
-	}
-}
-
-// QemuDeviceParam converts to the QEMU -device parameter notation
-func (n NetDeviceType) QemuDeviceParam() DeviceDriver {
-	switch n {
-	case TAP:
-		return "virtio-net-pci"
-	case MACVTAP:
-		return "virtio-net-pci"
-	case IPVTAP:
-		return "virtio-net-pci"
-	case VETHTAP:
-		return "virtio-net-pci" // -netdev type=tap -device virtio-net-pci
-	case VFIO:
-		return "vfio-pci" // -device vfio-pci (no netdev)
-	case VHOSTUSER:
-		return "" // -netdev type=vhost-user (no device)
-	default:
-		return ""
-
-	}
-}
 
 // NetDevice represents a guest networking device
 type NetDevice struct {
@@ -527,6 +462,29 @@ func (netdev NetDevice) Valid() bool {
 	}
 }
 
+// mqParameter returns the parameters for multi-queue driver. If the driver is a PCI device then the
+// vector flag is required. If the driver is a CCW type than the vector flag is not implemented and only
+// multi-queue option mq needs to be activated. See comment in libvirt code at
+// https://github.com/libvirt/libvirt/blob/6e7e965dcd3d885739129b1454ce19e819b54c25/src/qemu/qemu_command.c#L3633
+func (netdev NetDevice) mqParameter() string {
+	p := []string{",mq=on"}
+
+	if isVirtioPCI[netdev.Driver] {
+		// https://www.linux-kvm.org/page/Multiqueue
+		// -netdev tap,vhost=on,queues=N
+		// enable mq and specify msix vectors in qemu cmdline
+		// (2N+2 vectors, N for tx queues, N for rx queues, 1 for config, and one for possible control vq)
+		// -device virtio-net-pci,mq=on,vectors=2N+2...
+		// enable mq in guest by 'ethtool -L eth0 combined $queue_num'
+		// Clearlinux automatically sets up the queues properly
+		// The agent implementation should do this to ensure that it is
+		// always set
+		vectors := len(netdev.FDs)*2 + 2
+		p = append(p, fmt.Sprintf(",vectors=%d", vectors))
+	}
+	return strings.Join(p, "")
+}
+
 // QemuDeviceParams returns the -device parameters for this network device
 func (netdev NetDevice) QemuDeviceParams(config *Config) []string {
 	var deviceParams []string
@@ -549,26 +507,13 @@ func (netdev NetDevice) QemuDeviceParams(config *Config) []string {
 			deviceParams = append(deviceParams, fmt.Sprintf(",addr=%x", addr))
 		}
 	}
-
-	if netdev.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	if s := netdev.Driver.disableModern(netdev.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 
 	if len(netdev.FDs) > 0 {
-		// https://www.linux-kvm.org/page/Multiqueue
-		// -netdev tap,vhost=on,queues=N
-		// enable mq and specify msix vectors in qemu cmdline
-		// (2N+2 vectors, N for tx queues, N for rx queues, 1 for config, and one for possible control vq)
-		// -device virtio-net-pci,mq=on,vectors=2N+2...
-		// enable mq in guest by 'ethtool -L eth0 combined $queue_num'
-		// Clearlinux automatically sets up the queues properly
-		// The agent implementation should do this to ensure that it is
-		// always set
-		vectors := len(netdev.FDs)*2 + 2
-
 		// Note: We are appending to the device params here
-		deviceParams = append(deviceParams, ",mq=on")
-		deviceParams = append(deviceParams, fmt.Sprintf(",vectors=%d", vectors))
+		deviceParams = append(deviceParams, netdev.mqParameter())
 	}
 
 	if isVirtioPCI[netdev.Driver] {
@@ -589,7 +534,7 @@ func (netdev NetDevice) QemuNetdevParams(config *Config) []string {
 	netdevParams = append(netdevParams, netdev.Type.QemuNetdevParam())
 	netdevParams = append(netdevParams, fmt.Sprintf(",id=%s", netdev.ID))
 
-	if netdev.VHost == true {
+	if netdev.VHost {
 		netdevParams = append(netdevParams, ",vhost=on")
 		if len(netdev.VhostFDs) > 0 {
 			var fdParams []string
@@ -682,9 +627,9 @@ func (dev SerialDevice) QemuParams(config *Config) []string {
 	var deviceParams []string
 	var qemuParams []string
 
-	deviceParams = append(deviceParams, fmt.Sprintf("%s", dev.Driver))
-	if dev.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	deviceParams = append(deviceParams, string(dev.Driver))
+	if s := dev.Driver.disableModern(dev.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 	deviceParams = append(deviceParams, fmt.Sprintf(",id=%s", dev.ID))
 	if isVirtioPCI[dev.Driver] {
@@ -760,16 +705,16 @@ func (blkdev BlockDevice) QemuParams(config *Config) []string {
 	var deviceParams []string
 	var qemuParams []string
 
-	deviceParams = append(deviceParams, fmt.Sprintf("%s", blkdev.Driver))
-	if blkdev.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	deviceParams = append(deviceParams, string(blkdev.Driver))
+	if s := blkdev.Driver.disableModern(blkdev.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 	deviceParams = append(deviceParams, fmt.Sprintf(",drive=%s", blkdev.ID))
-	if blkdev.SCSI == false {
+	if !blkdev.SCSI {
 		deviceParams = append(deviceParams, ",scsi=off")
 	}
 
-	if blkdev.WCE == false {
+	if !blkdev.WCE {
 		deviceParams = append(deviceParams, ",config-wce=off")
 	}
 
@@ -897,11 +842,7 @@ type VFIODevice struct {
 
 // Valid returns true if the VFIODevice structure is valid and complete.
 func (vfioDev VFIODevice) Valid() bool {
-	if vfioDev.BDF == "" {
-		return false
-	}
-
-	return true
+	return vfioDev.BDF != ""
 }
 
 // QemuParams returns the qemu parameters built out of this vfio device.
@@ -909,7 +850,7 @@ func (vfioDev VFIODevice) QemuParams(config *Config) []string {
 	var qemuParams []string
 	var deviceParams []string
 
-	driver := VfioPCI
+	driver := Vfio
 
 	deviceParams = append(deviceParams, fmt.Sprintf("%s,host=%s", driver, vfioDev.BDF))
 	if isVirtioPCI[driver] {
@@ -944,11 +885,7 @@ type SCSIController struct {
 
 // Valid returns true if the SCSIController structure is valid and complete.
 func (scsiCon SCSIController) Valid() bool {
-	if scsiCon.ID == "" {
-		return false
-	}
-
-	return true
+	return scsiCon.ID != ""
 }
 
 // QemuParams returns the qemu parameters built out of this SCSIController device.
@@ -956,7 +893,7 @@ func (scsiCon SCSIController) QemuParams(config *Config) []string {
 	var qemuParams []string
 	var devParams []string
 
-	driver := VirtioScsiPCI
+	driver := VirtioScsi
 	devParams = append(devParams, fmt.Sprintf("%s,id=%s", driver, scsiCon.ID))
 	if scsiCon.Bus != "" {
 		devParams = append(devParams, fmt.Sprintf("bus=%s", scsiCon.Bus))
@@ -964,8 +901,8 @@ func (scsiCon SCSIController) QemuParams(config *Config) []string {
 	if scsiCon.Addr != "" {
 		devParams = append(devParams, fmt.Sprintf("addr=%s", scsiCon.Addr))
 	}
-	if scsiCon.DisableModern {
-		devParams = append(devParams, fmt.Sprintf("disable-modern=true"))
+	if s := driver.disableModern(scsiCon.DisableModern); s != "" {
+		devParams = append(devParams, s)
 	}
 	if scsiCon.IOThread != "" {
 		devParams = append(devParams, fmt.Sprintf("iothread=%s", scsiCon.IOThread))
@@ -1072,7 +1009,7 @@ func (bridgeDev BridgeDevice) QemuParams(config *Config) []string {
 type VSOCKDevice struct {
 	ID string
 
-	ContextID uint32
+	ContextID uint64
 
 	// VHostFD vhost file descriptor that holds the ContextID
 	VHostFD *os.File
@@ -1086,15 +1023,20 @@ type VSOCKDevice struct {
 
 const (
 	// MinimalGuestCID is the smallest valid context ID for a guest.
-	MinimalGuestCID uint32 = 3
+	MinimalGuestCID uint64 = 3
 
+	// MaxGuestCID is the largest valid context ID for a guest.
+	MaxGuestCID uint64 = 1<<32 - 1
+)
+
+const (
 	// VSOCKGuestCID is the VSOCK guest CID parameter.
 	VSOCKGuestCID = "guest-cid"
 )
 
 // Valid returns true if the VSOCKDevice structure is valid and complete.
 func (vsock VSOCKDevice) Valid() bool {
-	if vsock.ID == "" || vsock.ContextID < MinimalGuestCID {
+	if vsock.ID == "" || vsock.ContextID < MinimalGuestCID || vsock.ContextID > MaxGuestCID {
 		return false
 	}
 
@@ -1106,10 +1048,10 @@ func (vsock VSOCKDevice) QemuParams(config *Config) []string {
 	var deviceParams []string
 	var qemuParams []string
 
-	driver := VHostVSockPCI
-	deviceParams = append(deviceParams, fmt.Sprintf("%s", driver))
-	if vsock.DisableModern {
-		deviceParams = append(deviceParams, ",disable-modern=true")
+	driver := VHostVSock
+	deviceParams = append(deviceParams, string(driver))
+	if s := driver.disableModern(vsock.DisableModern); s != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf(",%s", s))
 	}
 	if vsock.VHostFD != nil {
 		qemuFDs := config.appendFDs([]*os.File{vsock.VHostFD})
@@ -1144,11 +1086,7 @@ type RngDevice struct {
 
 // Valid returns true if the RngDevice structure is valid and complete.
 func (v RngDevice) Valid() bool {
-	if v.ID == "" {
-		return false
-	}
-
-	return true
+	return v.ID != ""
 }
 
 // QemuParams returns the qemu parameters built out of the RngDevice.
@@ -1223,13 +1161,9 @@ func (b BalloonDevice) QemuParams(_ *Config) []string {
 	} else {
 		deviceParams = append(deviceParams, "deflate-on-oom=off")
 	}
-
-	if b.DisableModern {
-		deviceParams = append(deviceParams, "disable-modern=on")
-	} else {
-		deviceParams = append(deviceParams, "disable-modern=off")
+	if s := driver.disableModern(b.DisableModern); s != "" {
+		deviceParams = append(deviceParams, string(s))
 	}
-
 	qemuParams = append(qemuParams, "-device")
 	qemuParams = append(qemuParams, strings.Join(deviceParams, ","))
 
@@ -1238,11 +1172,7 @@ func (b BalloonDevice) QemuParams(_ *Config) []string {
 
 // Valid returns true if the balloonDevice structure is valid and complete.
 func (b BalloonDevice) Valid() bool {
-	if b.ID == "" {
-		return false
-	}
-
-	return true
+	return b.ID != ""
 }
 
 // RTCBaseType is the qemu RTC base time type.
@@ -1516,6 +1446,9 @@ type Config struct {
 
 	IOThreads []IOThread
 
+	// PidFile is the -pidfile parameter
+	PidFile string
+
 	qemuParams []string
 }
 
@@ -1574,15 +1507,15 @@ func (config *Config) appendCPUModel() {
 
 func (config *Config) appendQMPSockets() {
 	for _, q := range config.QMPSockets {
-		if q.Valid() == false {
+		if !q.Valid() {
 			continue
 		}
 
 		qmpParams := append([]string{}, fmt.Sprintf("%s:", q.Type))
-		qmpParams = append(qmpParams, fmt.Sprintf("%s", q.Name))
-		if q.Server == true {
+		qmpParams = append(qmpParams, q.Name)
+		if q.Server {
 			qmpParams = append(qmpParams, ",server")
-			if q.NoWait == true {
+			if q.NoWait {
 				qmpParams = append(qmpParams, ",nowait")
 			}
 		}
@@ -1594,7 +1527,7 @@ func (config *Config) appendQMPSockets() {
 
 func (config *Config) appendDevices() {
 	for _, d := range config.Devices {
-		if d.Valid() == false {
+		if !d.Valid() {
 			continue
 		}
 
@@ -1662,7 +1595,7 @@ func (config *Config) appendCPUs() error {
 }
 
 func (config *Config) appendRTC() {
-	if config.RTC.Valid() == false {
+	if !config.RTC.Valid() {
 		return
 	}
 
@@ -1714,7 +1647,7 @@ func (config *Config) appendKernel() {
 }
 
 func (config *Config) appendMemoryKnobs() {
-	if config.Knobs.HugePages == true {
+	if config.Knobs.HugePages {
 		if config.Memory.Size != "" {
 			dimmName := "dimm1"
 			objMemParam := "memory-backend-file,id=" + dimmName + ",size=" + config.Memory.Size + ",mem-path=/dev/hugepages,share=on,prealloc=on"
@@ -1726,7 +1659,7 @@ func (config *Config) appendMemoryKnobs() {
 			config.qemuParams = append(config.qemuParams, "-numa")
 			config.qemuParams = append(config.qemuParams, numaMemParam)
 		}
-	} else if config.Knobs.MemPrealloc == true {
+	} else if config.Knobs.MemPrealloc {
 		if config.Memory.Size != "" {
 			dimmName := "dimm1"
 			objMemParam := "memory-backend-ram,id=" + dimmName + ",size=" + config.Memory.Size + ",prealloc=on"
@@ -1738,11 +1671,11 @@ func (config *Config) appendMemoryKnobs() {
 			config.qemuParams = append(config.qemuParams, "-numa")
 			config.qemuParams = append(config.qemuParams, numaMemParam)
 		}
-	} else if config.Knobs.FileBackedMem == true {
+	} else if config.Knobs.FileBackedMem {
 		if config.Memory.Size != "" && config.Memory.Path != "" {
 			dimmName := "dimm1"
 			objMemParam := "memory-backend-file,id=" + dimmName + ",size=" + config.Memory.Size + ",mem-path=" + config.Memory.Path
-			if config.Knobs.FileBackedMemShared == true {
+			if config.Knobs.FileBackedMemShared {
 				objMemParam += ",share=on"
 			}
 			numaMemParam := "node,memdev=" + dimmName
@@ -1757,45 +1690,45 @@ func (config *Config) appendMemoryKnobs() {
 }
 
 func (config *Config) appendKnobs() {
-	if config.Knobs.NoUserConfig == true {
+	if config.Knobs.NoUserConfig {
 		config.qemuParams = append(config.qemuParams, "-no-user-config")
 	}
 
-	if config.Knobs.NoDefaults == true {
+	if config.Knobs.NoDefaults {
 		config.qemuParams = append(config.qemuParams, "-nodefaults")
 	}
 
-	if config.Knobs.NoGraphic == true {
+	if config.Knobs.NoGraphic {
 		config.qemuParams = append(config.qemuParams, "-nographic")
 	}
 
-	if config.Knobs.Daemonize == true {
+	if config.Knobs.Daemonize {
 		config.qemuParams = append(config.qemuParams, "-daemonize")
 	}
 
 	config.appendMemoryKnobs()
 
-	if config.Knobs.Realtime == true {
+	if config.Knobs.Realtime {
 		config.qemuParams = append(config.qemuParams, "-realtime")
 		// This path is redundant as the default behaviour is locked memory
 		// Realtime today does not control any other feature even though
 		// other features may be added in the future
 		// https://lists.gnu.org/archive/html/qemu-devel/2012-12/msg03330.html
-		if config.Knobs.Mlock == true {
+		if config.Knobs.Mlock {
 			config.qemuParams = append(config.qemuParams, "mlock=on")
 		} else {
 			config.qemuParams = append(config.qemuParams, "mlock=off")
 		}
 	} else {
 		// In order to turn mlock off we need the -realtime option as well
-		if config.Knobs.Mlock == false {
+		if !config.Knobs.Mlock {
 			//Enable realtime anyway just to get the right swapping behaviour
 			config.qemuParams = append(config.qemuParams, "-realtime")
 			config.qemuParams = append(config.qemuParams, "mlock=off")
 		}
 	}
 
-	if config.Knobs.Stopped == true {
+	if config.Knobs.Stopped {
 		config.qemuParams = append(config.qemuParams, "-S")
 	}
 }
@@ -1830,6 +1763,13 @@ func (config *Config) appendIncoming() {
 	config.qemuParams = append(config.qemuParams, "-S", "-incoming", uri)
 }
 
+func (config *Config) appendPidFile() {
+	if config.PidFile != "" {
+		config.qemuParams = append(config.qemuParams, "-pidfile")
+		config.qemuParams = append(config.qemuParams, config.PidFile)
+	}
+}
+
 // LaunchQemu can be used to launch a new qemu instance.
 //
 // The Config parameter contains a set of qemu parameters and settings.
@@ -1855,6 +1795,7 @@ func LaunchQemu(config Config, logger QMPLog) (string, error) {
 	config.appendBios()
 	config.appendIOThreads()
 	config.appendIncoming()
+	config.appendPidFile()
 
 	if err := config.appendCPUs(); err != nil {
 		return "", err

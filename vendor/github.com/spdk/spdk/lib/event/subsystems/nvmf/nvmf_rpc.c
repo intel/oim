@@ -189,8 +189,7 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 
 	spdk_json_write_object_begin(w);
 
-	spdk_json_write_name(w, "nqn");
-	spdk_json_write_string(w, spdk_nvmf_subsystem_get_nqn(subsystem));
+	spdk_json_write_named_string(w, "nqn", spdk_nvmf_subsystem_get_nqn(subsystem));
 	spdk_json_write_name(w, "subtype");
 	if (spdk_nvmf_subsystem_get_type(subsystem) == SPDK_NVMF_SUBTYPE_NVME) {
 		spdk_json_write_string(w, "NVMe");
@@ -198,8 +197,7 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 		spdk_json_write_string(w, "Discovery");
 	}
 
-	spdk_json_write_name(w, "listen_addresses");
-	spdk_json_write_array_begin(w);
+	spdk_json_write_named_array_begin(w, "listen_addresses");
 
 	for (listener = spdk_nvmf_subsystem_get_first_listener(subsystem); listener != NULL;
 	     listener = spdk_nvmf_subsystem_get_next_listener(subsystem, listener)) {
@@ -219,31 +217,24 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 			adrfam = "unknown";
 		}
 		/* NOTE: "transport" is kept for compatibility; new code should use "trtype" */
-		spdk_json_write_name(w, "transport");
-		spdk_json_write_string(w, trtype);
-		spdk_json_write_name(w, "trtype");
-		spdk_json_write_string(w, trtype);
-		spdk_json_write_name(w, "adrfam");
-		spdk_json_write_string(w, adrfam);
-		spdk_json_write_name(w, "traddr");
-		spdk_json_write_string(w, trid->traddr);
-		spdk_json_write_name(w, "trsvcid");
-		spdk_json_write_string(w, trid->trsvcid);
+		spdk_json_write_named_string(w, "transport", trtype);
+		spdk_json_write_named_string(w, "trtype", trtype);
+		spdk_json_write_named_string(w, "adrfam", adrfam);
+		spdk_json_write_named_string(w, "traddr", trid->traddr);
+		spdk_json_write_named_string(w, "trsvcid", trid->trsvcid);
 		spdk_json_write_object_end(w);
 	}
 	spdk_json_write_array_end(w);
 
-	spdk_json_write_name(w, "allow_any_host");
-	spdk_json_write_bool(w, spdk_nvmf_subsystem_get_allow_any_host(subsystem));
+	spdk_json_write_named_bool(w, "allow_any_host",
+				   spdk_nvmf_subsystem_get_allow_any_host(subsystem));
 
-	spdk_json_write_name(w, "hosts");
-	spdk_json_write_array_begin(w);
+	spdk_json_write_named_array_begin(w, "hosts");
 
 	for (host = spdk_nvmf_subsystem_get_first_host(subsystem); host != NULL;
 	     host = spdk_nvmf_subsystem_get_next_host(subsystem, host)) {
 		spdk_json_write_object_begin(w);
-		spdk_json_write_name(w, "nqn");
-		spdk_json_write_string(w, spdk_nvmf_host_get_nqn(host));
+		spdk_json_write_named_string(w, "nqn", spdk_nvmf_host_get_nqn(host));
 		spdk_json_write_object_end(w);
 	}
 	spdk_json_write_array_end(w);
@@ -253,27 +244,24 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 		struct spdk_nvmf_ns_opts ns_opts;
 		uint32_t max_namespaces;
 
-		spdk_json_write_name(w, "serial_number");
-		spdk_json_write_string(w, spdk_nvmf_subsystem_get_sn(subsystem));
+		spdk_json_write_named_string(w, "serial_number", spdk_nvmf_subsystem_get_sn(subsystem));
 
 		max_namespaces = spdk_nvmf_subsystem_get_max_namespaces(subsystem);
 		if (max_namespaces != 0) {
 			spdk_json_write_named_uint32(w, "max_namespaces", max_namespaces);
 		}
 
-		spdk_json_write_name(w, "namespaces");
-		spdk_json_write_array_begin(w);
+		spdk_json_write_named_array_begin(w, "namespaces");
 		for (ns = spdk_nvmf_subsystem_get_first_ns(subsystem); ns != NULL;
 		     ns = spdk_nvmf_subsystem_get_next_ns(subsystem, ns)) {
 			spdk_nvmf_ns_get_opts(ns, &ns_opts, sizeof(ns_opts));
 			spdk_json_write_object_begin(w);
-			spdk_json_write_name(w, "nsid");
-			spdk_json_write_int32(w, spdk_nvmf_ns_get_id(ns));
-			spdk_json_write_name(w, "bdev_name");
-			spdk_json_write_string(w, spdk_bdev_get_name(spdk_nvmf_ns_get_bdev(ns)));
+			spdk_json_write_named_int32(w, "nsid", spdk_nvmf_ns_get_id(ns));
+			spdk_json_write_named_string(w, "bdev_name",
+						     spdk_bdev_get_name(spdk_nvmf_ns_get_bdev(ns)));
 			/* NOTE: "name" is kept for compatibility only - new code should use bdev_name. */
-			spdk_json_write_name(w, "name");
-			spdk_json_write_string(w, spdk_bdev_get_name(spdk_nvmf_ns_get_bdev(ns)));
+			spdk_json_write_named_string(w, "name",
+						     spdk_bdev_get_name(spdk_nvmf_ns_get_bdev(ns)));
 
 			if (!spdk_mem_all_zero(ns_opts.nguid, sizeof(ns_opts.nguid))) {
 				spdk_json_write_name(w, "nguid");
@@ -289,8 +277,7 @@ dump_nvmf_subsystem(struct spdk_json_write_ctx *w, struct spdk_nvmf_subsystem *s
 				char uuid_str[SPDK_UUID_STRING_LEN];
 
 				spdk_uuid_fmt_lower(uuid_str, sizeof(uuid_str), &ns_opts.uuid);
-				spdk_json_write_name(w, "uuid");
-				spdk_json_write_string(w, uuid_str);
+				spdk_json_write_named_string(w, "uuid", uuid_str);
 			}
 
 			spdk_json_write_object_end(w);
@@ -1303,16 +1290,6 @@ static const struct spdk_json_object_decoder nvmf_rpc_subsystem_tgt_opts_decoder
 };
 
 static void
-nvmf_rpc_subsystem_set_tgt_opts(struct spdk_jsonrpc_request *request,
-				const struct spdk_json_val *params)
-{
-	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_REQUEST,
-					 "This function has been deprecated in favor of set_nvmf_target_max_subsystems and create_nvmf_transport");
-}
-SPDK_RPC_REGISTER("set_nvmf_target_options", nvmf_rpc_subsystem_set_tgt_opts,
-		  SPDK_RPC_STARTUP | SPDK_RPC_RUNTIME)
-
-static void
 nvmf_rpc_subsystem_set_tgt_max_subsystems(struct spdk_jsonrpc_request *request,
 		const struct spdk_json_val *params)
 {
@@ -1450,6 +1427,14 @@ static const struct spdk_json_object_decoder nvmf_rpc_create_transport_decoder[]
 		"max_aq_depth", offsetof(struct nvmf_rpc_create_transport_ctx, opts.max_aq_depth),
 		spdk_json_decode_uint32, true
 	},
+	{
+		"num_shared_buffers", offsetof(struct nvmf_rpc_create_transport_ctx, opts.num_shared_buffers),
+		spdk_json_decode_uint32, true
+	},
+	{
+		"buf_cache_size", offsetof(struct nvmf_rpc_create_transport_ctx, opts.buf_cache_size),
+		spdk_json_decode_uint32, true
+	},
 };
 
 static void
@@ -1581,6 +1566,8 @@ dump_nvmf_transport(struct spdk_json_write_ctx *w, struct spdk_nvmf_transport *t
 	spdk_json_write_named_uint32(w, "max_io_size", opts->max_io_size);
 	spdk_json_write_named_uint32(w, "io_unit_size", opts->io_unit_size);
 	spdk_json_write_named_uint32(w, "max_aq_depth", opts->max_aq_depth);
+	spdk_json_write_named_uint32(w, "num_shared_buffers", opts->num_shared_buffers);
+	spdk_json_write_named_uint32(w, "buf_cache_size", opts->buf_cache_size);
 
 	spdk_json_write_object_end(w);
 }

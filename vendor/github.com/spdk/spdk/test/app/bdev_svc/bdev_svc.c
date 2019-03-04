@@ -44,9 +44,10 @@ bdev_svc_usage(void)
 {
 }
 
-static void
+static int
 bdev_svc_parse_arg(int ch, char *arg)
 {
+	return 0;
 }
 
 static void
@@ -86,7 +87,6 @@ main(int argc, char **argv)
 
 	opts.name = "bdev_svc";
 	opts.shutdown_cb = bdev_svc_shutdown;
-	opts.max_delay_us = 1000 * 1000;
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "", NULL,
 				      bdev_svc_parse_arg, bdev_svc_usage)) !=

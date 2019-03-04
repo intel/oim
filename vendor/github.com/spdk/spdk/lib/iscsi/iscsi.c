@@ -429,11 +429,11 @@ spdk_iscsi_read_pdu(struct spdk_iscsi_conn *conn, struct spdk_iscsi_pdu **_pdu)
 		if (pdu->data_buf == NULL) {
 			if (data_len <= spdk_get_immediate_data_buffer_size()) {
 				pool = g_spdk_iscsi.pdu_immediate_data_pool;
-			} else if (data_len <= spdk_get_data_out_buffer_size()) {
+			} else if (data_len <= SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH) {
 				pool = g_spdk_iscsi.pdu_data_out_pool;
 			} else {
 				SPDK_ERRLOG("Data(%d) > MaxSegment(%d)\n",
-					    data_len, spdk_get_data_out_buffer_size());
+					    data_len, SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH);
 				*_pdu = NULL;
 				spdk_put_pdu(pdu);
 				conn->pdu_in_progress = NULL;
@@ -511,9 +511,9 @@ spdk_iscsi_read_pdu(struct spdk_iscsi_conn *conn, struct spdk_iscsi_pdu **_pdu)
 			 *  FirstBurstLength as our maximum data segment length
 			 *  value.
 			 */
-			max_segment_len = DEFAULT_FIRSTBURSTLENGTH;
+			max_segment_len = SPDK_ISCSI_FIRST_BURST_LENGTH;
 		} else if (pdu->bhs.opcode == ISCSI_OP_SCSI_DATAOUT) {
-			max_segment_len = spdk_get_data_out_buffer_size();
+			max_segment_len = SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH;
 		} else if (pdu->bhs.opcode == ISCSI_OP_NOPOUT) {
 			max_segment_len = SPDK_ISCSI_MAX_RECV_DATA_SEGMENT_LENGTH;
 		} else {
@@ -857,7 +857,7 @@ spdk_iscsi_auth_params(struct spdk_iscsi_conn *conn,
 			goto error_return;
 		}
 		/* OK initiator's secret */
-		conn->authenticated = 1;
+		conn->authenticated = true;
 
 		/* mutual CHAP? */
 		identifier = spdk_iscsi_param_get_val(params, "CHAP_I");
@@ -925,7 +925,7 @@ spdk_iscsi_auth_params(struct spdk_iscsi_conn *conn,
 						       in_val, data, alloc_len, total);
 		} else {
 			/* not mutual */
-			if (conn->req_mutual) {
+			if (conn->mutual_chap) {
 				SPDK_ERRLOG("required mutual CHAP\n");
 				goto error_return;
 			}
@@ -1165,6 +1165,32 @@ spdk_iscsi_op_login_update_param(struct spdk_iscsi_conn *conn,
 	return rc;
 }
 
+static int
+spdk_iscsi_negotiate_chap_param(struct spdk_iscsi_conn *conn, bool disable_chap,
+				bool require_chap, bool mutual_chap)
+{
+	int rc = 0;
+
+	if (disable_chap) {
+		conn->require_chap = false;
+		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "None", "None");
+		if (rc < 0) {
+			return rc;
+		}
+	} else if (require_chap) {
+		conn->require_chap = true;
+		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "CHAP", "CHAP");
+		if (rc < 0) {
+			return rc;
+		}
+	}
+	if (mutual_chap) {
+		conn->mutual_chap = true;
+	}
+
+	return rc;
+}
+
 /*
  * The function which is used to handle the part of session discovery
  * return:
@@ -1174,26 +1200,9 @@ spdk_iscsi_op_login_update_param(struct spdk_iscsi_conn *conn,
 static int
 spdk_iscsi_op_login_session_discovery_chap(struct spdk_iscsi_conn *conn)
 {
-	int rc = 0;
-
-	if (g_spdk_iscsi.disable_chap) {
-		conn->req_auth = 0;
-		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "None", "None");
-		if (rc < 0) {
-			return rc;
-		}
-	} else if (g_spdk_iscsi.require_chap) {
-		conn->req_auth = 1;
-		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "CHAP", "CHAP");
-		if (rc < 0) {
-			return rc;
-		}
-	}
-	if (g_spdk_iscsi.mutual_chap) {
-		conn->req_mutual = 1;
-	}
-
-	return rc;
+	return spdk_iscsi_negotiate_chap_param(conn, g_spdk_iscsi.disable_chap,
+					       g_spdk_iscsi.require_chap,
+					       g_spdk_iscsi.mutual_chap);
 }
 
 /*
@@ -1204,28 +1213,18 @@ spdk_iscsi_op_login_session_discovery_chap(struct spdk_iscsi_conn *conn)
  */
 static int
 spdk_iscsi_op_login_negotiate_chap_param(struct spdk_iscsi_conn *conn,
-		struct spdk_iscsi_pdu *rsp_pdu,
+		struct spdk_iscsi_tgt_node *target)
+{
+	return spdk_iscsi_negotiate_chap_param(conn, target->disable_chap,
+					       target->require_chap,
+					       target->mutual_chap);
+}
+
+static int
+spdk_iscsi_op_login_negotiate_digest_param(struct spdk_iscsi_conn *conn,
 		struct spdk_iscsi_tgt_node *target)
 {
 	int rc;
-
-	if (target->disable_chap) {
-		conn->req_auth = 0;
-		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "None", "None");
-		if (rc < 0) {
-			return rc;
-		}
-	} else if (target->require_chap) {
-		conn->req_auth = 1;
-		rc = spdk_iscsi_op_login_update_param(conn, "AuthMethod", "CHAP", "CHAP");
-		if (rc < 0) {
-			return rc;
-		}
-	}
-
-	if (target->mutual_chap) {
-		conn->req_mutual = 1;
-	}
 
 	if (target->header_digest) {
 		/*
@@ -1397,10 +1396,14 @@ spdk_iscsi_op_login_session_normal(struct spdk_iscsi_conn *conn,
 
 	/* force target flags */
 	pthread_mutex_lock(&((*target)->mutex));
-	rc = spdk_iscsi_op_login_negotiate_chap_param(conn, rsp_pdu, *target);
+	rc = spdk_iscsi_op_login_negotiate_chap_param(conn, *target);
 	pthread_mutex_unlock(&((*target)->mutex));
 
-	return rc;
+	if (rc != 0) {
+		return rc;
+	}
+
+	return spdk_iscsi_op_login_negotiate_digest_param(conn, *target);
 }
 
 /*
@@ -1500,28 +1503,38 @@ spdk_iscsi_op_login_set_conn_info(struct spdk_iscsi_conn *conn,
 {
 	int rc = 0;
 	struct iscsi_bhs_login_rsp *rsph;
+	struct spdk_scsi_port *initiator_port;
 
 	rsph = (struct iscsi_bhs_login_rsp *)&rsp_pdu->bhs;
-	conn->authenticated = 0;
+	conn->authenticated = false;
 	conn->auth.chap_phase = ISCSI_CHAP_PHASE_WAIT_A;
 	conn->cid = cid;
 
 	if (conn->sess == NULL) {
-		/* new session */
-		rc = spdk_create_iscsi_sess(conn, target, session_type);
-		if (rc < 0) {
-			SPDK_ERRLOG("create_sess() failed\n");
+		/* create initiator port */
+		initiator_port = spdk_scsi_port_create(spdk_iscsi_get_isid(rsph->isid), 0, initiator_port_name);
+		if (initiator_port == NULL) {
+			SPDK_ERRLOG("create_port() failed\n");
 			rsph->status_class = ISCSI_CLASS_TARGET_ERROR;
 			rsph->status_detail = ISCSI_LOGIN_STATUS_NO_RESOURCES;
 			return SPDK_ISCSI_LOGIN_ERROR_RESPONSE;
 		}
 
+		/* new session */
+		rc = spdk_create_iscsi_sess(conn, target, session_type);
+		if (rc < 0) {
+			spdk_scsi_port_free(&initiator_port);
+			SPDK_ERRLOG("create_sess() failed\n");
+			rsph->status_class = ISCSI_CLASS_TARGET_ERROR;
+			rsph->status_detail = ISCSI_LOGIN_STATUS_NO_RESOURCES;
+			return SPDK_ISCSI_LOGIN_ERROR_RESPONSE;
+		}
 		/* initialize parameters */
+		conn->sess->initiator_port = initiator_port;
 		conn->StatSN = from_be32(&rsph->stat_sn);
-		conn->sess->initiator_port = spdk_scsi_port_create(spdk_iscsi_get_isid(rsph->isid),
-					     0, initiator_port_name);
 		conn->sess->isid = spdk_iscsi_get_isid(rsph->isid);
 		conn->sess->target = target;
+
 		/* Initiator port TransportID */
 		spdk_scsi_port_set_iscsi_transport_id(conn->sess->initiator_port,
 						      conn->initiator_name,
@@ -1856,7 +1869,7 @@ spdk_iscsi_op_login_rsp_handle_csg_bit(struct spdk_iscsi_conn *conn,
 			return SPDK_ISCSI_LOGIN_ERROR_RESPONSE;
 		}
 		if (strcasecmp(auth_method, "None") == 0) {
-			conn->authenticated = 1;
+			conn->authenticated = true;
 		} else {
 			rc = spdk_iscsi_auth_params(conn, params, auth_method,
 						    rsp_pdu->data, alloc_len,
@@ -1869,7 +1882,7 @@ spdk_iscsi_op_login_rsp_handle_csg_bit(struct spdk_iscsi_conn *conn,
 				return SPDK_ISCSI_LOGIN_ERROR_RESPONSE;
 			}
 			rsp_pdu->data_segment_len = rc;
-			if (conn->authenticated == 0) {
+			if (!conn->authenticated) {
 				/* not complete */
 				rsph->flags &= ~ISCSI_LOGIN_TRANSIT;
 			} else {
@@ -1886,17 +1899,17 @@ spdk_iscsi_op_login_rsp_handle_csg_bit(struct spdk_iscsi_conn *conn,
 	case ISCSI_OPERATIONAL_NEGOTIATION_PHASE:
 		/* LoginOperationalNegotiation */
 		if (conn->state == ISCSI_CONN_STATE_INVALID) {
-			if (conn->req_auth) {
+			if (conn->require_chap) {
 				/* Authentication failure */
 				rsph->status_class = ISCSI_CLASS_INITIATOR_ERROR;
 				rsph->status_detail = ISCSI_LOGIN_AUTHENT_FAIL;
 				return SPDK_ISCSI_LOGIN_ERROR_RESPONSE;
 			} else {
 				/* AuthMethod=None */
-				conn->authenticated = 1;
+				conn->authenticated = true;
 			}
 		}
-		if (conn->authenticated == 0) {
+		if (!conn->authenticated) {
 			SPDK_ERRLOG("authentication error\n");
 			/* Authentication failure */
 			rsph->status_class = ISCSI_CLASS_INITIATOR_ERROR;
@@ -3225,12 +3238,10 @@ spdk_iscsi_conn_abort_queued_datain_tasks(struct spdk_iscsi_conn *conn,
 	struct spdk_iscsi_pdu *pdu_tmp;
 	int rc;
 
-	assert(pdu != NULL);
-
 	TAILQ_FOREACH_SAFE(task, &conn->queued_datain_tasks, link, task_tmp) {
 		pdu_tmp = spdk_iscsi_task_get_pdu(task);
 		if ((lun == NULL || lun == task->scsi.lun) &&
-		    (SN32_LT(pdu_tmp->cmd_sn, pdu->cmd_sn))) {
+		    (pdu == NULL || (SN32_LT(pdu_tmp->cmd_sn, pdu->cmd_sn)))) {
 			rc = _spdk_iscsi_conn_abort_queued_datain_task(conn, task);
 			if (rc != 0) {
 				return rc;
@@ -4333,7 +4344,6 @@ spdk_iscsi_execute(struct spdk_iscsi_conn *conn, struct spdk_iscsi_pdu *pdu)
 	int rc;
 	struct spdk_iscsi_pdu *rsp_pdu = NULL;
 	uint32_t ExpStatSN;
-	uint32_t QCmdSN;
 	int I_bit;
 	struct spdk_iscsi_sess *sess;
 	struct iscsi_bhs_scsi_req *reqh;
@@ -4417,16 +4427,6 @@ spdk_iscsi_execute(struct spdk_iscsi_conn *conn, struct spdk_iscsi_pdu *pdu)
 
 	if (sess->ErrorRecoveryLevel >= 1) {
 		spdk_remove_acked_pdu(conn, ExpStatSN);
-	}
-
-	if (opcode == ISCSI_OP_NOPOUT || opcode == ISCSI_OP_SCSI) {
-		QCmdSN = sess->MaxCmdSN - sess->ExpCmdSN + 1;
-		QCmdSN += sess->queue_depth;
-		if (SN32_LT(ExpStatSN + QCmdSN, conn->StatSN)) {
-			SPDK_ERRLOG("StatSN(%u/%u) QCmdSN(%u) error\n",
-				    ExpStatSN, conn->StatSN, QCmdSN);
-			return SPDK_ISCSI_CONNECTION_FATAL;
-		}
 	}
 
 	if (!I_bit && opcode != ISCSI_OP_SCSI_DATAOUT) {

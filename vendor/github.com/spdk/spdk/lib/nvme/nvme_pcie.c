@@ -60,8 +60,7 @@
 #define NVME_MAX_PRP_LIST_ENTRIES	(506)
 
 struct nvme_pcie_enum_ctx {
-	spdk_nvme_probe_cb probe_cb;
-	void *cb_ctx;
+	struct spdk_nvme_probe_ctx *probe_ctx;
 	struct spdk_pci_addr pci_addr;
 	bool has_pci_addr;
 };
@@ -197,7 +196,7 @@ struct nvme_pcie_qpair {
 	uint64_t cpl_bus_addr;
 };
 
-static int nvme_pcie_ctrlr_attach(spdk_nvme_probe_cb probe_cb, void *cb_ctx,
+static int nvme_pcie_ctrlr_attach(struct spdk_nvme_probe_ctx *probe_ctx,
 				  struct spdk_pci_addr *pci_addr);
 static int nvme_pcie_qpair_construct(struct spdk_nvme_qpair *qpair);
 static int nvme_pcie_qpair_destroy(struct spdk_nvme_qpair *qpair);
@@ -247,8 +246,7 @@ nvme_pcie_ctrlr_setup_signal(void)
 }
 
 static int
-_nvme_pcie_hotplug_monitor(void *cb_ctx, spdk_nvme_probe_cb probe_cb,
-			   spdk_nvme_remove_cb remove_cb)
+_nvme_pcie_hotplug_monitor(struct spdk_nvme_probe_ctx *probe_ctx)
 {
 	struct spdk_nvme_ctrlr *ctrlr, *tmp;
 	struct spdk_uevent event;
@@ -264,7 +262,7 @@ _nvme_pcie_hotplug_monitor(void *cb_ctx, spdk_nvme_probe_cb probe_cb,
 					      event.traddr);
 				if (spdk_process_is_primary()) {
 					if (!spdk_pci_addr_parse(&pci_addr, event.traddr)) {
-						nvme_pcie_ctrlr_attach(probe_cb, cb_ctx, &pci_addr);
+						nvme_pcie_ctrlr_attach(probe_ctx, &pci_addr);
 					}
 				}
 			} else if (event.action == SPDK_NVME_UEVENT_REMOVE) {
@@ -284,9 +282,9 @@ _nvme_pcie_hotplug_monitor(void *cb_ctx, spdk_nvme_probe_cb probe_cb,
 				nvme_ctrlr_fail(ctrlr, true);
 
 				/* get the user app to clean up and stop I/O */
-				if (remove_cb) {
+				if (probe_ctx->remove_cb) {
 					nvme_robust_mutex_unlock(&g_spdk_nvme_driver->lock);
-					remove_cb(cb_ctx, ctrlr);
+					probe_ctx->remove_cb(probe_ctx->cb_ctx, ctrlr);
 					nvme_robust_mutex_lock(&g_spdk_nvme_driver->lock);
 				}
 			}
@@ -301,9 +299,9 @@ _nvme_pcie_hotplug_monitor(void *cb_ctx, spdk_nvme_probe_cb probe_cb,
 			csts = spdk_nvme_ctrlr_get_regs_csts(ctrlr);
 			if (csts.raw == 0xffffffffU) {
 				nvme_ctrlr_fail(ctrlr, true);
-				if (remove_cb) {
+				if (probe_ctx->remove_cb) {
 					nvme_robust_mutex_unlock(&g_spdk_nvme_driver->lock);
-					remove_cb(cb_ctx, ctrlr);
+					probe_ctx->remove_cb(probe_ctx->cb_ctx, ctrlr);
 					nvme_robust_mutex_lock(&g_spdk_nvme_driver->lock);
 				}
 			}
@@ -514,9 +512,8 @@ nvme_pcie_ctrlr_map_cmb(struct nvme_pcie_ctrlr *pctrlr)
 		goto exit;
 	}
 
-	mem_register_start = (((uintptr_t)pctrlr->cmb_bar_virt_addr + offset + 0x1fffff) & ~(0x200000 - 1));
-	mem_register_end = ((uintptr_t)pctrlr->cmb_bar_virt_addr + offset + pctrlr->cmb_size);
-	mem_register_end &= ~(uint64_t)(0x200000 - 1);
+	mem_register_start = _2MB_PAGE((uintptr_t)pctrlr->cmb_bar_virt_addr + offset + VALUE_2MB - 1);
+	mem_register_end = _2MB_PAGE((uintptr_t)pctrlr->cmb_bar_virt_addr + offset + pctrlr->cmb_size);
 	pctrlr->cmb_mem_register_addr = (void *)mem_register_start;
 	pctrlr->cmb_mem_register_size = mem_register_end - mem_register_start;
 
@@ -719,24 +716,19 @@ pcie_nvme_enum_cb(void *ctx, struct spdk_pci_device *pci_dev)
 		return 1;
 	}
 
-	return nvme_ctrlr_probe(&trid, pci_dev,
-				enum_ctx->probe_cb, enum_ctx->cb_ctx);
+	return nvme_ctrlr_probe(&trid, enum_ctx->probe_ctx, pci_dev);
 }
 
 int
-nvme_pcie_ctrlr_scan(const struct spdk_nvme_transport_id *trid,
-		     void *cb_ctx,
-		     spdk_nvme_probe_cb probe_cb,
-		     spdk_nvme_remove_cb remove_cb,
+nvme_pcie_ctrlr_scan(struct spdk_nvme_probe_ctx *probe_ctx,
 		     bool direct_connect)
 {
 	struct nvme_pcie_enum_ctx enum_ctx = {};
 
-	enum_ctx.probe_cb = probe_cb;
-	enum_ctx.cb_ctx = cb_ctx;
+	enum_ctx.probe_ctx = probe_ctx;
 
-	if (strlen(trid->traddr) != 0) {
-		if (spdk_pci_addr_parse(&enum_ctx.pci_addr, trid->traddr)) {
+	if (strlen(probe_ctx->trid.traddr) != 0) {
+		if (spdk_pci_addr_parse(&enum_ctx.pci_addr, probe_ctx->trid.traddr)) {
 			return -1;
 		}
 		enum_ctx.has_pci_addr = true;
@@ -748,7 +740,7 @@ nvme_pcie_ctrlr_scan(const struct spdk_nvme_transport_id *trid,
 			SPDK_DEBUGLOG(SPDK_LOG_NVME, "Failed to open uevent netlink socket\n");
 		}
 	} else {
-		_nvme_pcie_hotplug_monitor(cb_ctx, probe_cb, remove_cb);
+		_nvme_pcie_hotplug_monitor(probe_ctx);
 	}
 
 	if (enum_ctx.has_pci_addr == false) {
@@ -761,12 +753,11 @@ nvme_pcie_ctrlr_scan(const struct spdk_nvme_transport_id *trid,
 }
 
 static int
-nvme_pcie_ctrlr_attach(spdk_nvme_probe_cb probe_cb, void *cb_ctx, struct spdk_pci_addr *pci_addr)
+nvme_pcie_ctrlr_attach(struct spdk_nvme_probe_ctx *probe_ctx, struct spdk_pci_addr *pci_addr)
 {
 	struct nvme_pcie_enum_ctx enum_ctx;
 
-	enum_ctx.probe_cb = probe_cb;
-	enum_ctx.cb_ctx = cb_ctx;
+	enum_ctx.probe_ctx = probe_ctx;
 	enum_ctx.has_pci_addr = true;
 	enum_ctx.pci_addr = *pci_addr;
 
@@ -975,7 +966,7 @@ nvme_pcie_qpair_construct(struct spdk_nvme_qpair *qpair)
 	volatile uint32_t	*doorbell_base;
 	uint64_t		offset;
 	uint16_t		num_trackers;
-	size_t			page_align = 0x200000;
+	size_t			page_align = VALUE_2MB;
 	uint32_t                flags = SPDK_MALLOC_DMA;
 
 	/*
@@ -1052,7 +1043,7 @@ nvme_pcie_qpair_construct(struct spdk_nvme_qpair *qpair)
 
 	for (i = 0; i < num_trackers; i++) {
 		tr = &pqpair->tr[i];
-		nvme_qpair_construct_tracker(tr, i, spdk_vtophys(tr));
+		nvme_qpair_construct_tracker(tr, i, spdk_vtophys(tr, NULL));
 		TAILQ_INSERT_HEAD(&pqpair->free_tr, tr, tq_list);
 	}
 
@@ -1197,11 +1188,11 @@ nvme_pcie_qpair_submit_tracker(struct spdk_nvme_qpair *qpair, struct nvme_tracke
 	/* Copy the command from the tracker to the submission queue. */
 	nvme_pcie_copy_command(&pqpair->cmd[pqpair->sq_tail], &req->cmd);
 
-	if (++pqpair->sq_tail == pqpair->num_entries) {
+	if (spdk_unlikely(++pqpair->sq_tail == pqpair->num_entries)) {
 		pqpair->sq_tail = 0;
 	}
 
-	if (pqpair->sq_tail == pqpair->sq_head) {
+	if (spdk_unlikely(pqpair->sq_tail == pqpair->sq_head)) {
 		SPDK_ERRLOG("sq_tail is passing sq_head!\n");
 	}
 
@@ -1712,7 +1703,7 @@ nvme_pcie_prp_list_append(struct nvme_tracker *tr, uint32_t *prp_index, void *vi
 			return -EINVAL;
 		}
 
-		phys_addr = spdk_vtophys(virt_addr);
+		phys_addr = spdk_vtophys(virt_addr, NULL);
 		if (spdk_unlikely(phys_addr == SPDK_VTOPHYS_ERROR)) {
 			SPDK_ERRLOG("vtophys(%p) failed\n", virt_addr);
 			return -EINVAL;
@@ -1774,8 +1765,6 @@ nvme_pcie_qpair_build_contig_request(struct spdk_nvme_qpair *qpair, struct nvme_
 	return 0;
 }
 
-#define _2MB_OFFSET(ptr)	(((uintptr_t)(ptr)) &  (0x200000 - 1))
-
 /**
  * Build SGL list describing scattered payload buffer.
  */
@@ -1821,13 +1810,13 @@ nvme_pcie_qpair_build_hw_sgl_request(struct spdk_nvme_qpair *qpair, struct nvme_
 				return -1;
 			}
 
-			phys_addr = spdk_vtophys(virt_addr);
+			phys_addr = spdk_vtophys(virt_addr, NULL);
 			if (phys_addr == SPDK_VTOPHYS_ERROR) {
 				nvme_pcie_fail_request_bad_vtophys(qpair, tr);
 				return -1;
 			}
 
-			length = spdk_min(remaining_user_sge_len, 0x200000 - _2MB_OFFSET(virt_addr));
+			length = spdk_min(remaining_user_sge_len, VALUE_2MB - _2MB_OFFSET(virt_addr));
 			remaining_user_sge_len -= length;
 			virt_addr += length;
 
@@ -1943,7 +1932,7 @@ nvme_pcie_qpair_submit_request(struct spdk_nvme_qpair *qpair, struct nvme_reques
 
 	nvme_pcie_qpair_check_enabled(qpair);
 
-	if (nvme_qpair_is_admin_queue(qpair)) {
+	if (spdk_unlikely(nvme_qpair_is_admin_queue(qpair))) {
 		nvme_robust_mutex_lock(&ctrlr->ctrlr_lock);
 	}
 
@@ -1970,7 +1959,7 @@ nvme_pcie_qpair_submit_request(struct spdk_nvme_qpair *qpair, struct nvme_reques
 
 	if (req->payload_size && req->payload.md) {
 		md_payload = req->payload.md + req->md_offset;
-		tr->req->cmd.mptr = spdk_vtophys(md_payload);
+		tr->req->cmd.mptr = spdk_vtophys(md_payload, NULL);
 		if (tr->req->cmd.mptr == SPDK_VTOPHYS_ERROR) {
 			nvme_pcie_fail_request_bad_vtophys(qpair, tr);
 			rc = -EINVAL;
@@ -2002,7 +1991,7 @@ nvme_pcie_qpair_submit_request(struct spdk_nvme_qpair *qpair, struct nvme_reques
 	nvme_pcie_qpair_submit_tracker(qpair, tr);
 
 exit:
-	if (nvme_qpair_is_admin_queue(qpair)) {
+	if (spdk_unlikely(nvme_qpair_is_admin_queue(qpair))) {
 		nvme_robust_mutex_unlock(&ctrlr->ctrlr_lock);
 	}
 

@@ -44,6 +44,7 @@ DIRS-$(CONFIG_VIRTIO) += virtio
 endif
 
 DIRS-$(CONFIG_REDUCE) += reduce
+DIRS-$(CONFIG_FTL) += ftl
 
 # If CONFIG_ENV is pointing at a directory in lib, build it.
 # Out-of-tree env implementations must be built separately by the user.

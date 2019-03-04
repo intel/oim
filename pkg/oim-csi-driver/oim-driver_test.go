@@ -22,7 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/container-storage-interface/spec/lib/go/csi/v0"
+	"github.com/container-storage-interface/spec/lib/go/csi"
 
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/pkg/log/testlog"
@@ -209,11 +209,11 @@ func TestMockOIM(t *testing.T) {
 	volumeID := "my-test-volume"
 	deadline, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, err = csiClient.NodePublishVolume(deadline,
-		&csi.NodePublishVolumeRequest{
-			VolumeId:         volumeID,
-			TargetPath:       tmp + "/target",
-			VolumeCapability: &csi.VolumeCapability{},
+	_, err = csiClient.NodeStageVolume(deadline,
+		&csi.NodeStageVolumeRequest{
+			VolumeId:          volumeID,
+			StagingTargetPath: tmp + "/stagingtarget",
+			VolumeCapability:  &csi.VolumeCapability{},
 		})
 	if assert.Error(t, err) {
 		// Both gRPC and waitForDevice will abort when the deadline is reached.

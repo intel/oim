@@ -40,6 +40,7 @@
 #define SPDK_CRC32_H
 
 #include "spdk/stdinc.h"
+#include "spdk/config.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -66,6 +66,12 @@ struct nvme_ctrlr {
 	char				*name;
 	int				ref;
 	bool				destruct;
+	/**
+	 * PI check flags. This flags is set to NVMe controllers created only
+	 * through construct_nvme_bdev RPC or .INI config file. Hot added
+	 * NVMe controllers are not included.
+	 */
+	uint32_t			prchk_flags;
 	uint32_t			num_ns;
 	/** Array of bdevs indexed by nsid - 1 */
 	struct nvme_bdev		*bdevs;
@@ -93,12 +99,14 @@ struct nvme_ctrlr *spdk_bdev_nvme_first_ctrlr(void);
 struct nvme_ctrlr *spdk_bdev_nvme_next_ctrlr(struct nvme_ctrlr *prev);
 void spdk_bdev_nvme_get_opts(struct spdk_bdev_nvme_opts *opts);
 int spdk_bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts);
-int spdk_bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_thread_fn cb, void *cb_ctx);
+int spdk_bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_msg_fn cb, void *cb_ctx);
 
 int spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
+			  struct spdk_nvme_host_id *hostid,
 			  const char *base_name,
 			  const char **names, size_t *count,
-			  const char *hostnqn);
+			  const char *hostnqn,
+			  uint32_t prchk_flags);
 struct spdk_nvme_ctrlr *spdk_bdev_nvme_get_ctrlr(struct spdk_bdev *bdev);
 
 /**

@@ -103,7 +103,7 @@ mkfs_usage(void)
 	printf(" -C <size>                 cluster size\n");
 }
 
-static void
+static int
 mkfs_parse_arg(int ch, char *arg)
 {
 	bool has_prefix;
@@ -113,9 +113,9 @@ mkfs_parse_arg(int ch, char *arg)
 		spdk_parse_capacity(arg, &g_cluster_size, &has_prefix);
 		break;
 	default:
-		break;
+		return -EINVAL;
 	}
-
+	return 0;
 }
 
 int main(int argc, char **argv)

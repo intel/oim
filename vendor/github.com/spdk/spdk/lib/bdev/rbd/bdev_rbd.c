@@ -278,7 +278,7 @@ static struct spdk_bdev_module rbd_if = {
 	.get_ctx_size = bdev_rbd_get_ctx_size,
 
 };
-SPDK_BDEV_MODULE_REGISTER(&rbd_if)
+SPDK_BDEV_MODULE_REGISTER(rbd, &rbd_if)
 
 static int64_t
 bdev_rbd_rw(struct bdev_rbd *disk, struct spdk_io_channel *ch,
@@ -605,14 +605,11 @@ bdev_rbd_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 {
 	struct bdev_rbd *rbd_bdev = ctx;
 
-	spdk_json_write_name(w, "rbd");
-	spdk_json_write_object_begin(w);
+	spdk_json_write_named_object_begin(w, "rbd");
 
-	spdk_json_write_name(w, "pool_name");
-	spdk_json_write_string(w, rbd_bdev->pool_name);
+	spdk_json_write_named_string(w, "pool_name", rbd_bdev->pool_name);
 
-	spdk_json_write_name(w, "rbd_name");
-	spdk_json_write_string(w, rbd_bdev->rbd_name);
+	spdk_json_write_named_string(w, "rbd_name", rbd_bdev->rbd_name);
 
 	if (rbd_bdev->user_id) {
 		spdk_json_write_named_string(w, "user_id", rbd_bdev->user_id);
@@ -621,8 +618,7 @@ bdev_rbd_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 	if (rbd_bdev->config) {
 		char **entry = rbd_bdev->config;
 
-		spdk_json_write_name(w, "config");
-		spdk_json_write_object_begin(w);
+		spdk_json_write_named_object_begin(w, "config");
 		while (*entry) {
 			spdk_json_write_named_string(w, entry[0], entry[1]);
 			entry += 2;
@@ -656,8 +652,7 @@ bdev_rbd_write_config_json(struct spdk_bdev *bdev, struct spdk_json_write_ctx *w
 	if (rbd->config) {
 		char **entry = rbd->config;
 
-		spdk_json_write_name(w, "config");
-		spdk_json_write_object_begin(w);
+		spdk_json_write_named_object_begin(w, "config");
 		while (*entry) {
 			spdk_json_write_named_string(w, entry[0], entry[1]);
 			entry += 2;
@@ -786,6 +781,7 @@ bdev_rbd_library_init(void)
 	const char *pool_name;
 	const char *rbd_name;
 	uint32_t block_size;
+	long int tmp;
 
 	struct spdk_conf_section *sp = spdk_conf_find_section(NULL, "Ceph");
 
@@ -823,13 +819,18 @@ bdev_rbd_library_init(void)
 		if (val == NULL) {
 			block_size = 512; /* default value */
 		} else {
-			block_size = (int)strtol(val, NULL, 10);
-			if (block_size & 0x1ff) {
-				SPDK_ERRLOG("current block_size = %d, it should be multiple of 512\n",
-					    block_size);
+			tmp = spdk_strtol(val, 10);
+			if (tmp <= 0) {
+				SPDK_ERRLOG("Invalid block size\n");
+				rc = -1;
+				goto end;
+			} else if (tmp & 0x1ff) {
+				SPDK_ERRLOG("current block_size = %ld, it should be multiple of 512\n",
+					    tmp);
 				rc = -1;
 				goto end;
 			}
+			block_size = (uint32_t)tmp;
 		}
 
 		/* TODO(?): user_id and rbd config values */

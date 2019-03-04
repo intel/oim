@@ -32,12 +32,14 @@ spec:
           args :
             - --nodeid=$(NODE_ID)
             - --endpoint=$(CSI_ENDPOINT)
+            - --log.level=DEBUG
             - --oim-registry-address=@OIM_REGISTRY_ADDRESS@ # needs to be replaced
             - --controller-id=$(KUBE_NODE_NAME)
             - --ca=/ca/ca.crt
             - --key=/ca/host.$(KUBE_NODE_NAME).key
             - --drivername=oim-rbd
             - --emulate=ceph-csi
+            - --csiversion=0.3
           env:
             - name: NODE_ID
               valueFrom:

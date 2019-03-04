@@ -59,7 +59,7 @@ virt_to_phys(void *vaddr)
 	}
 #endif
 
-	return spdk_vtophys(vaddr);
+	return spdk_vtophys(vaddr, NULL);
 }
 
 void *
@@ -305,6 +305,11 @@ uint64_t spdk_get_ticks_hz(void)
 void spdk_delay_us(unsigned int us)
 {
 	rte_delay_us(us);
+}
+
+void spdk_pause(void)
+{
+	rte_pause();
 }
 
 void

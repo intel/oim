@@ -110,9 +110,16 @@ ifneq (true,$(TRAVIS))
 #	$(MAKE) -C lib/cxx
 endif
 
+.PHONY: update_spec
 update: update_spec
 update_spec: $(OIM_PROTO)
 	$(MAKE) -C pkg/spec
+
+.PHONY: update_yaml
+update: update_yaml
+update_yaml:
+	./hack/update-images.sh
+	./hack/update-rbac.sh
 
 # check generated files for violation of standards
 test: test_proto
