@@ -185,3 +185,7 @@ func (od *oimDriver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshot
 func (od *oimDriver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "")
 }
+
+func (od *oimDriver) ControllerExpandVolume(context.Context, *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}

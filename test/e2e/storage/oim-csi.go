@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/kubernetes-csi/csi-test/pkg/sanity"
+	"github.com/pkg/errors"
 
 	"github.com/intel/oim/pkg/log"
 	"github.com/intel/oim/test/pkg/qemu"
@@ -41,7 +42,11 @@ var _ = Describe("OIM CSI driver", func() {
 		targetTmp    string
 		localTmp     string
 		config       = sanity.Config{
-			TestVolumeSize: 1 * 1024 * 1024,
+			TestVolumeSize:    1 * 1024 * 1024,
+			CreateTargetDir:   createDirInVM,
+			CreateStagingDir:  createDirInVM,
+			RemoveTargetPath:  deleteDirInVM,
+			RemoveStagingPath: deleteDirInVM,
 		}
 		port         io.Closer
 		controlPlane OIMControlPlane
@@ -122,3 +127,19 @@ var _ = Describe("OIM CSI driver", func() {
 		sanity.GinkgoTest(&config)
 	})
 })
+
+func createDirInVM(path string) (string, error) {
+	output, err := qemu.VM.SSH("mkdir", path)
+	if err != nil {
+		return "", errors.Wrapf(err, "mkdir %q: %s", path, output)
+	}
+	return path, nil
+}
+
+func deleteDirInVM(path string) error {
+	output, err := qemu.VM.SSH("rmdir", path)
+	if err != nil {
+		return errors.Wrapf(err, "rmdir %q: %s", path, output)
+	}
+	return nil
+}

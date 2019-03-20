@@ -259,3 +259,7 @@ func (od *oimDriver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVol
 	// TODO: actually check that the path exists and extract information about it.
 	return &csi.NodeGetVolumeStatsResponse{}, nil
 }
+
+func (od *oimDriver) NodeExpandVolume(context.Context, *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "")
+}

@@ -42,12 +42,12 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
-  digest = "1:94ffc0947c337d618b6ff5ed9abaddc1217b090c1b3a1ae4739b35b7b25851d5"
+  branch = "master"
+  digest = "1:7f21fa1f8ab9a529dba26a7e9cf20de217c307fa1d96cb599d3afd9e5c83e9d6"
   name = "github.com/container-storage-interface/spec"
   packages = ["lib/go/csi"]
   pruneopts = "UT"
-  revision = "ed0bb0e1557548aa028307f48728767cfe8f6345"
-  version = "v1.0.0"
+  revision = "c3707a60a2d4a0a684ba342c048534defb74853d"
 
 [[projects]]
   digest = "1:b7e8c5fa66ebd2e6083cd4a6cc515f6d3c651fd04ad18a8276444bbcb172c583"
@@ -378,15 +378,15 @@
   version = "v0.3.0"
 
 [[projects]]
-  digest = "1:c9ba37d3709f57185b60f587a6282378feaff2aa3cddc28a56770704e3f96b98"
+  branch = "master"
+  digest = "1:d6e1c9e385532078783b52630838046882c87e6302d2d1b27321f72470cc9e88"
   name = "github.com/kubernetes-csi/csi-test"
   packages = [
     "pkg/sanity",
     "utils",
   ]
   pruneopts = "UT"
-  revision = "5b1e3786b7c8f7ca514b40e882a0b5dc36e4c842"
-  version = "v1.1.0"
+  revision = "1562dd3b6b5c570bb55a7b68d30b3790a4276d1a"
 
 [[projects]]
   branch = "master"

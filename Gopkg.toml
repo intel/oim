@@ -52,6 +52,10 @@ ignored = [
   # Because we need https://review.gerrithub.io/c/spdk/spdk/+/430460/ for RBD.
   branch = "master"
 
+[[override]]
+  name = "github.com/kubernetes-csi/csi-test"
+  branch = "master" # TODO: use a tagged version
+
 [[constraint]]
   name = "k8s.io/kubernetes"
   branch = "master"
