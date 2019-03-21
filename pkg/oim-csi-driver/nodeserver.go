@@ -83,8 +83,15 @@ func (od *oimDriver) NodePublishVolume(ctx context.Context, req *csi.NodePublish
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	if err := mounter.MakeDir(targetPath); err != nil {
-		return nil, status.Error(codes.Internal, errors.Wrap(err, "make target dir").Error())
+	if err := os.Mkdir(targetPath, os.FileMode(0755)); err != nil {
+		// Kubernetes is violating the CSI spec and creates the
+		// directory for us
+		// (https://github.com/kubernetes/kubernetes/issues/75535). We
+		// allow that by ignoring the "already exists" error.
+		if !os.IsExist(err) {
+			return nil, status.Error(codes.Internal, errors.Wrap(err, "make target dir").Error())
+		}
+		log.FromContext(ctx).Warnw("directory already exists", "target_path", targetPath)
 	}
 
 	// Perform a bind mount to the full path to allow duplicate mounts of the same PD.
@@ -142,6 +149,7 @@ func (od *oimDriver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	if err != nil {
 		return nil, status.Error(codes.Internal, errors.Wrap(err, "unmount failed").Error())
 	}
+	os.Remove(targetPath) // nolint: gosec
 
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
@@ -165,17 +173,10 @@ func (od *oimDriver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	volumeNameMutex.LockKey(volumeID)
 	defer volumeNameMutex.UnlockKey(volumeID)
 
-	// Check and prepare mount point.
+	// Check and prepare mount point. It must exist and be a directory.
 	notMnt, err := mount.New("").IsLikelyNotMountPoint(targetPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			if err = os.MkdirAll(targetPath, 0750); err != nil {
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-			notMnt = true
-		} else {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
+		return nil, status.Error(codes.Internal, errors.Wrap(err, "target path").Error())
 	}
 	if !notMnt {
 		// Already mounted, nothing to do.

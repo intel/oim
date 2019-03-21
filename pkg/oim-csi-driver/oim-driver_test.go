@@ -209,6 +209,8 @@ func TestMockOIM(t *testing.T) {
 	volumeID := "my-test-volume"
 	deadline, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	err = os.Mkdir(tmp+"/stagingtarget", os.FileMode(0755))
+	require.NoError(t, err)
 	_, err = csiClient.NodeStageVolume(deadline,
 		&csi.NodeStageVolumeRequest{
 			VolumeId:          volumeID,
