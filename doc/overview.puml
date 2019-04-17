@@ -1,14 +1,13 @@
 @startuml
+skinparam backgroundcolor transparent
 
 'left to right direction
-
-title Components and Volume Provisioning
 
 node "Compute Node" as computenode {
     frame "Host (Linux)" as host {
         package "Kubernetes (container)" {
             rectangle "**OIM CSI driver**" as oimdriver #LightBlue
-            rectangle "**3rd-party CSI driver**" as otherdriver #LightBlue
+            rectangle "**3rd-party CSI driver**" as otherdriver
             oimdriver -[hidden]> otherdriver
         }
     }
@@ -34,8 +33,12 @@ cloud "Control Plane" as controlplane {
         Proxy -[hidden]-> Registration
     }
 
+    rectangle "oimctl" #LightBlue
+
     etcd -- registry
+    oimctl -- Registration
 }
+
 
 Proxy <- oimdriver : map volume XYZ on host ABC
 Proxy -> controller : map volume XYZ
@@ -45,6 +48,7 @@ controlplane -[hidden]> computenode
 database "Storage System" as storage
 
 storage <-- otherdriver : provision
-storage -- spdk : IO
+storage <--> spdk
+
 
 @enduml
