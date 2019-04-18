@@ -4,7 +4,9 @@ skinparam ArrowColor #69489d
 skinparam interface {
   borderColor #69489d
 }
-
+skinparam defaultFontName Arial
+skinparam defaultFontSize 30
+skinparam ArrowThickness 8
 
 'left to right direction
 
