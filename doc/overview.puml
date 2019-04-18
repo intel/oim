@@ -1,20 +1,25 @@
 @startuml
 skinparam backgroundcolor transparent
+skinparam ArrowColor #69489d
+skinparam interface {
+  borderColor #69489d
+}
+
 
 'left to right direction
 
 node "Compute Node" as computenode {
     frame "Host (Linux)" as host {
         package "Kubernetes (container)" {
-            rectangle "**OIM CSI driver**" as oimdriver #LightBlue
-            rectangle "**3rd-party CSI driver**" as otherdriver
+            rectangle "**OIM CSI driver**" as oimdriver #008bbf
+            rectangle "**3rd-party CSI driver**" as otherdriver #40c4e0
             oimdriver -[hidden]> otherdriver
         }
     }
 
     frame "Accelerator Card (Linux)" as card {
-        rectangle "SPDK vHost" as spdk
-        rectangle "**OIM controller**" as controller #LightBlue {
+        rectangle "SPDK vHost" as spdk #40c4e0
+        rectangle "**OIM controller**" as controller #008bbf {
 
         }
 
@@ -25,15 +30,15 @@ node "Compute Node" as computenode {
 }
 
 cloud "Control Plane" as controlplane {
-    database etcd
+    database etcd #40c4e0
 
-    rectangle "OIM registry" as registry #LightBlue {
-        interface Proxy #SteelBlue
-        interface Registration #SteelBlue
+    rectangle "OIM registry" as registry #008bbf {
+        interface Proxy #005a95
+        interface Registration #005a95
         Proxy -[hidden]-> Registration
     }
 
-    rectangle "oimctl" #LightBlue
+    rectangle "oimctl" #008bbf
 
     etcd -- registry
     oimctl -- Registration
@@ -45,7 +50,7 @@ Proxy -> controller : map volume XYZ
 
 controlplane -[hidden]> computenode
 
-database "Storage System" as storage
+database "Storage System" as storage  #40c4e0
 
 storage <-- otherdriver : provision
 storage <--> spdk
